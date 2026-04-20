@@ -1,0 +1,7 @@
+AGS32092
+X4PQTEX8
+cd receive
+dir
+prompt
+mget * c:\EDI\EDIIn\
+quit

@@ -1,0 +1,1 @@
+ftp -s:c:\edi\ftploginRecv.txt ftp.interchange.gegxs.com

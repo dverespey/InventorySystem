@@ -1,0 +1,104 @@
+Manifest No.: 52005056 
+Period: 7/25-7/29 
+Pick Up Date: 08/01/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty.         
+42600AD08000           236           
+42600AD12000                   153 
+42600AD14000            233 
+42600AD16000            6 
+
+Manifest No.: 52005057 
+Period: 7/25-7/29 
+Pick Up Date: 08/01/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty.         
+42600AD09000                  836 
+42600AD11000                96 
+42600AD13000                  616 
+42600AD15000                  923 
+42600AD17000                  41 
+
+Manifest No.: 52005345 
+Period: 8/8-8/12 
+Pick Up Date: 08/15/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty. 
+42600AD08000                228 
+42600AD12000                133 
+42600AD14000                245 
+42600AD16000                 7 
+
+Manifest No.: 52005346 
+Period: 8/8-8/12 
+Pick Up Date: 08/15/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty. 
+42600AD09000                796 
+42600AD11000                112 
+42600AD13000                540 
+42600AD15000                964 
+42600AD17000                 36 
+
+Manifest No.:52004540 
+Period: 6/20-6/24 
+Pick Up Date: 07/04/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty.         
+42600AD08000           218           
+42600AD12000                   115 
+42600AD14000            1 
+42600AD16000            246 
+
+Manifest No.: 52004539 
+Period: 6/20-6/24 
+Pick Up Date: 07/04/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty.         
+42600AD09000                  748 
+42600AD11000                128 
+42600AD13000                  452 
+42600AD15000                  5 
+42600AD17000                  987 
+
+Manifest No.: 52004602 
+Period: 6/27-6/30 
+Pick Up Date: 07/06/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty. 
+42600AD08000                187 
+42600AD12000                96 
+42600AD14000                213 
+42600AD16000                 0 
+
+Manifest No.: 52004603 
+Period: 6/27-6/30 
+Pick Up Date: 07/06/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty. 
+42600AD09000                672 
+42600AD11000                72 
+42600AD13000                388 
+42600AD15000                838 
+42600AD17000                 14 
+
+Manifest No.: 52004801 
+Period: 07/01 
+Pick Up Date: 07/19/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty. 
+42600AD08000                50 
+42600AD12000                26 
+42600AD14000                52 
+42600AD16000                 0 
+
+Manifest No.: 52004801 
+Period: 07/01 
+Pick Up Date: 07/19/05 
+Part Numbers and Total Qty. for the week: 
+Part Number                Qty. 
+42600AD09000                196 
+42600AD11000                12 
+42600AD13000                96 
+42600AD15000                212 
+42600AD17000                 0 

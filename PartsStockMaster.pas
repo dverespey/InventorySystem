@@ -1,0 +1,711 @@
+//***********************************************************
+//  InventorySystem
+//
+//  Copyright (c) 2002 Failproof Manufacturing Systems
+//
+//***********************************************************
+//
+//  10/25/2002  Aaron Huge  Initial creation
+//  12/17/2002  Aaron Huge  Modify SearchGrid Allow partial entries for search using LIKE 'ABC%'
+
+unit PartsStockMaster;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
+  Dialogs, StdCtrls, ExtCtrls, Grids, DataModule, Mask, DBGrids, DB,
+  AdvCombo, ColCombo, NUMMIColumnComboBox, currEdit, Buttons;
+
+type
+  TPartsStockMaster_Form = class(TForm)
+    ManagementButtons_Panel: TPanel;
+    Insert_Button: TButton;
+    Update_Button: TButton;
+    Search_Button: TButton;
+    Clear_Button: TButton;
+    Close_Button: TButton;
+    Delete_Button: TButton;
+    PartsStockMaster_Label: TLabel;
+    PartsStockMaster_Panel: TPanel;
+    Remarks_Label: TLabel;
+    Quantity_Label: TLabel;
+    OneLotQty_Label: TLabel;
+    SizeCode_Label: TLabel;
+    CarTruck_Label: TLabel;
+    TireWheel_Label: TLabel;
+    PartsName_Label: TLabel;
+    SupplierCode_Label: TLabel;
+    PartsName_Edit: TEdit;
+    PartsCode_Label: TLabel;
+    PartsNum_Edit: TEdit;
+    SizeCode_ComboBox: TComboBox;
+    Remarks_Edit: TEdit;
+    KanbanCode_Label: TLabel;
+    KanbanNum_Edit: TEdit;
+    OneLotQty_MaskEdit: TMaskEdit;
+    Quantity_MaskEdit: TMaskEdit;
+    PartsStockMaster_DBGrid: TDBGrid;
+    Label1: TLabel;
+    RenbanCode_ComboBox: TComboBox;
+    LotSizeOrders_CheckBox: TCheckBox;
+    LeadTime_MaskEdit: TMaskEdit;
+    Label2: TLabel;
+    Parts_DataSource: TDataSource;
+    Label3: TLabel;
+    RenbanCount_Edit: TMaskEdit;
+    Label4: TLabel;
+    ShipDays_Edit: TEdit;
+    Label5: TLabel;
+    Label6: TLabel;
+    Label7: TLabel;
+    Label8: TLabel;
+    Label9: TLabel;
+    Label10: TLabel;
+    Label11: TLabel;
+    LeadtimeMonday_MaskEdit: TMaskEdit;
+    LeadtimeTuesday_MaskEdit: TMaskEdit;
+    LeadtimeWednesday_MaskEdit: TMaskEdit;
+    LeadtimeThursday_MaskEdit: TMaskEdit;
+    LeadtimeFriday_MaskEdit: TMaskEdit;
+    LeadtimeSaturday_MaskEdit: TMaskEdit;
+    Label12: TLabel;
+    Label13: TLabel;
+    Label14: TLabel;
+    Label15: TLabel;
+    Label16: TLabel;
+    Label17: TLabel;
+    Label18: TLabel;
+    ShipDaysMonday_MaskEdit: TMaskEdit;
+    ShipDaysTuesday_MaskEdit: TMaskEdit;
+    ShipDaysWednesday_MaskEdit: TMaskEdit;
+    ShipDaysThursday_MaskEdit: TMaskEdit;
+    ShipDaysFriday_MaskEdit: TMaskEdit;
+    ShipDaysSaturday_MaskEdit: TMaskEdit;
+    Label19: TLabel;
+    Logistics_ComboBox: TComboBox;
+    PartType_ComboBox: TComboBox;
+    Line_ComboBox: TComboBox;
+    Supplier_NUMMIColumnComboBox: TNUMMIColumnComboBox;
+    PArtCost_MaskEdit: TcurrEdit;
+    Label20: TLabel;
+    Label21: TLabel;
+    VendorShare_SpeedButton: TSpeedButton;
+    VendorShare_Edit: TEdit;
+    procedure Insert_ButtonClick(Sender: TObject);
+    procedure Update_ButtonClick(Sender: TObject);
+    procedure Delete_ButtonClick(Sender: TObject);
+    procedure Search_ButtonClick(Sender: TObject);
+    procedure Clear_ButtonClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure MaskEditExit(Sender: TObject);
+    procedure TextChange(Sender: TObject);
+    procedure PartsStockMaster_DBGridKeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure PartsStockMaster_DBGridMouseUp(Sender: TObject;
+      Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure Parts_DataSourceDataChange(Sender: TObject; Field: TField);
+    procedure FormShow(Sender: TObject);
+    procedure LotSizeOrders_CheckBoxClick(Sender: TObject);
+  private
+    { Private declarations }
+    function HoldDetails(fFromGrid: Boolean): String;
+    procedure SetDetailBoxes;
+    function SearchGrid(fSupCode,fPartNum,fAssyLine,fWheelTire: String): Boolean;
+    procedure SetCombos;
+    function Validate:boolean;
+  public
+    { Public declarations }
+    function Execute: Boolean;
+  end;
+
+var
+  PartsStockMaster_Form: TPartsStockMaster_Form;
+
+implementation
+
+{$R *.dfm}
+
+function TPartsStockMaster_Form.Execute: boolean;
+Begin
+  Result:= True;
+  try
+    try
+      ShowModal;
+    except
+      On E:Exception do
+        showMessage('Unable to generate Parts Stock Master screen.'
+          + #13 + 'ERROR:'
+          + #13 + E.Message);
+    end;
+  finally
+    If ModalResult = mrCancel Then
+      Result:= False;
+  end;
+end;        //Execute
+
+procedure TPartsStockMaster_Form.SetCombos;
+begin
+  with Data_Module do
+  begin
+    SelectMultiField('INV_SUPPLIER_MST', 'VC_SUPPLIER_CODE, VC_SUPPLIER_NAME', Supplier_NUMMIColumnComboBox);
+    SelectSingleField('INV_LOGISTICS_MST', 'VC_LOGISTICS_NAME', Logistics_ComboBox);
+    SelectSingleField('INV_SIZE_MST', 'VC_SIZE_CODE', SizeCode_ComboBox);
+    SelectSingleField('INV_RENBAN_GROUP_MST', 'VC_RENBAN_GROUP_CODE', RenbanCode_ComboBox);
+    SelectSingleField('INV_PART_TYPE_MST', 'VC_PART_TYPE', PartType_ComboBox);
+    SelectSingleFieldALC('LINE', 'LineName', Line_ComboBox);
+  end;
+end;
+
+procedure TPartsStockMaster_Form.Insert_ButtonClick(Sender: TObject);
+var
+  part: String;
+begin
+  If Validate Then
+  begin
+    with Data_Module do
+    begin
+      HoldDetails(False);
+
+      If Not InsertPartsStockInfo Then
+        MessageDlg('Unable to INSERT ' + #13 +
+                  'with Parts Code ' + PartNum , mtInformation, [mbOk], 0);
+      part:=PartNum;
+      GetInventoryInfo;
+      Inv_DataSet.Locate('Parts Code',part,[]);
+      SetDetailBoxes;
+      PartsNum_Edit.SetFocus;
+    end;
+  end;
+end;        //Insert_ButtonClick
+
+procedure TPartsStockMaster_Form.Update_ButtonClick(Sender: TObject);
+var
+  part:string;
+begin
+  If Validate Then
+  Begin
+    with Data_Module do
+    begin
+      HoldDetails(False);
+      UpdatePartsStockInfo;
+      part:=PartNum;
+      GetInventoryInfo;
+      Inv_DataSet.Locate('Parts Code',Part,[]);
+    end;
+    SetDetailBoxes;
+  End;
+end;         //Update_ButtonClick
+
+procedure TPartsStockMaster_Form.Delete_ButtonClick(Sender: TObject);
+begin
+  {Just Hold The supcode and partnumber here...}
+  HoldDetails(False);
+  If MessageDlg('Are you sure you wish to delete' + #13 +
+                'supplier code' + Data_Module.SupplierCode + #13 +
+                'and part number ' + Data_Module.PartNum + #13 +
+                'from the database?',
+                 mtWarning, [mbYes, mbNo], 0) = mrYes Then
+  Begin
+    Data_Module.DeletePartsStockInfo;
+    Data_Module.GetInventoryInfo;
+    SetDetailBoxes;
+  End;
+  PartsNum_Edit.SetFocus;
+end;         //Delete_ButtonClick
+
+procedure TPartsStockMaster_Form.Search_ButtonClick(Sender: TObject);
+var
+  fFound: Boolean;
+  TireWheel,CarTruck:string;
+Begin
+  //fFound := False;
+
+  fFound := SearchGrid(Trim(Supplier_NUMMIColumnComboBox.Text), Trim(PartsNum_Edit.Text),CarTruck,TireWheel);
+  If fFound Then
+  Begin
+    SetDetailBoxes;
+  End
+  Else
+  Begin
+    ShowMessage('No matches were found for your query.');
+  End;
+  PartsNum_Edit.SetFocus;
+end;         //Search_ButtonClick
+
+procedure TPartsStockMaster_Form.Clear_ButtonClick(Sender: TObject);
+begin
+  With Data_Module do
+  Begin
+    Inv_DataSet.Filtered := False;
+    ClearControls(PartsStockMaster_Panel);
+  End;      //With Data_Module
+
+  Supplier_NUMMIColumnComboBox.ItemIndex:=0;
+  Logistics_ComboBox.ItemIndex:=0;
+
+  LeadTime_MaskEdit.Text:='0';
+  LeadTimeMonday_MaskEdit.Text:='0';
+  LeadTimeTuesday_MaskEdit.Text:='0';
+  LeadTimeWednesday_MaskEdit.Text:='0';
+  LeadTimeThursday_MaskEdit.Text:='0';
+  LeadTimeFriday_MaskEdit.Text:='0';
+  LeadTimeSaturday_MaskEdit.Text:='0';
+
+  ShipDays_Edit.text:='0';
+  ShipDaysMonday_MaskEdit.Text:='0';
+  ShipDaysTuesday_MaskEdit.Text:='0';
+  ShipDaysWednesday_MaskEdit.Text:='0';
+  ShipDaysThursday_MaskEdit.Text:='0';
+  ShipDaysFriday_MaskEdit.Text:='0';
+  ShipDaysSaturday_MaskEdit.Text:='0';
+  PartsNum_Edit.SetFocus;
+end;        //Clear_ButtonClick
+
+procedure TPartsStockMaster_Form.FormCreate(Sender: TObject);
+begin
+  //Get the grid data and set it to the grid
+  With Data_Module do
+  Begin
+    Inv_DataSet.Filter:='';
+    Inv_DataSet.Filtered:=FALSE;
+    GetInventoryInfo;
+    Parts_DataSource.DataSet:=Inv_DataSet;
+    JustifyColumns(PartsStockMaster_DBGrid);
+    SetCombos;
+    Inv_DataSet.Filtered := False;
+    ClearControls(PartsStockMaster_Panel);
+    PartsNum_Edit.Text := '';
+  End;      //With
+end;
+
+function TPartsStockMaster_Form.Validate:boolean;
+var
+  i:integer;
+begin
+  result:=True;
+
+//  with PartsNum_Edit do
+//  begin
+//    if length(text) < 12 then
+//    begin
+//      ShowMessage('Part Number must be 12 characters');
+//      SetFocus;
+//      result:=False;
+//      exit;
+//    end;
+//  end;
+
+  If Not TryStrToInt(Trim(Quantity_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Quantity must be a numeric');
+    Quantity_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(OneLotQty_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lot Qty must be a numeric');
+    OneLotQty_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(LeadTime_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(LeadTimeMonday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time Monday must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(LeadTimeTuesday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time Tuesday must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+  If Not TryStrToInt(Trim(LeadTimeWednesday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time Wednesday must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+  If Not TryStrToInt(Trim(LeadTimeThursday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time Thursday must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+  If Not TryStrToInt(Trim(LeadTimeFriday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time Friday must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+  If Not TryStrToInt(Trim(LeadTimeSaturday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Lead Time Saturday must be a numeric');
+    LeadTime_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDays_Edit.Text), i) Then
+  begin
+    ShowMessage('Ship Days must be a numeric');
+    ShipDays_Edit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDaysMonday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Ship Days Monday must be a numeric');
+    ShipDaysMonday_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDaysTuesday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Ship Days Tuesday must be a numeric');
+    ShipDaysTuesday_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDaysWednesday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Ship Days Wednesday must be a numeric');
+    ShipDaysWednesday_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDaysThursday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Ship Days Thursday must be a numeric');
+    ShipDaysThursday_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDaysFriday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Ship Days Friday must be a numeric');
+    ShipDaysFriday_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+
+  If Not TryStrToInt(Trim(ShipDaysSaturday_MaskEdit.Text), i) Then
+  begin
+    ShowMessage('Ship Days Saturday must be a numeric');
+    ShipDaysSaturday_MaskEdit.SetFocus;
+    result:=False;
+    exit;
+  end;
+end;
+
+function TPartsStockMaster_Form.HoldDetails(fFromGrid: Boolean): String;
+var
+  fErrMsg: String;
+  ftempprice:string;
+  ftempdouble:double;
+Begin
+  fErrMsg := '';
+
+  If fFromGrid Then
+  Begin
+    with PartsStockMaster_DBGrid.DataSource.DataSet do
+    begin
+      try
+        Data_Module.SupplierCode      := Fields[0].AsString;
+        Data_Module.PartNum           := Fields[1].AsString;
+        Data_Module.LogisticsName     := Fields[2].AsString;
+        Data_Module.PartName          := Fields[3].AsString;
+        Data_Module.RenbanCode        := Fields[4].AsString;
+        Data_Module.PartType          := Fields[5].AsString;
+        Data_Module.LineName          := Fields[6].AsString;
+        Data_Module.SizeCode          := Fields[7].AsString;
+        Data_Module.Kanban            := Fields[8].AsString;
+        Data_Module.LotQty            := Fields[9].AsInteger;
+        Data_Module.LotSizeOrders     := Fields[10].AsBoolean;
+        Data_Module.LeadTime          := Fields[11].AsInteger;
+        Data_Module.RenbanCount       := Fields[12].AsString;
+        Data_Module.Shipdays          := Fields[13].AsInteger;
+        Data_Module.LeadTimeMonday    := Fields[14].AsInteger;
+        Data_Module.LeadTimeTuesday   := Fields[15].AsInteger;
+        Data_Module.LeadTimeWednesday := Fields[16].AsInteger;
+        Data_Module.LeadTimeThursday  := Fields[17].AsInteger;
+        Data_Module.LeadTimeFriday    := Fields[18].AsInteger;
+        Data_Module.LeadTimeSaturday  := Fields[19].AsInteger;
+        Data_Module.ShipDaysMonday    := Fields[20].AsInteger;
+        Data_Module.ShipDaysTuesday   := Fields[21].AsInteger;
+        Data_Module.ShipDaysWednesday := Fields[22].AsInteger;
+        Data_Module.ShipDaysThursday  := Fields[23].AsInteger;
+        Data_Module.ShipDaysFriday    := Fields[24].AsInteger;
+        Data_Module.ShipDaysSaturday  := Fields[25].AsInteger;
+        Data_Module.Quantity          := Fields[26].AsInteger;
+        Data_Module.Comments          := Fields[27].AsString;
+        Data_Module.PartCost          := Fields[28].AsFloat;
+        Data_Module.RecordID          := Fields[29].AsInteger;
+        Fields[29].Visible:=FALSE;
+      except
+      end;
+    End;      //With
+  End
+  Else
+  Begin
+    With Data_Module do
+    Begin
+      SupplierCode := Supplier_NUMMIColumnComboBox.ColumnItems[Supplier_NUMMIColumnComboBox.ItemIndex,0];
+
+      PartNum := PartsNum_Edit.Text;
+
+      if Logistics_ComboBox.Text = ' ' then
+        LogisticsName := ''
+      else
+        LogisticsName:=Logistics_ComboBox.Text;
+
+      PartName := PartsName_Edit.Text;
+
+      if RenbanCode_ComboBox.Text=' ' then
+        RenbanCode := ''
+      else
+        RenbanCode := RenbanCode_ComboBox.Text;
+
+      PartType := PartType_ComboBox.Text;
+
+      LineName := Line_ComboBox.Text;
+
+      SizeCode := SizeCode_ComboBox.Text;
+
+      Kanban := KanbanNum_Edit.Text;
+
+      LotQty := StrToInt(Trim(OneLotQty_MaskEdit.Text));
+
+      LotSizeOrders := not LotSizeOrders_CheckBox.Checked;
+
+      LeadTime := StrToInt(Trim(LeadTime_MaskEdit.Text));
+
+      RenbanCount := RenbanCount_Edit.Text;
+
+      ShipDays:=StrToInt(Trim(ShipDays_Edit.Text));
+
+      LeadTimeMonday:=StrToInt(Trim(LeadTimeMonday_MaskEdit.Text));
+
+      LeadTimeTuesday:= StrToInt(Trim(LeadTimeTuesday_MaskEdit.Text));
+
+      LeadTimeWednesday:=StrToInt(Trim(LeadTimeWednesday_MaskEdit.Text));
+
+      LeadTimeThursday:=StrToInt(Trim(LeadTimeThursday_MaskEdit.Text));
+
+      LeadTimeFriday:=StrToInt(Trim(LeadTimeFriday_MaskEdit.Text));
+
+      LeadTimeSaturday:= StrToInt(Trim(LeadTimeSaturday_MaskEdit.Text));
+
+
+      ShipDaysMonday:=StrToInt(Trim(ShipDaysMonday_MaskEdit.Text));
+
+      ShipDaysTuesday:=StrToInt(Trim(ShipDaysTuesday_MaskEdit.Text));
+
+      ShipDaysWednesday:=StrToInt(Trim(ShipDaysWednesday_MaskEdit.Text));
+
+      ShipDaysThursday:=StrToInt(Trim(ShipDaysThursday_MaskEdit.Text));
+
+      ShipDaysFriday:=StrToInt(Trim(ShipDaysFriday_MaskEdit.Text));
+
+      ShipDaysSaturday:=StrToInt(Trim(ShipDaysSaturday_MaskEdit.Text));
+
+      Quantity := StrToInt(Trim(Quantity_MaskEdit.Text));
+
+      Comments := Remarks_Edit.Text;
+
+      fTempPrice := PArtCost_MaskEdit.Text;
+
+      fTempPrice := Trim(Copy(fTempPrice, 2, Length(fTempPrice)));
+      If Not TryStrToFloat(fTempPrice, fTempDouble) Then
+      begin
+        ShowMessage('Invalid part cost');
+        PartCost_MaskEdit.SetFocus;
+      end
+      Else
+        PartCost := fTempDouble;   //StrToFloat(BasisUnitPrice_Edit.Text);
+
+    End;      //With
+  End;
+  If Not (fErrMsg = '') Then
+    fErrMsg := 'The following fields need to be corrected:' + fErrMsg;
+  result := fErrMsg;
+End;          //HoldDetails
+
+
+procedure TPartsStockMaster_Form.SetDetailBoxes;
+Begin
+  With Data_Module do
+  Begin
+    PartsNum_Edit.Text := PartNum;
+    KanbanNum_Edit.Text := Kanban;
+    PartsName_Edit.Text := PartName;
+    SearchMultiCombo(Supplier_NUMMIColumnComboBox, SupplierCode);
+    SearchCombo(Logistics_ComboBox, LogisticsName);
+    SearchCombo(Line_ComboBox, LineName);
+    SearchCombo(PartType_ComboBox,PartType);
+    SearchCombo(RenbanCode_ComboBox, RenbanCode);
+    RenbanCount_Edit.Text:=RenbanCount;
+    SearchCombo(SizeCode_ComboBox, SizeCode);
+    OneLotQty_MaskEdit.Text := IntToStr(LotQty);
+    LotSizeOrders_CheckBox.Checked:=  not LotSizeOrders;
+    Quantity_MaskEdit.Text := IntToStr(Quantity);
+
+    LeadTime_MaskEdit.Text:=IntToStr(LeadTime);
+    LeadTimeMonday_MaskEdit.Text:=IntToStr(LeadTimeMonday);
+    LeadTimeTuesday_MaskEdit.Text:=IntToStr(LeadTimeTuesday);
+    LeadTimeWednesday_MaskEdit.Text:=IntToStr(LeadTimeWednesday);
+    LeadTimeThursday_MaskEdit.Text:=IntToStr(LeadTimeThursday);
+    LeadTimeFriday_MaskEdit.Text:=IntToStr(LeadTimeFriday);
+    LeadTimeSaturday_MaskEdit.Text:=IntToStr(LeadTimeSaturday);
+
+    ShipDays_Edit.text:=IntToStr(ShipDays);
+    ShipDaysMonday_MaskEdit.Text:=IntToStr(ShipDaysMonday);
+    ShipDaysTuesday_MaskEdit.Text:=IntToStr(ShipDaysTuesday);
+    ShipDaysWednesday_MaskEdit.Text:=IntToStr(ShipDaysWednesday);
+    ShipDaysThursday_MaskEdit.Text:=IntToStr(ShipDaysThursday);
+    ShipDaysFriday_MaskEdit.Text:=IntToStr(ShipDaysFriday);
+    ShipDaysSaturday_MaskEdit.Text:=IntToStr(ShipDaysSaturday);
+
+    Remarks_Edit.Text := Comments;
+
+    PArtCost_MaskEdit.Text:=FormatFloat('$#######0.0000', PArtCost);
+  End;      //With
+End;          //SetDetailBoxes
+
+
+function TPartsStockMaster_Form.SearchGrid(fSupCode,fPartNum,fAssyLine,fWheelTire: String): Boolean;
+begin
+  Data_Module.ClearControls(PartsStockMaster_Panel);
+  Result := False;
+
+  try
+    Data_Module.Inv_DataSet.Filtered := False;
+    Data_Module.Inv_DataSet.Filter:='';
+
+    If fSupCode <> '' Then
+      Data_Module.Inv_DataSet.Filter := '[Supplier Code] LIKE '+QuotedStr(fSupCode);
+
+    If fPartNum <> '' Then
+      If Length(Data_Module.Inv_DataSet.Filter) > 0 Then
+        Data_Module.Inv_DataSet.Filter := Data_Module.Inv_DataSet.Filter + ' AND [Parts Code] LIKE '+QuotedStr('%'+fPartNum+'%')
+      Else
+        Data_Module.Inv_DataSet.Filter := '[Parts Code] LIKE '+QuotedStr('%'+fPartNum+'%');
+
+    If Length(Data_Module.Inv_DataSet.Filter) = 0 Then
+    begin
+      Data_Module.Inv_DataSet.Filter := '[Car / Truck] = '+QuotedStr(fAssyLine);
+      Data_Module.Inv_DataSet.Filter := Data_Module.Inv_DataSet.Filter + ' AND [Tire / Wheel] = '+QuotedStr(fWheelTire);
+    end;
+
+    Data_Module.Inv_DataSet.Filtered := True;
+
+    If Data_Module.Inv_DataSet.RecordCount > 0 Then
+    Begin
+      HoldDetails(True);
+      Result := True;
+    End
+    else
+    begin
+      Data_Module.Inv_DataSet.Filtered := False;
+      Data_Module.ClearControls(PartsStockMaster_Panel);
+    end;
+  except
+    on e:exception do
+      ShowMessage('Error in Search' + #13 + e.Message);
+  end;      //try...except
+End;        //SearchGrid
+
+procedure TPartsStockMaster_Form.TextChange(Sender: TObject);
+begin
+  If Sender.ClassName = 'TMaskEdit' Then
+    If Length(Trim(TMaskEdit(Sender).Text)) < 1 Then
+      TMaskEdit(Sender).Text := '0';
+
+end;
+
+procedure TPartsStockMaster_Form.MaskEditExit(Sender: TObject);
+var
+  fPos: Integer;
+  fTempValue: String;
+begin
+  If Sender.ClassName = 'TMaskEdit' Then
+  Begin
+    fTempValue := Trim(TMaskEdit(Sender).Text);
+    //fPos := -1;
+    fPos := Pos(' ', fTempValue);
+    While fPos <> 0 do
+    Begin
+      fTempValue := Copy(fTempValue, 1, fPos - 1) + Copy(fTempValue, fPos + 1, Length(fTempValue));
+      fPos := Pos(' ', fTempValue);
+    End;
+    TMaskEdit(Sender).Text := fTempValue;
+  End;
+end;
+
+procedure TPartsStockMaster_Form.PartsStockMaster_DBGridKeyUp(
+  Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  HoldDetails(True);
+  SetDetailBoxes;
+end;
+
+procedure TPartsStockMaster_Form.PartsStockMaster_DBGridMouseUp(
+  Sender: TObject; Button: TMouseButton; Shift: TShiftState; X,
+  Y: Integer);
+begin
+  HoldDetails(True);
+  SetDetailBoxes;
+end;
+
+procedure TPartsStockMaster_Form.Parts_DataSourceDataChange(
+  Sender: TObject; Field: TField);
+begin
+  HoldDetails(True);
+  SetDetailBoxes;
+end;
+
+procedure TPartsStockMaster_Form.FormShow(Sender: TObject);
+begin
+  SetDetailBoxes;
+  PartsNum_Edit.SetFocus;
+end;
+
+procedure TPartsStockMaster_Form.LotSizeOrders_CheckBoxClick(
+  Sender: TObject);
+begin
+  if LotSizeOrders_CheckBox.Checked then
+  begin
+    RenbanCode_ComboBox.Enabled:=FALSE;
+    RenbanCode_ComboBox.ItemIndex:=0;
+  end
+  else
+  begin
+    RenbanCode_ComboBox.Enabled:=TRUE;
+    Data_Module.SearchCombo(RenbanCode_ComboBox, Data_Module.RenbanCode);
+  end;
+end;
+
+end.

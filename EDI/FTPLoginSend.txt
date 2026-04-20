@@ -1,0 +1,7 @@
+AGS32092
+X4PQTEX8
+cd send
+dir
+put c:\edi\ediout\*.txt
+dir
+quit

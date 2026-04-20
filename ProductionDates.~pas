@@ -1,0 +1,241 @@
+unit ProductionDates;
+
+interface
+
+uses Windows, SysUtils, Classes, Graphics, Forms, Controls, StdCtrls,
+  Buttons, ExtCtrls, dialogs, AdoDb;
+
+type
+  TProductionDateSelectDlg = class(TForm)
+    OKBtn: TButton;
+    CancelBtn: TButton;
+    Bevel1: TBevel;
+    ProductionDates_ComboBox: TComboBox;
+    DateTypeLabel: TLabel;
+    ToProductionDate_ComboBox: TComboBox;
+    FRom_Label: TLabel;
+    To_Label: TLabel;
+    CarTruck_Label: TLabel;
+    Line_ComboBox: TComboBox;
+    procedure CancelBtnClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure ProductionDates_ComboBoxChange(Sender: TObject);
+    procedure ToProductionDate_ComboBoxChange(Sender: TObject);
+    procedure Line_ComboBoxChange(Sender: TObject);
+  private
+    { Private declarations }
+    fCancel:boolean;
+    fASN:boolean;
+    fINVOICE:boolean;
+    fMonth:boolean;
+    fProductionDate:string;
+    fToProductionDate:string;
+    fRange:boolean;
+    fLine:string;
+    procedure GetProductionDates;
+  public
+    { Public declarations }
+    procedure Execute;
+
+    property Cancel:boolean
+    read fCancel
+    write fCancel;
+
+    property Line:string
+    read fLine;
+
+    property ProductionDate:string
+    read fProductionDate
+    write fProductionDate;
+
+    property ToProductionDate:string
+    read fToProductionDate
+    write fToProductionDate;
+
+    property ASN:boolean
+    read fASN
+    write fASN;
+
+    property INVOICE:boolean
+    read fINVOICE
+    write fINVOICE;
+
+    property Range:boolean
+    read fRange
+    write fRange;
+
+    property Month:boolean
+    read fMonth
+    write fMonth;
+  end;
+
+var
+  ProductionDateSelectDlg: TProductionDateSelectDlg;
+
+implementation
+
+uses DataModule;
+
+{$R *.dfm}
+
+procedure TProductionDateSelectDlg.GetProductionDates;
+begin
+  try
+    with Data_Module.Inv_DataSet do
+    begin
+      Close;
+      CommandType := CmdStoredProc;
+      CommandText := 'dbo.REPORT_AvailableProductionDates;1';
+      Parameters.Clear;
+      Parameters.AddParameter.Name := '@Line';
+      Parameters.ParamValues['@Line'] := fLine;
+      Parameters.AddParameter.Name := '@INVOICE';
+      if fInvoice then
+      begin
+        Parameters.ParamValues['@INVOICE'] := 1;
+        DateTypeLabel.Caption:='Available Invoice Dates';
+      end
+      else
+        Parameters.ParamValues['@INVOICE'] := 0;
+
+      Parameters.AddParameter.Name := '@ASN';
+      if fASN then
+      begin
+        Parameters.ParamValues['@ASN'] := 1;
+        DateTypeLabel.Caption:='Available ASN Dates';
+      end
+      else
+        Parameters.ParamValues['@ASN'] := 0;
+
+      Parameters.AddParameter.Name := '@Month';
+      if fMonth then
+        Parameters.ParamValues['@Month'] := 1
+      else
+        Parameters.ParamValues['@Month'] := 0;
+
+      Open;
+      if recordcount > 0 then
+      begin
+        ProductionDates_ComboBox.Items.Clear;
+        while not eof do
+        begin
+          if fMonth then
+          begin
+            ProductionDates_ComboBox.Items.Add(copy(FieldByName('PDate').AsString,1,4)+'/'+copy(FieldByName('PDate').AsString,5,2));
+            DateTypeLabel.Caption:='Available Production Months';
+          end
+          else
+          begin
+            ProductionDates_ComboBox.Items.Add(copy(FieldByName('PDate').AsString,1,4)+'/'+copy(FieldByName('PDate').AsString,5,2)+'/'+copy(FieldByName('PDate').AsString,7,2));
+            ToProductionDate_ComboBox.Items.Add(copy(FieldByName('PDate').AsString,1,4)+'/'+copy(FieldByName('PDate').AsString,5,2)+'/'+copy(FieldByName('PDate').AsString,7,2));
+            DateTypeLabel.Caption:='Available Production Dates';
+          end;
+          next;
+        end;
+      end
+      else
+      begin
+        ShowMessage('No production dates available');
+        exit;
+      end;
+    end;
+    //ShowModal;
+    fProductionDate:=ProductionDates_ComboBox.Text;
+    fToProductionDate:=ToProductionDate_ComboBox.Text;
+  except
+    on e:exception do
+    begin
+      Data_Module.LogActLog('ERROR','Failed on get production dates, '+e.Message);
+      ShowMessage('Failed on get production dates, '+e.Message);
+      raise;
+    end;
+  end;
+end;
+
+procedure TProductionDateSelectDlg.Execute;
+begin
+  // load available
+  try
+    if fRange then
+    begin
+      FRom_Label.Visible:=TRUE;
+      To_Label.Visible:=TRUE;
+      ToProductionDate_ComboBox.Visible:=TRUE;
+    end;
+
+    fCancel:=FALSE;
+
+    with Data_Module.ALC_DataSet do
+    begin
+      Line_ComboBox.Items.Clear;
+      Close;
+      CommandType := CmdStoredProc;
+      CommandText := 'AD_GetLines;1';
+      Parameters.Clear;
+      Open;
+      if Data_Module.Inv_Connection.Errors.Count > 0 then
+      begin
+        ShowMessage('Failed on ASN select, '+DAta_Module.Inv_Connection.Errors.Item[0].Get_Description);
+        DAta_Module.LogActLog('ERROR','Unable to get ASN line information, '+DAta_Module.Inv_Connection.Errors.Item[0].Get_Description);
+        exit;
+      end;
+      while not eof do
+      begin
+        Line_ComboBox.Items.Add(fieldByName('LineName').AsString);
+        next;
+      end;
+      Line_ComboBox.ItemIndex:=0;
+      fLine:=Line_ComboBox.Text;
+    end;
+
+
+    GetProductionDates;
+
+    ShowModal;
+  except
+    on e:exception do
+    begin
+      Data_Module.LogActLog('ERROR','Failed on PO Report, '+e.Message);
+      ShowMessage('Failed on PO Report, '+e.Message);
+    end;
+  end;
+end;
+
+procedure TProductionDateSelectDlg.CancelBtnClick(Sender: TObject);
+begin
+  fCancel:=TRUE;
+end;
+
+procedure TProductionDateSelectDlg.FormCreate(Sender: TObject);
+begin
+  fASN:=FALSE;
+end;
+
+procedure TProductionDateSelectDlg.ProductionDates_ComboBoxChange(
+  Sender: TObject);
+begin
+  if fRange then
+  begin
+    if ProductionDates_ComboBox.ItemIndex <= ToProductionDate_ComboBox.ItemIndex then
+        ProductionDates_ComboBox.ItemIndex:=ToProductionDate_ComboBox.ItemIndex+1;
+  end;
+end;
+
+procedure TProductionDateSelectDlg.ToProductionDate_ComboBoxChange(
+  Sender: TObject);
+begin
+  if ProductionDates_ComboBox.ItemIndex <= ToProductionDate_ComboBox.ItemIndex then
+      ProductionDates_ComboBox.ItemIndex:=ToProductionDate_ComboBox.ItemIndex+1;
+end;
+
+procedure TProductionDateSelectDlg.Line_ComboBoxChange(Sender: TObject);
+begin
+  try
+    fLine:=Line_ComboBox.Text;
+    GetProductionDates;
+  except
+    Close;
+  end;
+end;
+
+end.

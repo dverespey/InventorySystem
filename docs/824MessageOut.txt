@@ -1,0 +1,36 @@
+From:MctrCmgr@taiamerica.com
+To:tlander@expertig.com
+To:tomlander@comcast.net
+Date:09.29.2004 13:44:21 PM                
+Subject:Application Advice - 856 Discrepancy Report.
+Mime-Version:
+Content-Type:
+X-Mailer:Mercator e-mail Adapter 1.0.6.0 
+
+From....: TMMBC (81267837)
+To......: TAI (93040)
+
+Issue...: 001 of 002
+DocType.: 856; Shipper's Identifying Number for Shipment (SID): 530907
+Status..: Item Accept with Error (IE)
+DateTime: Shipped: 08.06.2003, 06:52:00 AM
+
+Error...: Missing or Invalid Item Quantity (P)
+Message.: TEST     MISMATCH
+<---------------------- Data Dump Begin ---------------------->
+0000000126
+<---------------------- Data Dump End ------------------------>
+
+
+Issue...: 002 of 002
+DocType.: 856; Shipper's Identifying Number for Shipment (SID): 530907
+Status..: Item Reject (IR)
+DateTime: Shipped: 08.06.2003, 06:52:00 AM
+
+Error...: Missing or Invalid Item Quantity (P)
+Message.: DUP 856
+<---------------------- Data Dump Begin ---------------------->
+0000000126
+<---------------------- Data Dump End ------------------------>
+
+

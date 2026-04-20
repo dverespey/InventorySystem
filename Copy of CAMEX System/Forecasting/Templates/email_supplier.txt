@@ -1,0 +1,9 @@
+Dear %RECIPIENTNAME%,
+
+At %COMPANY%
+
+Today is %TODAY% and the file is %ORDERFILENAME%.
+
+Thanx,
+
+WQS
