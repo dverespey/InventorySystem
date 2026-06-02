@@ -33,7 +33,7 @@ Admin/auth/shell.
 ## Progress
 | Area | Spec | Rebuilt |
 |------|:----:|:-------:|
-| Master data | ⬜ | ⬜ |
+| Master data | 🟨 [Supplier ✅](master-data/supplier.md) | ⬜ |
 | Production calendar | ⬜ | ⬜ |
 | Inventory / Stock | ⬜ | ⬜ |
 | Receiving | ⬜ | ⬜ |

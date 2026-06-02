@@ -43,6 +43,7 @@ thin UI over named CRUD procs. So:
 | [references/database-objects.md](references/database-objects.md) | All 41 tables, 179 procs (grouped), 24 triggers, and what they govern |
 | [references/module-map.md](references/module-map.md) | The ~45 live forms grouped into functional areas → target web modules |
 | [references/migration-strategy.md](references/migration-strategy.md) | Phased roadmap, stack rationale, proc→code mapping pattern, parallel-run plan |
+| [references/cross-cutting-patterns.md](references/cross-cutting-patterns.md) | Recurring patterns (dup-check, string timestamps, enums, triggers) + multi-site lens — **check before each module** |
 | [templates/module-analysis-template.md](templates/module-analysis-template.md) | Fill-in template for deep-diving one module |
 | [scripts/sql.sh](scripts/sql.sh) | Helper: read the UTF-16 SQL files (grep them safely) |
 
@@ -74,3 +75,7 @@ thin UI over named CRUD procs. So:
 
 Analysis is incremental. See `docs/analysis/` for completed module specs and
 `references/migration-strategy.md` for the phase checklist / progress.
+
+**Worked example:** [`docs/analysis/master-data/supplier.md`](../../../docs/analysis/master-data/supplier.md)
+is the first fully analyzed module — use it as the reference for the depth/shape a
+completed module spec should have.
