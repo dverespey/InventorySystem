@@ -51,3 +51,6 @@ Findings that span modules (live legacy defects, recurring hazards) live in `cro
   wrong-target retry-recursion bugs in `DataModule.pas`** (8 CRITICAL, incl. 4 `Delete*` methods that
   can silently delete an unrelated supplier on a transient error). Legacy-hotfix candidates +
   rebuild fix. See pattern **P12** in the skill's `cross-cutting-patterns.md`.
+- [`trigger-source-reconciliation.md`](cross-cutting/trigger-source-reconciliation.md) — the **24 live
+  triggers** (`DB Schema/Create Inventory.sql` is authoritative); **`docs/triggers.sql` is an obsolete
+  pre-int-FK-refactor snapshot** (keys on dropped string columns, missing 5 triggers). Don't port from it.

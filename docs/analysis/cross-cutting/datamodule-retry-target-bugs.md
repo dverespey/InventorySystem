@@ -38,7 +38,7 @@ retry at the **enclosing** method (or remove the in-method recursion).
 
 | # | Method | Line | Wrong target | Victim table | Keyed on | Cascade |
 |---|--------|-----:|--------------|--------------|----------|---------|
-| 1 | `DeleteManifestCostInfo` | 1804 | `DeleteSupplierInfo` | `INV_SUPPLIER_MST` | shared `fRecordID` (a manifest-cost id) | ✅ `DELETE_SupplierCode` blanks `INV_PARTS_STOCK_MST.VC_SUPPLIER_CODE` |
+| 1 | `DeleteManifestCostInfo` | 1804 | `DeleteSupplierInfo` | `INV_SUPPLIER_MST` | shared `fRecordID` (a manifest-cost id) | ✅ live `DELETE_SupplierCode` nulls `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID` |
 | 2 | `DeleteMonthlyPOInfo` | 2020 | `DeleteSupplierInfo` | `INV_SUPPLIER_MST` | shared `fRecordID` (stale; method never sets it) | ✅ same trigger cascade |
 | 3 | `DeleteRenbanGroupInfo` | 2234 | `DeleteSupplierInfo` | `INV_SUPPLIER_MST` | shared `fRecordID` (a renban id) | ✅ same trigger cascade |
 | 4 | `DeleteOvertimeHolidayInfo` | 6651 | `DeleteSupplierInfo` | `INV_SUPPLIER_MST` | shared `fRecordID` (a special-date id) | ✅ same trigger cascade **+ crosses ALC→Inv connection** |
@@ -50,8 +50,11 @@ retry at the **enclosing** method (or remove the in-method recursion).
 **The `DeleteSupplierInfo` magnet:** 4 of the 5 wrong-target DELETEs land on
 `DeleteSupplierInfo` (it sits where the copy-paste source was). Worst case for each: a
 transient error during an unrelated delete → **a real supplier row is deleted** (by an id
-borrowed from another table) → the `DELETE_SupplierCode` trigger then **blanks
-`VC_SUPPLIER_CODE` on every part of that supplier** in `INV_PARTS_STOCK_MST`. This is the
+borrowed from another table) → the live `DELETE_SupplierCode` trigger then **nulls
+`IN_SUPPLIER_ID` on every part of that supplier** in `INV_PARTS_STOCK_MST`, orphaning them
+from their supplier. (The trigger's exact live behavior — nulling the int FK, not blanking a
+string code — is confirmed in [`trigger-source-reconciliation.md`](trigger-source-reconciliation.md);
+the obsolete `docs/triggers.sql` form blanks `VC_SUPPLIER_CODE`, a dropped column.) This is the
 single highest-impact path in the unit.
 
 ## 🟠 MODERATE (8) — wrong write, constrained

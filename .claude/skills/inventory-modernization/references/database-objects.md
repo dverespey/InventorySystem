@@ -151,5 +151,9 @@ lose them. Grouped by what they guard:
   `DELETE_SupplierCode`, `DELETE_SizeCode`, `DELETE_LogisticsCode`,
   `DELETE_RenbanGroupCode`, `UPDATE_AssyRatioMst`
 
-> Full set also mirrored in `docs/triggers.sql`. Diff the two before trusting either as
-> canonical; capture each trigger's exact rule when migrating its table.
+> **Authoritative source = `DB Schema/Create Inventory.sql`** (these 24). `docs/triggers.sql`
+> is an **obsolete pre-int-FK-refactor snapshot** — it keys on dropped string columns
+> (`VC_SUPPLIER_CODE`, `VC_PART_NUMBER`, `VC_*_CODE`), is missing 5 live triggers, and must
+> not be trusted. The live `*Code` DELETE triggers **null the int FK** on the child table
+> (e.g. `DELETE_SupplierCode` → `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID = NULL`). Full mapping:
+> [`docs/analysis/cross-cutting/trigger-source-reconciliation.md`](../../../docs/analysis/cross-cutting/trigger-source-reconciliation.md).
