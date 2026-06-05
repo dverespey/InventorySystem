@@ -27,7 +27,7 @@
 | Column | Type | Meaning / notes |
 |--------|------|-----------------|
 | `IN_SUPPLIER_ID` | int IDENTITY PK | Surrogate key (`RecordID` in UI) |
-| `VC_SUPPLIER_CODE` | varchar(5) NOT NULL | **Business key — exactly 5 chars, unique** |
+| `VC_SUPPLIER_CODE` | varchar(5) NOT NULL | **Business key — exactly 5 chars; DB-unique via `IX_INV_SUPPLIER_MST`** |
 | `VC_SUPPLIER_NAME` | varchar(25) | |
 | `VC_ADDRESS`,`VC_CITY`,`VC_STATE`,`VC_ZIP`,`VC_COUNTRY` | varchar | Address (COUNTRY unused by form) |
 | `VC_TEL`,`VC_FAX` | varchar(10) | |
@@ -40,7 +40,7 @@
 | `BIT_SITE_NUMBER_IN_ORDER` | bit | **Include site number in order file** — latent multi-site hook |
 | `VC_CREATE_ORDER_SHEET` | varchar(5) | Part type that triggers order-sheet creation |
 | `VC_INVENTORY_ADD_POINT` | varchar(1) | `S`=SHIPPED, `A`=ARRIVED (when stock is counted as on-hand) |
-| `VC_ADD`,`VC_LASTUPDATE` | varchar(16) | **Timestamps stored as `yyyymmddHHMMSS` strings**, not datetime ⚠️ |
+| `VC_ADD`,`VC_LASTUPDATE` | varchar(16) | **Timestamps stored as `yyyymmddHHMMSSff` strings** (16 chars: `CONVERT(…,112)` date + 4×`SUBSTRING(…,114)` = HH+MM+SS+`ff`), not datetime ⚠️ |
 
 **Triggers on these tables:**
 - `DELETE_SupplierCode` (on `INV_SUPPLIER_MST` FOR DELETE): sets
@@ -66,11 +66,13 @@ DeleteSupplierInfo` use a single ADO `Inv_StoredProc`, setting `ProcedureName :=
 ## 4. Business rules & edge cases
 - **Supplier code = exactly 5 chars** (form `Validate`: `length < 5` rejected; field is
   varchar(5) so >5 truncates).
-- **Code must be unique** — enforced by app-side dup check, *not* a DB constraint.
-  → In the rebuild, make this a real unique index + model validation.
+- **Code must be unique** — enforced **both** by the app-side dup check (the two-step Insert) **and**
+  by a real DB UNIQUE index `IX_INV_SUPPLIER_MST` on `VC_SUPPLIER_CODE` (verified in the schema). The
+  app check is redundant with the index; the index is the true backstop against a rename collision.
+  → In the rebuild, a model `uniqueness` validation backed by that **existing** index replaces the app check.
 - **Logistics is referenced by name** in the UI but stored as id; an empty/blank combo
   saves `IN_LOGISTICS_ID = NULL` (explicit "empty string bug" workaround in `HoldDetails`).
-- **Timestamps are `yyyymmddHHMMSS` strings** (`VC_ADD` on insert, `VC_LASTUPDATE` on
+- **Timestamps are `yyyymmddHHMMSSff` strings** (16 chars; `VC_ADD` on insert, `VC_LASTUPDATE` on
   update). Preserve format if the legacy app keeps reading the same rows during parallel
   run; normalize to real timestamps only at the Postgres phase.
 - **Delete is soft on parts** (unlink via trigger), hard on the supplier row.
@@ -106,7 +108,7 @@ DeleteSupplierInfo` use a single ADO `Inv_StoredProc`, setting `ProcedureName :=
 - [ ] Stage 2 — writes via wrapped procs (keeps app-side dup check + trigger behavior).
 - [ ] Stage 3 — reimplement: ActiveRecord validations replace the dup check; a
       `dependent: :nullify` association replaces `DELETE_SupplierCode`; real timestamps;
-      add the unique index. Postgres-ready.
+      carry the **existing** `IX_INV_SUPPLIER_MST` unique index across. Postgres-ready.
 
 ## 8. Open questions for the user (domain expert)
 1. **Multi-site & suppliers:** when the app goes multi-site, is the supplier/vendor list

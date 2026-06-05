@@ -45,6 +45,79 @@ Search buttons often loop the already-loaded dataset in memory (e.g. `SearchGrid
 than re-querying.
 - **Rebuild:** replace with server-side query + pagination; trivially better.
 
+## P8 — Recursive retry-on-error in DataModule methods
+Every `DataModule.pas` data method wraps its ADO call in the same error harness: on an
+exception, if a shared `fErrorCount < 3` it **recursively re-calls itself**, with a `finally`
+that does `Inv_StoredProc.Close; fErrorCount := 0`; on a hard failure it `ShowMessage`s,
+`LogActLog('ERROR',…)`, and raises a distinct `EDatabaseError`. Pervasive — `fErrorCount`
+appears ~240× across the unit.
+- First seen: Supplier / Logistics (all four CRUD methods each).
+- **Rebuild:** this is transport-level retry. Replace with a single connection/retry policy
+  (e.g. a `tiny_tds` wrapper or `retriable`), not per-method recursion. The `LogActLog` audit
+  trail (`GET/INSERT/UPDATE/DELETE` + ERROR rows) is a real behavior to preserve as app logging.
+
+## P9 — Shared generic `RecordID` property as the row key
+Forms don't keep their own selected-id; they write the grid's identity column into one
+**shared** `DataModule.RecordID` property (set in `HoldDetails(True)` from a hidden grid field),
+then Update/Delete key off it. The same property is reused by Shipping/Invoice/ASN/etc.
+- First seen: Supplier, Logistics.
+- **Hazard:** if no row was selected first, `RecordID` is `0` or a **stale value from another
+  screen** — no guard exists. A cross-module write-to-wrong-row risk.
+- **Rebuild:** the id belongs to the request/resource (`params[:id]`), never shared mutable
+  state. This whole pattern disappears with RESTful routing.
+
+## P10 — Positional `INSERT` with no column list
+Some insert procs do `INSERT INTO <table> VALUES(...)` with **no explicit column list**, relying on
+physical column order (and sometimes writing the same value to two columns by position — e.g.
+`INSERT_ManifestCost` writes `@AddDate` to both `VC_ADD` and `VC_LAST_UPDATE`). Schema-order-fragile:
+any column add/reorder silently corrupts writes.
+- First seen: Manifest Cost (`INSERT_ManifestCost`). Contrast: Supplier/Logistics/Size **name** their columns.
+- **Rebuild:** always use explicit column lists; with ActiveRecord this disappears (AR names columns).
+  During a proc-wrap stage, audit every `VALUES(...)`-without-columns proc as fragile.
+
+## P11 — Financial/master tables with zero integrity guards
+A master that is **financially load-bearing** can still have **no PK constraint, no unique index, no
+FK, no trigger, and no app-side dup check** (P1 absent). `INV_MANIFEST_COST_MST.MO_PRICE` is the EDI
+810 invoice unit price, joined by **assy code alone** (the start/end manifest date window is ignored
+by every billing consumer — `REPORT_EDI810/810Recreate/856`, `SELECT_INVOICEItems`,
+`REPORT_INVOICESSummary/MonthlyINVOICESSummary`, `SELECT_ForecastDetailBCASN`). So duplicate
+assy-code rows silently **double-bill**, and a deleted price silently drops invoice lines.
+- First seen: Manifest Cost — the least-protected yet most financially critical master analyzed.
+- **Rebuild:** give financial/master tables the **strongest** constraints even when legacy has none
+  (real PK, unique-or-no-overlap on the business key, RI on delete). Always check what downstream
+  procs actually JOIN on before trusting a table's extra/window columns.
+
+## P12 — Wrong-target copy-paste inside the P8 retry recursion
+The recursive retry branch (see P8 above) is copy-pasted boilerplate, and in some modules it re-calls
+the **wrong module's** method. Verified in all four ManifestCost methods (`DataModule.pas`):
+`GetManifestCostInfo`→`GetSizeInfo`, `InsertManifestCostInfo`→`InsertSizeInfo`,
+`UpdateManifestCostInfo`→`UpdateSizeInfo`, **`DeleteManifestCostInfo`→`DeleteSupplierInfo`**. The last
+is dangerous: a transient DB error during a manifest-cost delete would run `DELETE_SupplierInfo`
+against the **shared** `RecordID` (P9) — deleting an unrelated supplier row.
+- **Rebuild:** P8's per-method recursion isn't just architecturally wrong, it's bug-prone — replace
+  with a single connection/retry policy. When auditing any module, **confirm each retry branch
+  re-calls its own method** (this is a fleet-wide grep worth doing during migration).
+
+## P13 — Feature-flag-gated navigation hub
+A menu/hub form that owns **no data** toggles which child-module entries are visible — and
+reroutes/relabels one entry — based on `[SITE]` INI booleans (`POEDISupport`, `GenerateEDI`). The
+*same* flags are re-checked independently in `MainMenu.Configure`, so the gating logic is duplicated
+across screens. (`MasterMaint` relabels its "&Monthly PO" button to "Manifest Cost" and reroutes it
+to a different master when `fiGenerateEDI` is true.)
+- First seen: `MasterMaint` (master-data hub).
+- **Rebuild:** model the INI `[SITE]` flags as per-site settings (`Site#generates_edi?` etc.) and
+  centralize visibility/route decisions in **one** policy object consumed by every nav — don't
+  re-check flags per screen. Replace `.Visible` toggles with policy-gated links. See [[project-multisite]].
+
+## P14 — `Hide; Child.Create; Execute; Free; Show` child-launch idiom
+Parent forms open children with the uniform `Hide; Child := TChild.Create(self); Child.Execute;
+Child.Free; Show;` dance (every `MasterMaint` button, and throughout `MainMenu`). Error safety is
+inconsistent — most handlers don't wrap it in `try..finally Show`, so a child exception leaves the
+parent hidden and bubbles to an `Application.Terminate` handler.
+- First seen: `MasterMaint`, `MainMenu`.
+- **Rebuild:** the whole modal dance disappears with RESTful routed pages. Do **not** preserve the
+  terminate-on-unhandled-exception behavior — show an error and stay on the page.
+
 ## Multi-site lens (apply to every module)
 The legacy app is single-site (identity in `INI [SITE]`). For each module ask:
 **"what here is implicitly single-site?"** Common culprits:
