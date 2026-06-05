@@ -44,3 +44,10 @@ Admin/auth/shell.
 | Assembly | ⬜ | ⬜ |
 | Reporting | ⬜ | ⬜ |
 | Admin / auth | ⬜ | ⬜ |
+
+## Cross-cutting findings
+Findings that span modules (live legacy defects, recurring hazards) live in `cross-cutting/`:
+- [`datamodule-retry-target-bugs.md`](cross-cutting/datamodule-retry-target-bugs.md) — **29 confirmed
+  wrong-target retry-recursion bugs in `DataModule.pas`** (8 CRITICAL, incl. 4 `Delete*` methods that
+  can silently delete an unrelated supplier on a transient error). Legacy-hotfix candidates +
+  rebuild fix. See pattern **P12** in the skill's `cross-cutting-patterns.md`.

@@ -88,15 +88,20 @@ assy-code rows silently **double-bill**, and a deleted price silently drops invo
   procs actually JOIN on before trusting a table's extra/window columns.
 
 ## P12 — Wrong-target copy-paste inside the P8 retry recursion
-The recursive retry branch (see P8 above) is copy-pasted boilerplate, and in some modules it re-calls
-the **wrong module's** method. Verified in all four ManifestCost methods (`DataModule.pas`):
-`GetManifestCostInfo`→`GetSizeInfo`, `InsertManifestCostInfo`→`InsertSizeInfo`,
-`UpdateManifestCostInfo`→`UpdateSizeInfo`, **`DeleteManifestCostInfo`→`DeleteSupplierInfo`**. The last
-is dangerous: a transient DB error during a manifest-cost delete would run `DELETE_SupplierInfo`
-against the **shared** `RecordID` (P9) — deleting an unrelated supplier row.
-- **Rebuild:** P8's per-method recursion isn't just architecturally wrong, it's bug-prone — replace
-  with a single connection/retry policy. When auditing any module, **confirm each retry branch
-  re-calls its own method** (this is a fleet-wide grep worth doing during migration).
+The recursive retry branch (see P8 above) is copy-pasted boilerplate, and the retry call was
+frequently **never renamed** — so it re-invokes a *different* method. A **full fleet audit of
+`DataModule.pas` (2026-06-05) found 29 confirmed wrong-target retries, 0 false positives**:
+**8 CRITICAL** (wrong-table write/DELETE keyed on the shared `fRecordID`/`fBroadCode`, P9),
+8 MODERATE, 13 LOW (wrong SELECT only). The worst: **four `Delete*` methods recurse into
+`DeleteSupplierInfo`** (ManifestCost, MonthlyPO, RenbanGroup, OvertimeHoliday) — a transient error
+can delete an unrelated supplier by a borrowed id and fire `DELETE_SupplierCode`, blanking
+`VC_SUPPLIER_CODE` across `INV_PARTS_STOCK_MST`. These fire only on the retry path, so they are
+latent. Full register + per-method severity/line/fix:
+[`docs/analysis/cross-cutting/datamodule-retry-target-bugs.md`](../../../docs/analysis/cross-cutting/datamodule-retry-target-bugs.md).
+- **Root cause = P8 × P12 × P9 stacked** (per-method recursion × un-renamed retry × shared key).
+- **Rebuild:** delete the in-method recursion; use one generic bounded transport-retry that
+  re-invokes the *same* op, and pass keys as explicit per-call args (never shared singleton state).
+  Removing any one of the three patterns kills the CRITICAL class.
 
 ## P13 — Feature-flag-gated navigation hub
 A menu/hub form that owns **no data** toggles which child-module entries are visible — and
