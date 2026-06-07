@@ -35,7 +35,7 @@ Admin/auth/shell.
 |------|:----:|:-------:|
 | Master data | ✅ [Supplier](master-data/supplier.md) · [Logistics](master-data/logistics.md) · [Size](master-data/size.md) · [Manifest cost](master-data/manifest-cost.md) · [Master-maint hub](master-data/master-maint.md) | ⬜ |
 | Production calendar | ⬜ | ⬜ |
-| Inventory / Stock | ⬜ | ⬜ |
+| Inventory / Stock | ✅ [Parts-stock master](inventory-stock/parts-stock-master.md) · [Stocktaking](inventory-stock/stocktaking.md) · [Inv-mgmt](inventory-stock/inv-mgmt.md) · [Logistics breakdown](inventory-stock/logistics-breakdown.md) | ⬜ |
 | Receiving | ⬜ | ⬜ |
 | Shipping | ⬜ | ⬜ |
 | Ordering & Renban | ⬜ | ⬜ |
