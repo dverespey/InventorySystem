@@ -210,6 +210,7 @@ status *value* written to whichever status column the keyword selects (ship date
 - **Plant label is from INI, not the file:** the history/log messages use `Data_Module.fiPlantName.AsString`
   (`[SITE] PlantName`, default `NUMMI`) — the same UPDATE proc (`UPDATE_OrderPLANT`) is used for both
   `ARRIVEDMANUF` and `ARRIVEDNUMMI`; only the **log text** differs, driven by the site's configured plant name.
+  Post-decision (D1) this plant name comes from the **`sites` table** (current-site row), not the single-install INI.
 - **Per-line error isolation:** a DB error or parse error on one line is caught, logged, and the batch
   continues. The `// Create Error report<<<<` stub shows an intended-but-unbuilt error report.
 - **Archive step is broken (bug):** the form sets `CopyFile.CopyFrom := filename` but **never sets
@@ -234,7 +235,8 @@ status *value* written to whichever status column the keyword selects (ship date
     A true X12 856 inbound parser is the eventual target (this flat file is a poor-man's 856 status feed).
   - **Fix the archive bug:** move/copy the consumed file to a per-site configured archive target (or mark it
     processed in the DB) — never leave it in place. Replace the local `[DIRECTORIES] LogisticsInputDir`
-    Windows path (multi-site lens — see §8).
+    Windows path with a per-site path column on the `sites` table (D1 — sites are fully isolated, each with
+    its own carrier feed; see §8.6).
   - Surface a **summary report** of the batch (the `// Create Error report` the legacy never built): counts of
     updated / "Renban not found" / errored lines, and the resulting stock-qty deltas.
   - Make the fixed-width parse a declarative spec (field offsets/lengths), and **log unrecognized status
@@ -247,6 +249,11 @@ status *value* written to whichever status column the keyword selects (ship date
   - `OpenOrder` associations (by convention, no declared FK): `belongs_to :supplier, primary_key:
     'VC_SUPPLIER_CODE', foreign_key: 'VC_SUPPLIER_CODE'`; `belongs_to :part_stock, primary_key:
     'VC_PART_NUMBER', foreign_key: 'VC_PART_NUMBER'` (both string keys — this table was not int-refactored).
+  - **Multi-site (D1):** `OpenOrder` also `belongs_to :site` with enforced **current-site scoping** (every
+    Renban lookup and `UPDATE_Order*` write filtered to the current site); the Renban key's uniqueness becomes
+    composite — the unique index is **`(site_id, VC_RENBAN_NUMBER)`**, not global (likewise the by-convention
+    supplier/part links are per-site). On-hand stock is per-site, so the trigger/`StockBalanceService` qty math
+    moves the **current site's** `INV_PARTS_STOCK_MST` rows only.
   - Status columns become an explicit status/lifecycle concern; the supplier's `VC_INVENTORY_ADD_POINT`
     (`S`/`A`) is a Rails `enum` (P4) consulted by the stock-move service.
 - **Service object (the core):** `LogisticsStatusIngestService` (or a `Python` parser feeding it) that, per
@@ -280,6 +287,11 @@ status *value* written to whichever status column the keyword selects (ship date
       replace the flat-file parser with a maintained spec (or a real EDI 856 parser); add a unique/dedupe
       strategy for processed files; build the batch summary report. **Drop the dead
       `i.VC_ARRIVAL='' AND i.VC_ARRIVAL<>''` branch** (it never fires) rather than porting it.
+      **Multi-site (D1):** this Postgres phase adds the `site_id` (NOT NULL) FK on `INV_OPEN_ORDER_INF` (and
+      the other `INV_*` tables) referencing the new `sites` table, and replaces the global Renban index with a
+      **per-site unique index `(site_id, VC_RENBAN_NUMBER)`**; the carrier feed becomes per-site and the
+      `[SITE]`/`[DIRECTORIES]` INI values (plant name, input/archive paths) become `sites` columns. The legacy
+      single-site SQL Server DB stays untouched during the parallel run.
 
 ## 8. Open questions for the user (domain expert)
 1. **What system emits this file, and is it really a substitute 856?** The format (Renban + equipment + DT +
@@ -306,11 +318,13 @@ status *value* written to whichever status column the keyword selects (ship date
    archived copy? Where should consumed logistics files go in a multi-site web deployment (per-site share / SFTP
    / object store), and do we need a **processed-file ledger** to prevent re-ingest (the idempotent procs stop
    double stock-movement, but not re-reading a stale file)?
-6. **Multi-site:** the input path is `[DIRECTORIES] LogisticsInputDir` (default `c:\_Inventory_Control\`) and
-   the plant label is `[SITE] PlantName` (default `NUMMI`) — both single-site INI values. When multi-site, each
-   site has its own carrier feed and plant name; confirm the ingest is **per-site** and `INV_OPEN_ORDER_INF`
-   needs a `site_id` scope (it has none today). Renban/part keys are global strings — are they
-   guaranteed unique across sites?
+6. ✅ **RESOLVED (D1):** per-site — sites run **fully isolated** (no shared inventory/data). The carrier-feed
+   ingest is **per-site**; `INV_OPEN_ORDER_INF` (which has **no** site/plant column today) gains a `site_id`
+   (NOT NULL) FK referencing a new `sites` table, and every read/write is scoped to the current site. The
+   input path (`[DIRECTORIES] LogisticsInputDir`, default `c:\_Inventory_Control\`) and plant label
+   (`[SITE] PlantName`, default `NUMMI`) move **out of the INI and into the `sites` table** as per-site
+   columns. Renban/part keys are **per-site, not global**: their uniqueness becomes composite
+   `(site_id, VC_RENBAN_NUMBER)` / `(site_id, VC_PART_NUMBER)`. See decision D1 (`docs/analysis/decisions.md`).
 7. **`Lot`/`VC_PLANT_PARKING` truncation:** the proc caps `@Lot` at `varchar(4)` though the file field is 5 and
    the column is 10. Is 4 chars correct, or is plant-parking being silently truncated?
 

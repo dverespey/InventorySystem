@@ -200,7 +200,9 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
   be 0 or a leftover value from another module — no guard. Compounded by the Delete
   retry-path bug (§3) that could target `DELETE_SupplierInfo`.
 - **EDI feature-flag gate:** the screen only opens when `fiGenerateEDI` is true; otherwise
-  the legacy `MonthlyPOMaster` opens instead. Both are present in the build.
+  the legacy `MonthlyPOMaster` opens instead. Both are present in the build. (Per decision D1,
+  docs/analysis/decisions.md, this flag — today a `[SITE]` INI value — becomes a per-site
+  column on the `sites` table.)
 
 ## 5. UI / UX notes
 - Grid + detail-panel pattern; selecting a row (or any `OnDataChange`) syncs the panel and
@@ -237,12 +239,18 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
     string `VC_ASSY_PART_NUMBER_CODE`. Model the read side as a lookup
     (`AsnDetail`/`InvoiceItem` resolve price by assy code). Do **not** add a `dependent:`
     cascade (legacy has no trigger); decide delete behavior explicitly (§8).
+    - **`belongs_to :site`** (per decision D1, docs/analysis/decisions.md): every row is
+      per-site, with current-site scoping applied to all queries (the legacy unfiltered
+      `SELECT_ManifestCost ''` becomes site-scoped). Assy-code lookups by the billing read
+      side also scope to the current site.
   - **Validations (deliberate improvements over legacy, which had none):** presence of
     `assy_part_number_code`, `start_manifest`, `end_manifest`, `price`; `price`
     numericality (≥ 0 — confirm with domain expert); `start_manifest <= end_manifest`;
     and the **critical uniqueness/overlap rule** — at minimum a unique index on
-    `assy_part_number_code` (if one-price-per-assembly) or a **no-overlapping-window**
-    validation per assy code (if time-bounded pricing is real). This is the fix for the
+    `(site_id, assy_part_number_code)` (if one-price-per-assembly) or a **no-overlapping-window**
+    validation per (site, assy code) (if time-bounded pricing is real). Per decision D1
+    (docs/analysis/decisions.md) the key is unique **per-site**, so the unique index is the
+    composite `(site_id, assy_part_number_code)`, not a global one. This is the fix for the
     double-billing hazard (§4, §8).
   - **No enums** (no P4). `assy_manifest_number` is a free 2-char string (`'01'..'99'`).
   - Timestamps: write `vc_add` on create and `vc_last_update` on create+update as
@@ -253,7 +261,9 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
 - **Views:** index (server-side searchable/paginated list, replacing the in-memory `LIKE`
   filter, P7) + new/edit form. Assy Code select sourced from the assembly-code domain;
   Manifest-ID select from a list; real date pickers; money input. Surface the EDI
-  feature-flag gate as a route/menu guard (parity with `fiGenerateEDI`).
+  feature-flag gate as a route/menu guard (parity with `fiGenerateEDI`) — note that per
+  decision D1 (docs/analysis/decisions.md) this flag, formerly read from the `[SITE]` INI
+  section, now lives as a per-site column on the `sites` table.
 - **Services:** none needed for CRUD. **Stage-1 option:** wrap the four existing procs
   (`SELECT/INSERT/UPDATE/DELETE_ManifestCost`) via `tiny_tds` for guaranteed parity — but
   **do NOT reproduce the wrong-target retry recursion** (§3); use a single connection/retry
@@ -277,6 +287,11 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
       checks; add the missing DB constraints (a real PK on `IN_MANIFEST_COST_ID` and a
       unique/exclusion constraint on assy code / window); real `date` and `decimal/money`
       columns replace `yyyymmdd`/string-audit columns; decide and implement delete RI (§8).
+      Per decision D1 (docs/analysis/decisions.md), this Postgres phase also adds the
+      `site_id` (NOT NULL) FK referencing the new `sites` table and makes the assy-code
+      uniqueness rule per-site — i.e. the unique/exclusion constraint becomes composite
+      `(site_id, VC_ASSY_PART_NUMBER_CODE[, window])`. The legacy single-site DB is left
+      untouched during the parallel run.
 
 ## 8. Open questions for the user (domain expert)
 1. **One price per assembly, or time-bounded prices?** The schema has start/end windows,
@@ -294,11 +309,13 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
    invoice/report lines (inner JOIN, no trigger, no RI). Should deletion be **blocked** when
    the assy code is referenced by any ASN-detail/invoice, **soft-deleted**, or is hard
    delete acceptable because prices are only ever future-dated?
-4. **Multi-site scope:** `INV_MANIFEST_COST_MST` has **no site/plant column** and every
-   query returns all rows unfiltered (multi-site lens). Are assembly prices **shared across
-   all sites** or **per-site**? (Likely per-site, since pricing/billing is per
-   customer-plant.) This decides whether the table needs a `site_id` scope and whether the
-   uniqueness rule is per-site.
+4. **Multi-site scope:** ✅ RESOLVED (D1, docs/analysis/decisions.md): **per-site** —
+   assembly prices are NOT shared. `INV_MANIFEST_COST_MST` (today no site/plant column, every
+   query returning all rows unfiltered) gains a `site_id` (NOT NULL) FK to the new `sites`
+   table; every row belongs to one site and every query is scoped to the current site. The
+   billing key `VC_ASSY_PART_NUMBER_CODE` becomes unique **per-site** (composite
+   `(site_id, VC_ASSY_PART_NUMBER_CODE)`), not global — so the uniqueness/overlap rule of
+   §8.1/§8.2 is enforced within a site. (Consistent with billing being per customer-plant.)
 5. **Assembly-code domain:** the Assy Code combo is sourced from `DISTINCT
    VC_ASSY_PART_NUMBER_CODE` in `INV_FORECAST_DETAIL_INF`. Is that the correct/authoritative
    list of billable assemblies, or should it come from a dedicated assembly master?

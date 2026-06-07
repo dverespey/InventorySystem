@@ -37,7 +37,7 @@ is a leaf master: it is *referenced by* others but references nothing itself.
 | Column | Type | Meaning / notes |
 |--------|------|-----------------|
 | `IN_LOGISTICS_ID` | int IDENTITY PK | Surrogate key (`RecordID` in UI, hidden grid `Fields[10]`) |
-| `VC_LOGISTICS_NAME` | varchar(25) NULL | **Business key — the identity of the row; UNIQUE via `IX_INV_LOGISTICS_MST`** (no 5-char code like Supplier) |
+| `VC_LOGISTICS_NAME` | varchar(25) NULL | **Business key — the identity of the row; UNIQUE via `IX_INV_LOGISTICS_MST`** (no 5-char code like Supplier). Per **D1** this uniqueness becomes **per-site composite `(site_id, VC_LOGISTICS_NAME)`**, not global |
 | `VC_ADDRESS` | varchar(50) | |
 | `VC_CITY` | varchar(50) | Form caps input at 10 ⚠️ (< DB 50) |
 | `VC_STATE` | varchar(50) | Form caps input at 10 ⚠️ (< DB 50) |
@@ -67,6 +67,9 @@ FK-lookup combos**.
   constraints. **No declared FK constraints out of this table.**
 - Inbound references (by convention, **no declared FK**): `INV_SUPPLIER_MST.IN_LOGISTICS_ID`,
   `INV_PARTS_STOCK_MST.IN_LOGISTICS_ID`, `INV_PARTS_STOCK_MST_HIST.IN_LOGISTICS_ID`.
+- **Multi-site (D1):** the live table has **no site column** today. The Postgres-phase rebuild adds a
+  `site_id` (NOT NULL) FK → `sites`, rows become per-site, and `IX_INV_LOGISTICS_MST` is replaced by
+  a per-site composite unique index `(site_id, VC_LOGISTICS_NAME)`. See §6/§7 and decision D1.
 
 **Triggers on these tables:**
 - `DELETE_LogisticsCode` (on `INV_LOGISTICS_MST` FOR DELETE, authoritative version at
@@ -180,9 +183,13 @@ so a stale `RecordID` from another screen is a real (latent) cross-module hazard
     by default**, because the legacy trigger leaves part FKs dangling. Make this an explicit §8
     decision (`:nullify` to fix the legacy gap, or `restrict_with_error` to block deleting an
     in-use logistics row); whatever is chosen, document the divergence from legacy.
+  - **Multi-site (D1):** `belongs_to :site` with enforced current-site scoping (every query filtered
+    to the current site); the carrier/logistics list is **per-site, not shared**. The unique index
+    becomes per-site composite **`(site_id, VC_LOGISTICS_NAME)`**.
   - Validations: `logistics_name` **presence** (the legacy form lacked this — a deliberate
-    improvement) + `uniqueness` (case-insensitive to match the SQL collation) backed by the existing
-    `IX_INV_LOGISTICS_MST` unique index. No `length: {is: …}` rule (no fixed code).
+    improvement) + `uniqueness` **scoped to `site_id`** (case-insensitive to match the SQL collation)
+    backed by the per-site composite `(site_id, VC_LOGISTICS_NAME)` unique index (replacing the global
+    `IX_INV_LOGISTICS_MST`). No `length: {is: …}` rule (no fixed code).
   - **No enums** (P4 not applicable). Map column readers/writers to the friendly names
     (`logistics_name`, `breakdown_order_directory`, `tel`, `country`, etc.).
   - Timestamps: `vc_add` on create, `vc_lastupdate` on update — **keep the `yyyymmddHHMMSSff`
@@ -208,24 +215,29 @@ so a stale `RecordID` from another screen is a real (latent) cross-module hazard
       `tiny_tds`, preserving the app-side dup check (P1) and the `DELETE_LogisticsCode` trigger
       behavior (supplier FK nulling, P5). Confirm `VC_ADD`/`VC_LASTUPDATE` strings still written.
 - [ ] **Stage 3 — reimplement (Postgres-ready):** ActiveRecord validations replace the app-side
-      dup check (presence + uniqueness on name, leaning on the existing unique index);
-      `has_many :suppliers, dependent: :nullify` replaces `DELETE_LogisticsCode`; **resolve the
+      dup check (presence + uniqueness on name, now **scoped to `site_id`**); `has_many :suppliers,
+      dependent: :nullify` replaces `DELETE_LogisticsCode`; **resolve the
       parts-FK gap** explicitly (nullify or restrict — §8); real timestamps replace the string
       audit columns; widen the form-truncated fields to DB widths.
+- [ ] **Multi-site (D1):** the Postgres phase adds the `site_id` (NOT NULL) FK → `sites` and replaces
+      `IX_INV_LOGISTICS_MST` with the per-site composite unique index `(site_id, VC_LOGISTICS_NAME)`;
+      the model gets `belongs_to :site` with current-site scoping. The legacy single-site SQL Server
+      DB is untouched during the parallel run (the new app filters to its one site). See decision D1.
 
 ## 8. Open questions for the user (domain expert)
-1. **Multi-site scope of logistics/carriers:** `INV_LOGISTICS_MST` has **no site/plant column** —
-   it is a single global table, and every query returns all rows unfiltered (multi-site lens). When
-   the app goes multi-site, is the carrier/logistics list **shared across all sites** or
-   **per-site**? This decides whether the table gets a `site_id` scope and whether the unique-name
-   constraint becomes per-site. (Same open question as Supplier §8.1 — likely should be answered
-   consistently for both masters.)
+1. ✅ **RESOLVED (D1): per-site** — multi-site scope of logistics/carriers. `INV_LOGISTICS_MST`
+   today has **no site/plant column** (single global table, every query returns all rows
+   unfiltered). Per **decision D1 (docs/analysis/decisions.md)**, sites run independently with full
+   data isolation: the table gains a `site_id` (NOT NULL) FK to the new `sites` table, the
+   carrier/logistics list is **per-site (not shared)**, and the unique-name constraint becomes
+   composite per-site — `(site_id, VC_LOGISTICS_NAME)`. (Resolved consistently with Supplier §8.1.)
 2. **`VC_BREAKDOWN_ORDER_DIRECTORY` replacement:** it is a **local Windows path** chosen via
    `SelectDirectory`, defaulting to `c:\`, used to write breakdown-order files and **read per-part**
    (`SELECT_PartsStockLogistics`). A server-side absolute Windows path is meaningless per browser
-   client (multi-site lens). What should replace it — a per-site configured output root (network
-   share / SFTP / object store) with a stored relative subpath, an upload target, or is the
-   file-output workflow going away? Also note the form caps this at **50 chars vs proc 215 vs DB 512** —
+   client; and per **D1** site-level paths now live in the `sites` table, not the `[DIRECTORIES]`
+   INI, so any output root is configured **per-site** there. What should replace this per-row
+   directory — a per-site configured output root (network share / SFTP / object store) with a
+   stored relative subpath, an upload target, or is the file-output workflow going away? Also note the form caps this at **50 chars vs proc 215 vs DB 512** —
    real paths almost certainly need the full width (or a different model entirely).
 3. **Name-as-key concerns:** Logistics has **no stable business code** — it is identified by an
    editable `VC_LOGISTICS_NAME`. Callers resolve it by name (supplier-save procs, the monthly

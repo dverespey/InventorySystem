@@ -67,7 +67,7 @@ the grid's "Date" comes from `VC_ADD`. ⚠️ A real surprise for parity (see §
 | Column | Type | Relevance |
 |--------|------|-----------|
 | `IN_PART_ID` | `int IDENTITY PK` (`PK_INV_PARTS_STOCK_MST`, clustered) | The join key the triggers use |
-| `VC_PART_NUMBER` | `varchar(12) NOT NULL` | **UNIQUE via `IX_INV_PARTS_STOCK_MST` (nonclustered)** — globally unique part number; the INSERT proc resolves it to `IN_PART_ID` |
+| `VC_PART_NUMBER` | `varchar(12) NOT NULL` | **UNIQUE via `IX_INV_PARTS_STOCK_MST` (nonclustered)** — unique part number (per decision D1 this becomes unique **per-site**, composite `(site_id, VC_PART_NUMBER)`, not global); the INSERT proc resolves it to `IN_PART_ID` |
 | `IN_QTY` | `int NULL` | **The on-hand quantity the stocktaking triggers adjust** — the core invariant |
 | `VC_LAST_UPDATE` | `varchar(16) NULL` | All three triggers stamp this when they adjust `IN_QTY` |
 
@@ -134,8 +134,8 @@ keyed on **`IN_PART_ID`** (int FK). **Exact qty math (the core inventory invaria
 
 | Proc | Op | Business rule (from the body) |
 |------|----|-------------------------------|
-| `SELECT_StockTakingInfo;1` (**no params**) | SELECT | Returns **all** rows (no filter, no paging). Joins `INV_STOCKTAKING_INF ST → INV_PARTS_STOCK_MST PS ON ST.IN_PART_ID = PS.IN_PART_ID → INV_SUPPLIER_MST SM ON SM.IN_SUPPLIER_ID = PS.IN_SUPPLIER_ID`. **Inner JOINs** ⚠️: a stocktaking row whose part has `IN_SUPPLIER_ID = NULL` (e.g. after a `DELETE_SupplierCode` unlink, P5) is **silently dropped from the list** (and thus uneditable from this screen, though its stock delta already applied). Selects 7 UI-aliased cols mapping 1:1 to grid `Fields[0..6]`: `Date` (sliced from `VC_ADD` → `yyyy/mm/dd`), `Supplier Code`, `Parts Code`, `Parts Name`, `QTY`, `Reason`, `RecordID` (= `IN_STOCKTAKING_ID`). `ORDER BY SM.VC_SUPPLIER_CODE, PS.VC_PART_NUMBER`. |
-| `INSERT_StockTakingInfo;1` (**3 params**: `@PartNumber varchar(12), @QTY int, @Reason varchar(300)`) | INSERT | Computes `@Add` = `yyyymmddHHMMSSff` string (P2). **Resolves part number → id:** `SELECT @PartID = IN_PART_ID FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER = @PartNumber` (**P3** — name→id in-proc; note **no supplier code is used in the lookup** — the part number is globally unique via `IX_INV_PARTS_STOCK_MST`). Inserts `(IN_PART_ID, IN_QTY, VC_REASON, VC_LAST_UPDATE=@Add, VC_ADD=@Add)` — **named column list** (not positional, contrast P10). ⚠️ **If the part number doesn't match any stock row, `@PartID` stays NULL** and the insert violates `IN_PART_ID NOT NULL` → error (no row, no trigger). **No duplicate guard** (none needed; a ledger allows many rows per part). |
+| `SELECT_StockTakingInfo;1` (**no params**) | SELECT | Returns **all** rows (no filter, no paging) — per decision D1 the rebuild scopes this to the current `site_id`. Joins `INV_STOCKTAKING_INF ST → INV_PARTS_STOCK_MST PS ON ST.IN_PART_ID = PS.IN_PART_ID → INV_SUPPLIER_MST SM ON SM.IN_SUPPLIER_ID = PS.IN_SUPPLIER_ID`. **Inner JOINs** ⚠️: a stocktaking row whose part has `IN_SUPPLIER_ID = NULL` (e.g. after a `DELETE_SupplierCode` unlink, P5) is **silently dropped from the list** (and thus uneditable from this screen, though its stock delta already applied). Selects 7 UI-aliased cols mapping 1:1 to grid `Fields[0..6]`: `Date` (sliced from `VC_ADD` → `yyyy/mm/dd`), `Supplier Code`, `Parts Code`, `Parts Name`, `QTY`, `Reason`, `RecordID` (= `IN_STOCKTAKING_ID`). `ORDER BY SM.VC_SUPPLIER_CODE, PS.VC_PART_NUMBER`. |
+| `INSERT_StockTakingInfo;1` (**3 params**: `@PartNumber varchar(12), @QTY int, @Reason varchar(300)`) | INSERT | Computes `@Add` = `yyyymmddHHMMSSff` string (P2). **Resolves part number → id:** `SELECT @PartID = IN_PART_ID FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER = @PartNumber` (**P3** — name→id in-proc; note **no supplier code is used in the lookup** — the part number is unique via `IX_INV_PARTS_STOCK_MST`; per decision D1 this lookup must also be **scoped to the current site**, since `VC_PART_NUMBER` becomes unique only per-site `(site_id, VC_PART_NUMBER)`). Inserts `(IN_PART_ID, IN_QTY, VC_REASON, VC_LAST_UPDATE=@Add, VC_ADD=@Add)` — **named column list** (not positional, contrast P10). ⚠️ **If the part number doesn't match any stock row, `@PartID` stays NULL** and the insert violates `IN_PART_ID NOT NULL` → error (no row, no trigger). **No duplicate guard** (none needed; a ledger allows many rows per part). |
 | `UPDATE_StockTakingInfo;1` (**5 params**: `@SupCode varchar(5), @PartCode varchar(12), @QTY int, @Reason varchar(300), @StocktakingID int`) | UPDATE | Updates **one row `WHERE IN_STOCKTAKING_ID = @StocktakingID`**, setting **only** `VC_LAST_UPDATE`, `IN_QTY`, `VC_REASON`. ⚠️ **`@SupCode` and `@PartCode` are declared but NEVER used** — the part/supplier of an existing row **cannot be changed** here (only qty + reason), and `IN_PART_ID` is left intact (so the `UPDATE_Stocktaking` trigger's two statements always hit the same part). ⚠️⚠️ **TIMESTAMP BUG:** `@Update` is **read before it is set** — `SET @Update = SUBSTRING(@Update,1,8) + …`. `@Update` is an undeclared-value (NULL) `varchar(16)` at that point, so `SUBSTRING(NULL,1,8)` → NULL and the whole expression → **NULL**. Net: **`VC_LAST_UPDATE` is set to NULL on every update**, and the `UPDATE_Stocktaking` trigger then stamps **NULL into `INV_PARTS_STOCK_MST.VC_LAST_UPDATE`** for that part. (The intended code clearly meant `SUBSTRING(CONVERT(varchar,getdate(),112),1,8)` for the date portion, as the insert/delete versions do.) Capture as a **bug to fix, not replicate** (§8/§9). |
 | `DELETE_StocktakingInfo;1` (**1 param**: `@StocktakingID int`) | DELETE | Hard-deletes `WHERE IN_STOCKTAKING_ID = @StocktakingID`. Relies entirely on `DELETE_Stocktaking` to reverse the stock delta. No in-use / RI check. |
 
@@ -219,8 +219,9 @@ line 243** (the daily-build-total Excel import). It:
   (a no-op adjustment), never NULL.
 - **Part identity is the 12-char part number.** `HoldDetails(False)` **rejects any Parts Code whose
   trimmed length ≠ 12** (`'Invalid Part Code'`) — the *only* validation in the form. The part number
-  is globally unique (`IX_INV_PARTS_STOCK_MST`), so the supplier shown is purely contextual; the INSERT
-  proc resolves the part **by number alone** (supplier code is not part of the lookup).
+  is unique (`IX_INV_PARTS_STOCK_MST`; per decision D1 unique **per-site**, composite `(site_id,
+  VC_PART_NUMBER)`), so the supplier shown is purely contextual; the INSERT proc resolves the part
+  **by number alone** (supplier code is not part of the lookup — but the resolution must be site-scoped).
 - **The Date picker is not persisted (⚠️ surprise).** Although the user picks a date, the INSERT proc
   stamps `VC_ADD`/`VC_LAST_UPDATE` from `getdate()` and the displayed grid "Date" is sliced from
   `VC_ADD`. So a backdated count cannot actually be recorded as a past date. The picker only influences
@@ -272,11 +273,16 @@ line 243** (the daily-build-total Excel import). It:
 - **Models:**
   - `StocktakingAdjustment` → `self.table_name = 'INV_STOCKTAKING_INF'`,
     `self.primary_key = 'IN_STOCKTAKING_ID'`. `belongs_to :parts_stock, foreign_key: 'IN_PART_ID'`
-    (model the link the legacy never declared as a real FK). Validations: `in_qty` numericality
-    (integer; allow negative — it's a delta), `parts_stock` presence (the part must resolve — replaces
-    the proc's silent NULL-`@PartID` failure), `vc_reason` length ≤ 300.
+    (model the link the legacy never declared as a real FK). **`belongs_to :site` (decision D1)** —
+    every adjustment carries a `site_id` (NOT NULL), with enforced current-site scoping (default scope
+    / query filter on `site_id`) so the unfiltered legacy list becomes per-site. Validations: `in_qty`
+    numericality (integer; allow negative — it's a delta), `parts_stock` presence (the part must
+    resolve **within the current site** — replaces the proc's silent NULL-`@PartID` failure),
+    `vc_reason` length ≤ 300, `site` presence.
   - `PartsStock` → `INV_PARTS_STOCK_MST` (`primary_key 'IN_PART_ID'`); `has_many
-    :stocktaking_adjustments, foreign_key: 'IN_PART_ID'`.
+    :stocktaking_adjustments, foreign_key: 'IN_PART_ID'`. Also `belongs_to :site` (D1) — on-hand stock
+    is per-site, and its unique index on the part number becomes composite **`(site_id,
+    VC_PART_NUMBER)`** (was global `IX_INV_PARTS_STOCK_MST`).
   - Timestamps: write `vc_add`/`vc_last_update` as `yyyymmddHHMMSSff` strings during parallel run (P2);
     normalize at the Postgres phase. **Fix the update-timestamp NULL bug** — always compute a real value.
 - **The stock-qty invariant → a service / transactional callback (replacing the 3 triggers):**
@@ -310,6 +316,10 @@ line 243** (the daily-build-total Excel import). It:
       adjustment into a **transactional model callback / service** (replacing the 3 triggers); add a
       **real FK** `IN_PART_ID → INV_PARTS_STOCK_MST` and a **PK constraint** on `IN_STOCKTAKING_ID`
       (legacy has neither); real timestamps; presence/numericality validations; server-side search.
+      **Multi-site (decision D1):** in this Postgres phase add the `site_id` (NOT NULL) FK →
+      `sites` table on `INV_STOCKTAKING_INF` and the **per-site unique index** `(site_id,
+      VC_PART_NUMBER)` on `INV_PARTS_STOCK_MST` (replacing the global `IX_INV_PARTS_STOCK_MST`); the
+      legacy single-site DB stays untouched during the parallel run.
 
 ## 8. Open questions for the user (domain expert)
 1. **Delta vs absolute count:** confirm stocktaking `IN_QTY` is intended as a **signed adjustment
@@ -328,10 +338,13 @@ line 243** (the daily-build-total Excel import). It:
 5. **Auto-scrap coupling:** `DailyBuildTotal` posts negative stocktaking rows ("Auto Scrap Delete")
    through this same table/trigger. Should auto-scrap remain modeled as a stocktaking adjustment (same
    ledger, distinguishable by reason), or become its own adjustment type/reason-code?
-6. **Multi-site:** `INV_STOCKTAKING_INF` has **no site/plant column**; `SELECT_StockTakingInfo` returns
-   **all** rows for the whole DB unfiltered (multi-site lens). When multi-site, must adjustments be
-   scoped per site (`site_id`)? Parts/suppliers are global today (`VC_PART_NUMBER` globally unique), so
-   stocktaking rows would need site scoping to avoid cross-site stock-qty leakage.
+6. **Multi-site:** ✅ RESOLVED (D1): per-site — sites run fully isolated (no shared inventory/data),
+   so `INV_STOCKTAKING_INF` gains a `site_id` (NOT NULL) FK → new `sites` table, every adjustment is
+   scoped to the current site, and `SELECT_StockTakingInfo` (today returns **all** rows for the whole
+   DB unfiltered) becomes site-filtered. `VC_PART_NUMBER` is no longer globally unique but unique
+   **per-site** (composite `(site_id, VC_PART_NUMBER)`), and on-hand stock is per-site, so stocktaking
+   rows are inherently site-scoped — eliminating the cross-site stock-qty leakage this question raised.
+   See decision D1 (docs/analysis/decisions.md).
 7. **Reason as free text:** should `VC_REASON` become a **coded reason** (cycle count, damage, scrap,
    correction…) with optional free text, for reporting? Today it's unstructured `varchar(300)`.
 

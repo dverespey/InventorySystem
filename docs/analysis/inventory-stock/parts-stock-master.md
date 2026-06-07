@@ -88,7 +88,9 @@
 **Constraints / indexes (authoritative):**
 - `PK_INV_PARTS_STOCK_MST` PRIMARY KEY **CLUSTERED** on `IN_PART_ID`.
 - `IX_INV_PARTS_STOCK_MST` **UNIQUE NONCLUSTERED on `VC_PART_NUMBER`** — a **real DB uniqueness
-  backstop** on the part number (same posture as the other masters' code indexes).
+  backstop** on the part number (same posture as the other masters' code indexes). **(Multi-site,
+  D1:** becomes composite **UNIQUE `(site_id, VC_PART_NUMBER)`** at the Postgres phase — per-site,
+  not global. See §8.7.)
 - DEFAULTs: `VC_LINE_NAME → 'TUNDRA'`, `MO_PART_COST → 0`.
 - **No declared FOREIGN KEY constraints involving this table.** The entire schema declares only
   **2 FKs** (`INV_ASN_DETAIL_MST→INV_ASN_MST`, `INV_PART_SHIPPING_INF→INV_SHIPPING_INF`); none
@@ -168,7 +170,7 @@ receiving + shipping families key on the string `VC_PART_NUMBER`.** All write `V
 
 | Proc | Op | Business rule (from body) |
 |------|----|---------------------------|
-| `SELECT_PartsStockInfo;1 @PartNum varchar(12) = ''` | SELECT | Single param. `@PartNum=''` → **all** parts; else the one `WHERE VC_PART_NUMBER=@PartNum`. Both branches **LEFT OUTER JOIN** the five masters (Supplier, Logistics, Renban, PartType, Size) so a NULL/dangling FK still returns the part with a blank label. Returns **30 UI-aliased columns** mapped 1:1 to grid `Fields[0..29]`: `Supplier Code, Parts Code, Logistics Name, Parts Name, Renban Group, Part Type, Line Name, Size Code, KANBAN, 1 Lot QTY, Lot Size Orders, Lead Time, Renban Count, Ship Days, Lead Time Mon..Sat, Ship Days Mon..Sat, QTY, Remarks, Part Cost, RecordID(=IN_PART_ID)`. **No name→id resolution** (ids are only returned). No `ORDER BY`. `VC_ADD`/`VC_LAST_UPDATE` not selected. |
+| `SELECT_PartsStockInfo;1 @PartNum varchar(12) = ''` | SELECT | Single param. `@PartNum=''` → **all** parts (legacy single-site returns every row unfiltered; under D1 this must be **scoped to the current `site_id`** — §8.7); else the one `WHERE VC_PART_NUMBER=@PartNum`. Both branches **LEFT OUTER JOIN** the five masters (Supplier, Logistics, Renban, PartType, Size) so a NULL/dangling FK still returns the part with a blank label. Returns **30 UI-aliased columns** mapped 1:1 to grid `Fields[0..29]`: `Supplier Code, Parts Code, Logistics Name, Parts Name, Renban Group, Part Type, Line Name, Size Code, KANBAN, 1 Lot QTY, Lot Size Orders, Lead Time, Renban Count, Ship Days, Lead Time Mon..Sat, Ship Days Mon..Sat, QTY, Remarks, Part Cost, RecordID(=IN_PART_ID)`. **No name→id resolution** (ids are only returned). No `ORDER BY`. `VC_ADD`/`VC_LAST_UPDATE` not selected. |
 | `INSERT_PartsStockInfo;1` (29 params) | INSERT | Computes `VC_ADD` as a `yyyymmddHHMMSSff` string (P2). **Resolves five labels→ids inside the proc** (P3): `@SupCode→IN_SUPPLIER_ID`, `@LogisticsName→IN_LOGISTICS_ID`, `@RenbanCode→IN_RENBAN_ID`, `@PartType→IN_PART_TYPE_ID`, `@SizeCode→IN_SIZE_ID` (unmatched label → NULL id). Then **explicit-column INSERT** (30 cols, names listed — **NOT P10**). `IN_PART_ID` identity not supplied, **not returned**. **No uniqueness check inside the proc** — the app two-step does the dup guard (see Call-mechanism). `IN_QTY` is set directly to `@QTY` — but `@QTY` carries the **default/loaded** value because the form's `Quantity_MaskEdit` is `ReadOnly` (the user can't type a new on-hand). ⚠️ **Param-width mismatches vs table:** `@SizeCode varchar(50)` (table `IN_SIZE_ID` is int, resolved by code; the code col `INV_SIZE_MST.VC_SIZE_CODE` is varchar(6), and the form caps the combo at 6 — proc is wider, harmless); `@RenbanCount varchar(3)` written into `IN_RENBAN_COUNT int`; `@LogisticsName varchar(25)` (matches `VC_LOGISTICS_NAME`). |
 | `UPDATE_PartsStockInfo;1` (30 params, +`@PartID int`) | UPDATE | Same five label→id resolutions (P3); sets `VC_LAST_UPDATE` (P2). Updates **by `IN_PART_ID = @PartID`** (the shared `RecordID`, P9). **Rewrites `VC_PART_NUMBER`** (the business key is editable) and **`SET IN_QTY = @QTY`** — but the form feeds `@QTY` the value `SetDetailBoxes` loaded from the selected grid row (the `Quantity_MaskEdit` is `ReadOnly`), so in normal UI operation the written value **equals** the loaded value and the on-hand is unchanged (see §4). Does not touch `VC_ADD`. **No app/proc uniqueness re-check** — a rename collision is caught only by `IX_INV_PARTS_STOCK_MST` (raw SQL error). Note the UPDATE fires `UPDATE_PartNumber`: HIST snapshot + qty-ledger row if `IN_QTY` moved + rename cascade. |
 | `DELETE_PartsStockInfo;1 @PartID integer` | DELETE | Hard-`DELETE INV_PARTS_STOCK_MST WHERE IN_PART_ID = @PartID`. Single surrogate param. No soft-delete, no in-use / RI check inside the proc — relies on the `DELETE_PartNumber` trigger to blank the assy-ratio/forecast string-code references. ⚠️ **Does not clean up transactional children** (open orders, rejects, stocktaking, shipping rows referencing the part by number) — see §8. |
@@ -218,7 +220,9 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
 ## 4. Business rules & edge cases
 - **Identity is `VC_PART_NUMBER`** (`MaxLength=12`, uppercased), backed by a **real DB UNIQUE
   index** `IX_INV_PARTS_STOCK_MST`. The surrogate `IN_PART_ID` is the actual key for update/delete
-  and the inbound FK from every other table.
+  and the inbound FK from every other table. **(Multi-site, per decision D1:** the part row gains a
+  `site_id` (NOT NULL) FK and this uniqueness becomes composite `(site_id, VC_PART_NUMBER)` — the
+  part number is unique per-site, not globally. See §8.7.)
 - **`IN_QTY` (on-hand) is trigger-maintained, and the legacy form does NOT expose it — the headline
   rule.** The `UPDATE_PartsStockInfo`/`INSERT_PartsStockInfo` procs *do* write `IN_QTY` (`SET IN_QTY =
   @QTY`), but the form's `Quantity_MaskEdit` is **`ReadOnly=True` (dfm line 458) and is never set
@@ -248,7 +252,8 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
   combo text is.
 - **`VC_LINE_NAME` is a string, not an FK**, sourced from the **ALC/Activity `LINE` catalog over a
   different DB connection** and defaulting to `'TUNDRA'`. No referential integrity; a line rename in
-  ALC would orphan the stored string. Multi-site/cross-DB concern (§8).
+  ALC would orphan the stored string. Cross-DB concern (§8.6); and per **decision D1** the part row is
+  now per-site (`site_id` FK), so the assembly line resolves within the current site's scope.
 - **`BIT_LOT_SIZE_ORDERS` is stored inverted** relative to the checkbox (`not Checked`), and toggling
   the checkbox enables/disables (and clears) the renban combo. Preserve the *meaning*, fix the
   inversion in the rebuild (store the boolean as displayed).
@@ -317,8 +322,12 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
     `has_many :part_qty_entries` (`INV_PART_QTY_INF`), `has_many :stock_history`
     (`INV_PARTS_STOCK_MST_HIST`). Transactional children (open orders, rejects, stocktaking,
     part-shipping) associate by `VC_PART_NUMBER` (number) — model carefully (§8).
+    **`belongs_to :site` (D1, §8.7)** — every part row belongs to one site (`site_id` NOT NULL),
+    with enforced **current-site scoping** (`default_scope`/`acts_as_tenant`); auth binds the user
+    to a site. On-hand is per-site.
   - Validations: `part_number` **presence** (the legacy length check is disabled — add a real one),
-    `length: {maximum: 12}`, **uniqueness** (case-insensitive, backed by `IX_INV_PARTS_STOCK_MST`).
+    `length: {maximum: 12}`, **uniqueness scoped to `site_id`** (case-insensitive; backed by the
+    composite unique index `(site_id, VC_PART_NUMBER)` that replaces `IX_INV_PARTS_STOCK_MST` — D1).
   - **`in_qty` must NOT be a plain mass-assignable attribute.** Model on-hand as a balance changed
     only through service transactions (receiving/shipping/reject/stocktaking) and an explicit
     manual-adjustment action that writes an `INV_PART_QTY_INF` ledger row (mirrors `UPDATE_PartNumber`).
@@ -358,13 +367,16 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
       **Keep on-hand read-only on the master form** (as the legacy `Quantity_MaskEdit` is) even in
       stage 2 — do not introduce a free qty field; route any correction through a separate explicit
       adjustment action that writes a ledger row.
-- [ ] **Stage 3 — reimplement (Postgres-ready):** ActiveRecord validations (presence + uniqueness on
-      part number) backed by `IX_INV_PARTS_STOCK_MST`; the 12 qty triggers become the four qty
-      services + ledger writes keyed on `IN_PART_ID`; `dependent: :nullify` replaces the master-delete
-      unlink triggers (decide the logistics/part-type dangling-FK fix, §8); real FKs replace
-      by-convention links; the part-number rename cascade either becomes a callback or disappears via
-      int-FK migration of AssyRatio/ForecastDetail; real timestamps replace the string audit columns;
-      decide transactional-child cleanup on part delete (§8).
+- [ ] **Stage 3 — reimplement (Postgres-ready):** **add the `site_id` (NOT NULL) FK → `sites` and
+      rebuild the part-number unique index as composite `(site_id, VC_PART_NUMBER)` — per-site, not
+      global (D1, §8.7); the legacy single-site DB stays untouched during the parallel run, so this
+      lands only in the Postgres phase.** ActiveRecord validations (presence + uniqueness on part
+      number, **scoped to `site_id`**) backed by that composite index; the 12 qty triggers become the
+      four qty services + ledger writes keyed on `IN_PART_ID`; `dependent: :nullify` replaces the
+      master-delete unlink triggers (decide the logistics/part-type dangling-FK fix, §8); real FKs
+      replace by-convention links; the part-number rename cascade either becomes a callback or
+      disappears via int-FK migration of AssyRatio/ForecastDetail; real timestamps replace the string
+      audit columns; decide transactional-child cleanup on part delete (§8).
 
 ## 8. Open questions for the user (domain expert)
 1. **Manual `IN_QTY` override semantics.** The legacy master form does **not** expose on-hand for
@@ -397,11 +409,14 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
 6. **`VC_LINE_NAME` from the ALC `LINE` catalog (cross-DB, string, default `'TUNDRA'`).** Should the
    assembly line become a real FK/lookup, and how does the cross-database `LINE` catalog map in a
    multi-site web app (is `LINE` per-site)?
-7. **Multi-site scope.** `INV_PARTS_STOCK_MST` has **no site column**; `VC_PART_NUMBER` is globally
-   unique. When multi-site, is the part catalog **shared** or **per-site**? (Decides `site_id`
-   scoping and whether part-number uniqueness becomes per-site — answer consistently with
-   Supplier/Size/Logistics §8.) The `HIST` table's typo column `VC__LINE_NAME` and the schema-order-
-   fragile `INSERT … SELECT *` HIST writes should also be cleaned up at the Postgres phase.
+7. ✅ **RESOLVED (D1): per-site — the part catalog is NOT shared.** Per decision D1
+   ([`docs/analysis/decisions.md`](../decisions.md)), sites run independently with full data
+   isolation: `INV_PARTS_STOCK_MST` gains a **`site_id` (NOT NULL) FK** → the new `sites` table,
+   every read/write is scoped to the current site, on-hand stock is per-site, and `VC_PART_NUMBER`
+   uniqueness becomes **composite `(site_id, VC_PART_NUMBER)`** (the `IX_INV_PARTS_STOCK_MST` unique
+   index is rebuilt on the pair) — NOT global. Resolved consistently with Supplier/Size/Logistics §8.
+   The `HIST` table's typo column `VC__LINE_NAME` and the schema-order-fragile `INSERT … SELECT *`
+   HIST writes should also be cleaned up at the Postgres phase.
 
 ## 9. Test cases / parity checks
 - **List all** → row count matches `SELECT_PartsStockInfo ''`; the 30 columns map 1:1 to grid

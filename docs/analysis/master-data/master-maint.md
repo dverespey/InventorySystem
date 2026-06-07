@@ -6,9 +6,10 @@
 > a one-screen button menu that opens the individual master editors (Supplier, Logistics,
 > Size, Parts/Stock, Renban Group, Assembly Detail, Assembly-Ratio, Monthly-PO /
 > Manifest-Cost, ASN/Invoice). It owns **no table, calls no stored procedure, and writes
-> nothing**. Its only "logic" is two `[SITE]` INI feature flags that toggle which buttons
-> appear and what one button is labeled/does. Read this spec as the **router/IA contract**
-> for the master-data section of the rebuilt app, not as a data spec.
+> nothing**. Its only "logic" is two `[SITE]` feature flags (legacy INI; per decision D1
+> these become **per-site `sites`-table columns** in the rebuild — docs/analysis/decisions.md)
+> that toggle which buttons appear and what one button is labeled/does. Read this spec as the
+> **router/IA contract** for the master-data section of the rebuilt app, not as a data spec.
 
 ## 1. Legacy surface
 - **Form:** `MasterMaint.pas` (5.2 KB / 198 lines) + `MasterMaint.dfm` (2.8 KB / 123 lines).
@@ -51,6 +52,11 @@ module, bound to the **`[SITE]`** section of `InventorySystem.INI` (confirmed in
 These are the **only** data dependencies. All table/proc work happens *inside the child
 forms* — see their own specs (`supplier.md`, `logistics.md`, and the not-yet-written
 PartsStock/Size/Renban/Assembly/ManifestCost/ASNInvoice specs).
+
+> **Multi-site (decision D1, docs/analysis/decisions.md):** both `POEDISupport` and
+> `GenerateEDI` move **out of the `[SITE]` INI and into the new `sites` table** as per-site
+> columns; the hub reads them from the **current site**, not the global INI. So the two
+> dependencies above become *site-scoped settings reads*, evaluated per-current-site.
 
 **Triggers on these tables:** none — there are no tables. (The hub is invisible to the
 24-trigger inventory.)
@@ -105,7 +111,9 @@ form, the Assy-Ratio button is hidden, and the **ASN/Invoice** button is shown. 
 old commented gate `//if data_module.fiAssemblerName.AsString = 'CAMEX'` — historically
 this branch keyed on the **plant name CAMEX**; DMV replaced it (2005-04-15) with the
 `fiGenerateEDI` flag. That is a **latent multi-site signal**: behavior that *was*
-site-name-specific is now a per-site boolean (good for the rebuild).
+site-name-specific is now a per-site boolean (good for the rebuild). Per decision D1
+(docs/analysis/decisions.md) this becomes a **per-site `sites.generates_edi` column** read
+for the current site — confirming the rebuild evaluates it per-current-site, not globally.
 
 **C. Assy-Ratio is dead in the UI** — immediately after the flag block:
 `AssyRatioMaster_Button.Visible := False; // not used yet`. This runs **unconditionally**,
@@ -179,9 +187,15 @@ pair of its own.
   area) rendering the link set, with each link gated by feature flags (below). Replace the
   10 buttons with links/cards.
 - **Feature flags (the real port target):** model `[SITE] POEDISupport` and
-  `[SITE] GenerateEDI` as **per-site settings** (a `Site#po_edi_support?` /
-  `Site#generates_edi?`, or a settings table) — *not* global constants, because the
-  rebuild is multi-site (see §8 / [[project-multisite]]). The view rules become:
+  `[SITE] GenerateEDI` as **per-site columns on the `sites` table** (`Site#po_edi_support?` /
+  `Site#generates_edi?`) — *not* global constants, because per decision D1
+  (docs/analysis/decisions.md) the rebuild is multi-site with full per-site isolation and all
+  `[SITE]` INI config moves into the `sites` table (see §8 / [[project-multisite]]). Every
+  child model `belongs_to :site` with **enforced current-site scoping**, and each child's
+  previously-global business key (`VC_SUPPLIER_CODE`, `VC_SIZE_CODE`, `VC_LOGISTICS_NAME`,
+  `VC_PART_NUMBER`, … — owned by the child specs) gains a **composite unique index
+  `(site_id, <key>)`**, not a global one. The hub itself owns no model/key; it simply reads
+  the two flags from the **current site**. The view rules become:
   - `po_edi_support?` → show **Monthly PO** link.
   - `generates_edi?` → Monthly-PO link **label = "Manifest Cost"** and **target =
     ManifestCost** (else label "Monthly PO", target MonthlyPo); show **ASN/Invoice** link;
@@ -203,14 +217,20 @@ pair of its own.
       "stage 3" here is **IA + policy hardening** — single feature-flag source of truth,
       per-site scoping, fix the overlap/dead-button artifacts, drop the modal Hide/Show
       pattern entirely (RESTful pages), rename the misleading legacy identifiers.
+- [ ] **Postgres / DB-modernization phase (decision D1, docs/analysis/decisions.md):** the
+      hub owns no table, but this is when the `[SITE]` flags (`POEDISupport`, `GenerateEDI`)
+      land as **per-site columns on the new `sites` table** (replacing the INI), and the
+      child masters' tables gain their `site_id` (NOT NULL) FK + **per-site unique index
+      `(site_id, <key>)`** (per each child spec). The legacy single-site DB is untouched
+      during the parallel run; these constraints are added in this phase, not at stage 1.
 
 ## 8. Open questions for the user (domain expert)
-1. **Per-site feature flags:** `POEDISupport` and `GenerateEDI` live in `[SITE]` of the
-   single-site INI (both default `True`). In multi-site, are these **per-site** toggles
-   (most likely) — i.e. some plants generate EDI / use PO-EDI and others don't — and where
-   should they live (a `sites` row, a settings table)? This decides whether the masters nav
-   is computed per-current-site. (Same multi-site lens as supplier.md §8.1 / logistics.md
-   §8.1.)
+1. ✅ **RESOLVED (D1):** per-site — `POEDISupport` and `GenerateEDI` (and all other `[SITE]`
+   config) become **columns on the new `sites` table**, not INI keys; each is a per-site
+   toggle (some plants generate EDI / use PO-EDI and others don't). The masters nav is therefore
+   computed **per-current-site** (`Site#po_edi_support?` / `Site#generates_edi?`). Per decision
+   D1 (docs/analysis/decisions.md), all `[SITE]` INI config moves out of the INI and into the
+   `sites` table. (Same multi-site lens as supplier.md §8.1 / logistics.md §8.1.)
 2. **Dead Assy-Ratio entry:** `&ASSY / Ratio Master` is **force-hidden** here
    (`Visible := False; // not used yet`) yet `AssyRatioMaster` is a **live** unit (dpr 17)
    with its own `*_AssyRatioInfo` procs. Is Assy-Ratio maintenance reachable from another

@@ -42,7 +42,7 @@ Like Logistics and unlike Supplier, this form pulls in **no FK-lookup combos** �
 | Column | Type | Meaning / notes |
 |--------|------|-----------------|
 | `IN_SIZE_ID` | `int IDENTITY(1,1) NOT NULL` PK | Surrogate key (`RecordID` in UI, hidden grid `Fields[4]`) |
-| `VC_SIZE_CODE` | `varchar(6) NOT NULL` | **Business key — the size code; UNIQUE via `IX_INV_SIZE_MST`.** Form caps input at `MaxLength=6` (matches DB). `CharCase=ecUpperCase` |
+| `VC_SIZE_CODE` | `varchar(6) NOT NULL` | **Business key — the size code; UNIQUE via `IX_INV_SIZE_MST`** (today global; becomes **per-site composite (site_id, VC_SIZE_CODE)** under D1). Form caps input at `MaxLength=6` (matches DB). `CharCase=ecUpperCase` |
 | `VC_SIZE_NAME` | `varchar(50) NOT NULL` | Human-readable size name. Form `MaxLength=50` (matches DB), uppercased |
 | `IN_USAGE` | `int NULL` | **Daily usage** — planning quantity per day. Form is a `TMaskEdit` `'99999;1; '`, `MaxLength=5` ⚠️ (form caps at 5 digits / max 99999; DB `int` allows far more) |
 | `IN_DAYS` | `int NULL` | **Safety days** — days of safety stock. Same `TMaskEdit` cap of 5 digits ⚠️ |
@@ -69,10 +69,11 @@ Like Logistics and unlike Supplier, this form pulls in **no FK-lookup combos** �
 **Constraints / indexes:**
 - `PK_INV_SIZE_MST` PRIMARY KEY CLUSTERED (`IN_SIZE_ID`).
 - `IX_INV_SIZE_MST` **UNIQUE NONCLUSTERED (`VC_SIZE_CODE`)** — a **real DB unique backstop** on
-  the code. **All three masters carry a real DB UNIQUE index** (Size on `VC_SIZE_CODE`, Supplier on
-  `VC_SUPPLIER_CODE` via `IX_INV_SUPPLIER_MST`, Logistics on `VC_LOGISTICS_NAME`) — Size's posture
-  **matches** Supplier's, it is not "stronger" (an earlier draft wrongly said Supplier's code had
-  no DB uniqueness). No DEFAULT constraints.
+  the code (today **globally** unique; under D1 this becomes **per-site composite (site_id,
+  VC_SIZE_CODE)** once the table gains its `site_id` FK). **All three masters carry a real DB UNIQUE
+  index** (Size on `VC_SIZE_CODE`, Supplier on `VC_SUPPLIER_CODE` via `IX_INV_SUPPLIER_MST`,
+  Logistics on `VC_LOGISTICS_NAME`) — Size's posture **matches** Supplier's, it is not "stronger"
+  (an earlier draft wrongly said Supplier's code had no DB uniqueness). No DEFAULT constraints.
 - **No declared FOREIGN KEY constraints** out of this table (the whole schema declares only 2 FKs
   total, none involving Size). Inbound reference is **by convention only**:
   `INV_PARTS_STOCK_MST.IN_SIZE_ID` (and the history table `INV_PARTS_STOCK_MST_HIST` carries the
@@ -163,8 +164,8 @@ another screen is a real (latent) cross-module hazard (P9).
 
 ## 4. Business rules & edge cases
 - **Identity is `VC_SIZE_CODE`** (`MaxLength=6`, uppercased), backed by a **real DB UNIQUE index**
-  (`IX_INV_SIZE_MST`). The surrogate `IN_SIZE_ID` is the actual key for update/delete and the
-  inbound part FK.
+  (`IX_INV_SIZE_MST`) — today global, **per-site composite (site_id, VC_SIZE_CODE)** under D1
+  (§8.1). The surrogate `IN_SIZE_ID` is the actual key for update/delete and the inbound part FK.
 - **No form-level validation at all** (like Logistics, unlike Supplier). Lengths are enforced
   *only* by `TEdit.MaxLength`/`TMaskEdit`. There is **no min-length, not-blank, or required-field
   check** in Pascal — **inserting a blank code/name is not blocked by the form**. The DB `NOT
@@ -225,13 +226,18 @@ another screen is a real (latent) cross-module hazard (P9).
 - **Model:** `Size` (or `TireSize` to avoid clashing with the Ruby `Object#size` / common
   attribute name — recommend a non-conflicting class name like `TireSize`;
   `self.table_name = 'INV_SIZE_MST'`, `self.primary_key = 'IN_SIZE_ID'`).
+  - `belongs_to :site` (D1) — every model belongs to a site with enforced current-site scoping;
+    `site_id` is NOT NULL and all queries are scoped to the current site (auth binds users to a
+    site). Rows are **per-site**.
   - `has_many :parts_stocks, foreign_key: 'IN_SIZE_ID', dependent: :nullify` — confirmed by the
     inbound `IN_SIZE_ID` column + the `DELETE_SizeCode` trigger (mirrors P5). This is the
     association the trigger actually maintains.
-  - Validations: `size_code` **presence** + **uniqueness** (case-insensitive to match the
-    `SQL_Latin1_General_CP1_CI_AS` collation), backed by the existing `IX_INV_SIZE_MST` unique
-    index; `length: {maximum: 6}`. `size_name` presence + `length: {maximum: 50}`. (Presence rules
-    are a deliberate improvement over the legacy form, which validated nothing.)
+  - Validations: `size_code` **presence** + **uniqueness scoped to `site_id`** (`uniqueness:
+    {scope: :site_id, case_sensitive: false}` to match the `SQL_Latin1_General_CP1_CI_AS`
+    collation), backed by a **per-site unique index `(site_id, VC_SIZE_CODE)`** (D1 — replaces the
+    global `IX_INV_SIZE_MST`); `length: {maximum: 6}`. `size_name` presence + `length: {maximum:
+    50}`. (Presence rules are a deliberate improvement over the legacy form, which validated
+    nothing.)
   - `usage` / `safety_days` integers — decide NULL vs default-0 policy (§8); add numericality
     bounds only if the domain actually caps them (legacy UI capped at 99999, but the DB and the
     ForecastBreakdown writer do not).
@@ -265,14 +271,18 @@ another screen is a real (latent) cross-module hazard (P9).
       on code, replacing the defective dup-check) leaning on the unique index;
       `has_many :parts_stocks, dependent: :nullify` replaces `DELETE_SizeCode`; real timestamps
       replace the string audit columns; reconcile `IN_USAGE`/`IN_DAYS` NULL-vs-0; decide the
-      `_HIST` table handling (§8).
+      `_HIST` table handling (§8). **Multi-site (D1):** the Postgres/DB-modernization phase adds the
+      `site_id` (NOT NULL) FK to the new `sites` table and the **per-site unique index
+      `(site_id, VC_SIZE_CODE)`** (replacing the global `IX_INV_SIZE_MST`); `belongs_to :site` with
+      current-site scoping. The legacy single-site DB is left untouched during the parallel run.
 
 ## 8. Open questions for the user (domain expert)
-1. **Multi-site scope of sizes:** `INV_SIZE_MST` has **no site/plant column** — one global table,
-   every query returns all rows unfiltered (multi-site lens). When the app goes multi-site, is the
-   tire/wheel size catalog **shared across all sites** or **per-site**? This decides whether the
-   table gets a `site_id` scope and whether `VC_SIZE_CODE` uniqueness becomes per-site. (Same shape
-   of question as Supplier §8.1 and Logistics §8.1 — likely answer all three masters consistently.)
+1. ✅ **RESOLVED (D1): Multi-site scope of sizes — per-site.** Per decision D1
+   (`docs/analysis/decisions.md`), sites run fully independently with no shared data: the
+   tire/wheel size catalog is **per-site**, not shared. `INV_SIZE_MST` gains a `site_id` (NOT NULL)
+   FK to the new `sites` table, every query is scoped to the current site, and `VC_SIZE_CODE`
+   uniqueness becomes **composite (site_id, VC_SIZE_CODE)** rather than global. (Same answer applies
+   consistently to Supplier §8.1 and Logistics §8.1.)
 2. **The insert dup-check bug:** `InsertSizeInfo` checks duplicates against
    `SELECT_AssyRatioInfo` (broadcast codes), **not** sizes — so the intended app-side size
    duplicate guard never runs and uniqueness is enforced only by the DB index (and a size code

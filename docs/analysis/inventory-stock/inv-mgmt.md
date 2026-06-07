@@ -65,7 +65,7 @@ The table is wide (33 columns). The ones the list proc returns / this module rel
 | Column | Type | Meaning / notes |
 |--------|------|-----------------|
 | `IN_PART_ID` | `int IDENTITY(1,1) NOT NULL` PK | Surrogate key. Returned as `'RecordID'`; captured into the **shared** `Data_Module.RecordID` indirectly? — **NO** (see note). Grid `Fields[?]='RecordID'` is *not* read by `HoldDetails` here. |
-| `VC_PART_NUMBER` | `varchar(12) NOT NULL` | **Business key — DB-unique via `IX_INV_PARTS_STOCK_MST` (UNIQUE NONCLUSTERED on `VC_PART_NUMBER`)**. Returned as `'Parts Code'`. |
+| `VC_PART_NUMBER` | `varchar(12) NOT NULL` | **Business key — DB-unique via `IX_INV_PARTS_STOCK_MST` (UNIQUE NONCLUSTERED on `VC_PART_NUMBER`)**. Returned as `'Parts Code'`. ⚠️ Multi-site (D1): uniqueness becomes **composite `(site_id, VC_PART_NUMBER)`**, per-site, not global. |
 | `IN_SUPPLIER_ID` | `int NULL` | FK→`INV_SUPPLIER_MST` (by convention; **no declared FK**). Nulled by `DELETE_SupplierCode`. |
 | `IN_LOGISTICS_ID` | `int NULL` | FK→`INV_LOGISTICS_MST` (by convention). Nulled by `DELETE_LogisticsCode`. |
 | `IN_RENBAN_ID` | `int NULL` | FK→`INV_RENBAN_GROUP_MST` (by convention). Nulled by `DELETE_RenbanGroupCode`. |
@@ -89,7 +89,9 @@ The table is wide (33 columns). The ones the list proc returns / this module rel
 - `PK_INV_PARTS_STOCK_MST` PRIMARY KEY **CLUSTERED** (`IN_PART_ID`).
 - `IX_INV_PARTS_STOCK_MST` **UNIQUE NONCLUSTERED (`VC_PART_NUMBER`)** — the part number is
   globally unique at the DB level (a real backstop; this module relies on it indirectly via the
-  triggers that join on `VC_PART_NUMBER`).
+  triggers that join on `VC_PART_NUMBER`). ⚠️ Multi-site (D1): this becomes a **per-site**
+  composite unique index **`(site_id, VC_PART_NUMBER)`** in the Postgres phase — part numbers are
+  unique within a site, not globally.
 - DEFAULTs: `VC_LINE_NAME` → `'TUNDRA'`, `MO_PART_COST` → `0`.
 - **No declared FOREIGN KEY constraints** out of this table. The whole schema declares **only 2
   FKs total** (`INV_ASN_DETAIL_MST→INV_ASN_MST`, `INV_PART_SHIPPING_INF→INV_SHIPPING_INF`, both
@@ -304,11 +306,14 @@ screen displays). These are the core inventory invariant the rebuild must re-hom
 ## 6. Target design *(Rails primary)*
 - **Models (read side):**
   - `PartStock` → `INV_PARTS_STOCK_MST` (`self.table_name`, `self.primary_key = 'IN_PART_ID'`).
-    `belongs_to :supplier, :logistics, :renban_group, :part_type, :tire_size` — all
-    `optional: true` (the columns are nullable and the joins are LEFT; FKs are by-convention).
-    Validations: `part_number` presence + `uniqueness` (case-insensitive, backed by the existing
-    `IX_INV_PARTS_STOCK_MST`). Enum on the *supplier's* `inventory_add_point {S,A}` (lives on
-    `Supplier`, P4). `in_qty` is **read-mostly** here — never written by this controller.
+    `belongs_to :site` (D1 — current-site scoping; `acts_as_tenant`/`default_scope` so every query
+    is filtered to the current site and on-hand is per-site). `belongs_to :supplier, :logistics,
+    :renban_group, :part_type, :tire_size` — all `optional: true` (the columns are nullable and the
+    joins are LEFT; FKs are by-convention). Validations: `part_number` presence + `uniqueness`
+    **scoped to `:site_id`** (case-insensitive; the unique index becomes composite
+    **`(site_id, VC_PART_NUMBER)`**, replacing the global `IX_INV_PARTS_STOCK_MST`). Enum on the
+    *supplier's* `inventory_add_point {S,A}` (lives on `Supplier`, P4). `in_qty` is **read-mostly**
+    here — never written by this controller, and is **per-site**.
   - `PartStockHistory` → `INV_PARTS_STOCK_MST_HIST` (⚠️ **not** an exact twin: line-name column is
     `VC__LINE_NAME` with a double underscore, and `VC_PARTS_NAME`/`IN_RENBAN_COUNT` are NOT NULL
     here while NULLable on the master — see §2; the rebuild should fix the schema and write an
@@ -358,15 +363,20 @@ screen displays). These are the core inventory invariant the rebuild must re-hom
       service/callbacks (transactional), with the add-point timing, empty-trailer/terminated/
       purge-mode exclusions, qty-ledger + history writes, and the part-rename cascade preserved.
       Replace the QuickReport with the HTML/PDF/CSV reporters. Real timestamps replace the
-      `yyyymmddHHMMSSff` strings. Carry the **existing** `IX_INV_PARTS_STOCK_MST` unique index
-      across; add the missing declared FKs for the five `IN_*_ID` links.
+      `yyyymmddHHMMSSff` strings. **Multi-site (D1):** add the `site_id` (NOT NULL) FK → `sites` and
+      replace the global `IX_INV_PARTS_STOCK_MST` with a **per-site composite unique index
+      `(site_id, VC_PART_NUMBER)`**; the qty triggers/`StockLedger` and the ledger/history tables
+      become site-scoped (on-hand is per-site). Add the missing declared FKs for the five `IN_*_ID`
+      links. (Legacy single-site DB untouched during the parallel run.)
 
 ## 8. Open questions for the user (domain expert)
-1. **Multi-site scope of stock:** `INV_PARTS_STOCK_MST` has **no site/plant column** — one global
-   parts-stock master, one `IN_QTY` per part. When multi-site, is on-hand stock **per-site** (each
-   site has its own balance for the same part) or **shared**? This decides whether the table (and
-   the qty triggers/ledger) gain a `site_id` scope and whether `VC_PART_NUMBER` uniqueness becomes
-   per-site. This is the single biggest multi-site decision in the inventory area.
+1. ✅ **RESOLVED (D1): Multi-site scope of stock — per-site.** Per **decision D1
+   (`docs/analysis/decisions.md`)**, sites run independently with full data isolation. On-hand
+   stock is **per-site**: `INV_PARTS_STOCK_MST` gains a `site_id` (NOT NULL) FK → the new `sites`
+   table, the qty triggers/ledger become site-scoped, and `VC_PART_NUMBER` uniqueness becomes
+   composite **`(site_id, VC_PART_NUMBER)`** rather than global. (Context retained: today the table
+   has no site/plant column — one global parts-stock master, one `IN_QTY` per part; this was the
+   single biggest multi-site decision in the inventory area.)
 2. **"Print Excel" vs "Print":** today both buttons run the identical QuickReport (Excel is only
    reachable from the preview dialog's export). Is a distinct, true Excel/CSV export wanted, and
    what columns should it carry — the on-screen 30 or the report's 7? (The report also drops Part
