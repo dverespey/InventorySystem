@@ -210,3 +210,43 @@ the qty-trigger's arrival-add branch for `VC_INVENTORY_ADD_POINT = 'A'` supplier
 
 > Closes the arrival-path question. Answer: **RecConfStat stamps `VC_ARRIVAL`; that is the
 > `'A'`-supplier arrival-add path; the carrier feed only records arrival status for `'A'` parts.**
+
+---
+
+## D8 — Three confirmed legacy bugs the rebuild fixes (do not preserve)  *(2026-06-12)*
+
+**Resolves:** the "confirm-and-fix" §8 questions — `size` §8.2, `stocktaking` §8.3,
+`logistics-breakdown` §8.3. All three verified against source this session; the rebuild fixes them.
+
+**Bug 1 — Size duplicate-check queries the wrong table.** `DataModule.pas:2531` `InsertSizeInfo`
+runs its app-side duplicate check via `SELECT_AssyRatioInfo` (`DataModule.pas:2543`), which filters
+`INV_ASSY_RATIO_MST.VC_BROADCAST_CODE = @SizeCode` — the **assy-ratio broadcast codes, not the size
+master** — then inserts only `If RecordCount = 0`. Effects: (a) a genuine duplicate size code is
+**never** caught app-side (only a DB unique index would); (b) a size code that coincides with an
+existing broadcast code is **falsely rejected** as a duplicate.
+*Fix:* check duplicates against `INV_SIZE_MST.VC_SIZE_CODE`, and enforce a DB unique index
+`(site_id, VC_SIZE_CODE)` (per D1/D2). Confirmed bug.
+
+**Bug 2 — Stocktaking edit blanks the audit timestamp.** `UPDATE_StockTakingInfo` (schema:9407)
+builds `@Update` from `SUBSTRING(@Update, 1, 8)` where `@Update` was just `DECLARE`d and **never
+initialized** → NULL; NULL string-concat makes the whole value NULL, so it writes
+`VC_LAST_UPDATE = NULL` on the stocktaking row. The `UPDATE_Stocktaking` trigger (schema:10441) then
+copies that NULL onto the affected `INV_PARTS_STOCK_MST.VC_LAST_UPDATE` too. The date portion should
+have been `CONVERT(char(8), getdate(), 112)` (exactly how `INSERT_SizeInfo` does it correctly),
+yielding a 16-char `yyyymmddHHMMSSff` stamp.
+*Fix:* write a correct 16-char timestamp on every stocktaking edit (and let the re-balance carry it).
+Confirmed bug.
+
+**Bug 3 — Arrival-reversal branch is dead code; the rebuild IMPLEMENTS the reversal.**
+`UPDATE_RecConfStatPartsStockMstQTY` (schema:9764) "changed to not arrived" branch has
+`WHERE i.VC_ARRIVAL = '' AND i.VC_ARRIVAL <> ''` — both clauses on `i`, a contradiction that is
+**always false**, so the branch never runs. The arrival-add branch above it is
+`i.VC_ARRIVAL <> d.VC_ARRIVAL AND d.VC_ARRIVAL = ''`; the correct mirror is
+`i.VC_ARRIVAL <> d.VC_ARRIVAL AND i.VC_ARRIVAL = ''`. Today, clearing a set arrival for an `'A'`
+supplier does **not** reverse the previously-added stock (on-hand overstated).
+**DECISION (David):** **implement the reversal** — when an `'A'`-supplier arrival is cleared, the
+rebuild's stock-ledger posts a compensating **−qty** (the corrected mirror). Per **D7**, this lives
+in the **receiving-confirmation** action alongside the arrival-add, not the carrier-feed ingest.
+
+> Closes the confirm-and-fix batch. All three are real defects; the rebuild fixes them (Bug 3 by
+> implementing the intended arrival-reversal).

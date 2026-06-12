@@ -283,11 +283,13 @@ another screen is a real (latent) cross-module hazard (P9).
    FK to the new `sites` table, every query is scoped to the current site, and `VC_SIZE_CODE`
    uniqueness becomes **composite (site_id, VC_SIZE_CODE)** rather than global. (Same answer applies
    consistently to Supplier §8.1 and Logistics §8.1.)
-2. **The insert dup-check bug:** `InsertSizeInfo` checks duplicates against
-   `SELECT_AssyRatioInfo` (broadcast codes), **not** sizes — so the intended app-side size
-   duplicate guard never runs and uniqueness is enforced only by the DB index (and a size code
-   coinciding with a broadcast code is falsely reported as a duplicate). Confirm this is an
-   unintended bug (it almost certainly is) so the rebuild fixes it rather than preserving it.
+2. ✅ **RESOLVED (D8, Bug 1): confirmed bug — fix it.** Verified against source: `InsertSizeInfo`
+   (`DataModule.pas:2531`) runs its dup-check via `SELECT_AssyRatioInfo` (`:2543`), which filters
+   `INV_ASSY_RATIO_MST.VC_BROADCAST_CODE = @SizeCode` (broadcast codes, **not** sizes), then inserts
+   only `If RecordCount = 0`. So a real duplicate size code is never caught app-side, and a code that
+   coincides with a broadcast code is falsely rejected. Per decision D8 (docs/analysis/decisions.md),
+   the rebuild checks duplicates against `INV_SIZE_MST.VC_SIZE_CODE` and enforces the DB unique index
+   `(site_id, VC_SIZE_CODE)` (per D1/D2).
 3. **`IN_USAGE` / `IN_DAYS` semantics & bounds:** Daily Usage and Safety Days are nullable `int`,
    but this form always writes `0` (never NULL) and caps input at 99999, while the
    ForecastBreakdown screen writes `IN_USAGE` via `UPDATE_SizeUsage` with no such cap. (a) Should

@@ -309,9 +309,14 @@ status *value* written to whichever status column the keyword selects (ship date
    `UPDATE_RecConfStatRenbanInfo` (`DataModule.pas:3346`/`:3269`) `SET VC_ARRIVAL = @Arrival`, firing
    the trigger's arrival-add branch (guard `RecConfStat.pas:818`: INTRANSIT must precede arrival). The
    rebuild re-homes the arrival-add to the **receiving-confirmation** action, not this ingest.
-3. **The dead "un-arrived" trigger branch** (`WHERE i.VC_ARRIVAL = '' AND i.VC_ARRIVAL <> ''`) can never be
-   true. Was there meant to be a real "arrival reversed → subtract stock" path? Should the rebuild implement
-   the intended reversal, or is reversal genuinely not supported?
+3. ✅ **RESOLVED (D8, Bug 3): dead branch confirmed — rebuild IMPLEMENTS the reversal.** Verified
+   against source: `UPDATE_RecConfStatPartsStockMstQTY` (schema:9764) "changed to not arrived" branch
+   has `WHERE i.VC_ARRIVAL = '' AND i.VC_ARRIVAL <> ''` (both on `i`) — a contradiction, always false,
+   so it never runs; the correct mirror of the arrival-add (`i.VC_ARRIVAL <> d.VC_ARRIVAL AND
+   d.VC_ARRIVAL = ''`) is `… AND i.VC_ARRIVAL = ''`. Today, clearing an `'A'`-supplier arrival does NOT
+   reverse the added stock (on-hand overstated). **David's decision: implement the reversal** — per
+   decision D8 (docs/analysis/decisions.md), the rebuild posts a compensating **−qty** when an
+   `'A'`-supplier arrival is cleared, in the **receiving-confirmation** action (per D7), not this feed.
 4. **Renban is not unique** on `INV_OPEN_ORDER_INF` (no unique index); one status line updates every order row
    for that lot, moving stock for **all** its parts. Is that the intended granularity, or should status be
    tracked per part/per Renban+part?

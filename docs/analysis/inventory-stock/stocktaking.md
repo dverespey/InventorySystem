@@ -331,9 +331,13 @@ line 243** (the daily-build-total Excel import). It:
 2. **The unpersisted Date picker:** the form lets users pick a date but it is **never saved** — the row
    timestamp is always "now". Should the rebuild (a) keep "now" semantics and drop the picker, or (b)
    persist a real **adjustment/count date** (enabling backdated physical counts)?
-3. **`UPDATE_StockTakingInfo` NULL-timestamp bug:** confirm this is unintended (it almost certainly is)
-   so the rebuild fixes it. It currently NULLs `VC_LAST_UPDATE` on both the stocktaking row and the
-   affected stock master row on every edit.
+3. ✅ **RESOLVED (D8, Bug 2): confirmed bug — fix it.** Verified against source: `UPDATE_StockTakingInfo`
+   (schema:9407) builds `@Update` from `SUBSTRING(@Update, 1, 8)` where `@Update` was just `DECLARE`d
+   and never initialized → NULL, so it writes `VC_LAST_UPDATE = NULL`; the `UPDATE_Stocktaking` trigger
+   (schema:10441) then propagates that NULL onto the affected `INV_PARTS_STOCK_MST` row too. The date
+   part should have been `CONVERT(char(8), getdate(), 112)` (as `INSERT_SizeInfo` does correctly),
+   giving a 16-char `yyyymmddHHMMSSff` stamp. Per decision D8 (docs/analysis/decisions.md), the rebuild
+   writes a correct 16-char timestamp on every stocktaking edit (carried through the re-balance).
 4. ✅ **RESOLVED (D3): yes — add `PK_INV_STOCKTAKING_INF` + a real FK, and block deleting a part
    with adjustments (RESTRICT).** Per decision D3 (docs/analysis/decisions.md), the rebuild adds the
    real `PK_INV_STOCKTAKING_INF` on `IN_STOCKTAKING_ID` and the FK `IN_PART_ID →
