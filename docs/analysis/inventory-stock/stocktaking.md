@@ -332,9 +332,12 @@ line 243** (the daily-build-total Excel import). It:
 3. **`UPDATE_StockTakingInfo` NULL-timestamp bug:** confirm this is unintended (it almost certainly is)
    so the rebuild fixes it. It currently NULLs `VC_LAST_UPDATE` on both the stocktaking row and the
    affected stock master row on every edit.
-4. **No PK/FK on the ledger:** OK to add a real `PK_INV_STOCKTAKING_INF` on `IN_STOCKTAKING_ID` and a
-   real FK `IN_PART_ID → INV_PARTS_STOCK_MST` in the rebuild? Any reason adjustments should survive
-   the deletion of their part (current behavior orphans + hides them)?
+4. ✅ **RESOLVED (D3): yes — add `PK_INV_STOCKTAKING_INF` + a real FK, and block deleting a part
+   with adjustments (RESTRICT).** Per decision D3 (docs/analysis/decisions.md), the rebuild adds the
+   real `PK_INV_STOCKTAKING_INF` on `IN_STOCKTAKING_ID` and the FK `IN_PART_ID →
+   INV_PARTS_STOCK_MST`. Adjustments should **not** survive their part's deletion as orphans — the FK
+   **blocks** deleting a part that still has stocktaking rows (no orphan/hide). Retiring such a part
+   goes through the future **archival** capability, which preserves the adjustment history intact.
 5. **Auto-scrap coupling:** `DailyBuildTotal` posts negative stocktaking rows ("Auto Scrap Delete")
    through this same table/trigger. Should auto-scrap remain modeled as a stocktaking adjustment (same
    ledger, distinguishable by reason), or become its own adjustment type/reason-code?

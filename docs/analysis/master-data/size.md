@@ -294,14 +294,19 @@ another screen is a real (latent) cross-module hazard (P9).
    blank mean 0 or NULL? (b) Is the 99999 UI cap meaningful, or just an artifact of a 5-digit mask?
    (c) Is it expected that **two different screens** edit a size's daily usage (here by the master
    form, there by forecast breakdown, keyed by code)?
-4. **`INV_PARTS_STOCK_MST_HIST.IN_SIZE_ID` on delete:** the `DELETE_SizeCode` trigger nulls
-   `INV_PARTS_STOCK_MST.IN_SIZE_ID` but **not** the history table's size FK (if populated). Should
-   the rebuild also nullify (or preserve) history references when a size is deleted? Or should
-   deleting an in-use size be **blocked** entirely (restrict) rather than unlinking parts?
-5. **Editable code:** `UPDATE_SizeInfo` rewrites `VC_SIZE_CODE`. Parts are safe (linked by id),
-   but `UPDATE_SizeUsage`/`SELECT_SizeUsage` and the form search resolve **by code**. Is renaming a
-   size code an expected operation, and should the rebuild standardize all callers on the surrogate
-   `IN_SIZE_ID` (treating the code as a display label)?
+4. ✅ **RESOLVED (D3): block the delete (RESTRICT) — don't unlink.** Per decision D3
+   (docs/analysis/decisions.md), deleting a size that is still referenced by any part (current
+   `INV_PARTS_STOCK_MST` **or** `_HIST`) is **blocked**. The rebuild does **not** replicate the
+   legacy `DELETE_SizeCode` unlink (which nulled `INV_PARTS_STOCK_MST.IN_SIZE_ID` but left the
+   history FK dangling) — no nullifying, no dangling. To remove an in-use size, use the future
+   **archival** capability (soft-delete / hide), not delete.
+5. ✅ **RESOLVED (D2): standardize all callers on the surrogate `IN_SIZE_ID`; `VC_SIZE_CODE` is an
+   editable, non-key attribute.** Per decision D2 (docs/analysis/decisions.md), the surrogate id is
+   the sole key. Parts are already safe (linked by id); the callers that legacy-resolved **by code**
+   (`UPDATE_SizeUsage` / `SELECT_SizeUsage` and the size form search) must be **reworked to resolve
+   by `IN_SIZE_ID`**, treating the code as a display label. Renaming a size code is then **allowed**
+   (extremely rare) and **safe with no cascade**. The code stays unique **per-site** (composite
+   `(site_id, VC_SIZE_CODE)`, per D1) as an attribute constraint, not a key.
 
 ## 9. Test cases / parity checks
 - **List all** → row count and ordering match `SELECT_SizeInfo ''` (sorted by `VC_SIZE_CODE`);

@@ -133,7 +133,12 @@ DeleteSupplierInfo` use a single ADO `Inv_StoredProc`, setting `ProcedureName :=
    target (network share / SFTP / object storage), or is file output going away in favor
    of in-app delivery? `BIT_SITE_NUMBER_IN_ORDER` suggests order files already encode a
    site number — worth understanding that convention.
-3. Is editing `VC_SUPPLIER_CODE` after creation actually used/desired? (UPDATE allows it.)
+3. ✅ **RESOLVED (D2): yes — `VC_SUPPLIER_CODE` is an editable, non-key attribute.** Per decision
+   D2 (docs/analysis/decisions.md), the surrogate `IN_SUPPLIER_ID` is the sole key; all FKs/joins/
+   lookups resolve on it, so editing the supplier code is **allowed** (though an extremely rare
+   event) and **safe with no cascade** because nothing references the string. The code remains a
+   unique attribute **per-site** (composite `(site_id, VC_SUPPLIER_CODE)`, per D1). Any legacy
+   supplier-save path that resolved by string must be reworked to resolve by id.
 4. Is `VC_COUNTRY` intentionally unused by the form?
 
 ## 9. Test cases / parity checks

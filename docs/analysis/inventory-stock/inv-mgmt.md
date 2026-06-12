@@ -388,10 +388,12 @@ screen displays). These are the core inventory invariant the rebuild must re-hom
 4. **Negative on-hand:** `IN_QTY` is a signed `int` maintained by additive triggers with no
    non-negative guard. Can on-hand legitimately go negative (e.g. shipping before a delayed
    receipt), or should the rebuild flag/clamp it? (The legacy neither prevents nor highlights it.)
-5. **Add-point data quality:** receiving only increments stock if the supplier's
-   `VC_INVENTORY_ADD_POINT` is `S` or `A`. A blank/other value silently means **stock never
-   increments on receipt** for that supplier's parts. Should the rebuild require a valid add-point,
-   and how should historical blank values be treated?
+5. ✅ **RESOLVED (D4): add-point stays supplier-level** (not per-part) — per decision D4
+   (docs/analysis/decisions.md). The rule remains on the supplier (`S` add at shipping / `A` add at
+   arrival), so the data-quality fix is at the supplier: the rebuild should make the supplier's
+   `VC_INVENTORY_ADD_POINT` a **required, valid `S`/`A`** value (recommended), eliminating the
+   blank-value case where stock silently never increments on receipt. Historical blank values should
+   be remediated (assigned a correct add-point per supplier) during migration.
 6. **Part-cost on a stock screen:** `MO_PART_COST` (money, default 0) rides on the stock master and
    is returned by the proc. Is on-screen valuation (qty × cost = inventory value) desired in the
    modern inventory view? (None is shown today.)

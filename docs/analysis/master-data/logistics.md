@@ -239,15 +239,20 @@ so a stale `RecordID` from another screen is a real (latent) cross-module hazard
    directory — a per-site configured output root (network share / SFTP / object store) with a
    stored relative subpath, an upload target, or is the file-output workflow going away? Also note the form caps this at **50 chars vs proc 215 vs DB 512** —
    real paths almost certainly need the full width (or a different model entirely).
-3. **Name-as-key concerns:** Logistics has **no stable business code** — it is identified by an
-   editable `VC_LOGISTICS_NAME`. Callers resolve it by name (supplier-save procs, the monthly
-   report's `@Logistics` filter, the form's search). Is renaming a logistics record an expected
-   operation, and are those name-based lookups acceptable, or should the rebuild standardize on the
-   surrogate `IN_LOGISTICS_ID` everywhere (and treat the name as a display-only label)?
-4. **Parts-FK dangling on delete:** the live trigger nulls **supplier** FKs but **not**
-   `INV_PARTS_STOCK_MST.IN_LOGISTICS_ID` (or `_HIST`). Is leaving part references dangling after a
-   logistics delete intentional/known, or a latent bug? Should the rebuild **nullify** part links
-   too, or **block** deleting a logistics row that is still referenced by any part?
+3. ✅ **RESOLVED (D2): standardize on the surrogate `IN_LOGISTICS_ID`; the name is an editable,
+   non-key attribute.** Per decision D2 (docs/analysis/decisions.md), the surrogate id is the sole
+   key — every FK/join/lookup resolves on `IN_LOGISTICS_ID`, and `VC_LOGISTICS_NAME` becomes a
+   display-only, editable label. The name-based lookups that exist today (**supplier-save procs, the
+   monthly report's `@Logistics` filter, the form's search**) must be **reworked to resolve by id**.
+   Renaming a logistics record is then **allowed** (rare) and **safe with no cascade**. The name
+   stays unique **per-site** (composite `(site_id, VC_LOGISTICS_NAME)`, per D1) as an attribute
+   constraint, not a key.
+4. ✅ **RESOLVED (D3): block the delete (RESTRICT).** Per decision D3 (docs/analysis/decisions.md),
+   the rebuild **blocks** deleting a logistics row that is still referenced by any supplier or part —
+   it does **not** dangle (today's behavior) and does **not** nullify part links. The legacy
+   `DELETE_LogisticsCode` trigger's inconsistency (nulls supplier FKs but leaves
+   `INV_PARTS_STOCK_MST.IN_LOGISTICS_ID`/`_HIST` dangling) goes away. To remove an in-use logistics
+   record, use the future **archival** capability (soft-delete / hide from view), not delete.
 5. **`VC_COUNTRY`** is on the table but never exposed on the form (same as Supplier). Intentional?
    Should the rebuilt form add it, or drop the column?
 

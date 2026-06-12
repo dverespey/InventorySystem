@@ -386,26 +386,34 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
    `'U'` row in `INV_PART_QTY_INF`. In the rebuild, should the master screen *ever* allow setting
    on-hand, or should every qty change go through a receiving/shipping/reject/stocktaking/adjustment
    transaction? (Recommend: keep it read-only here; explicit adjustment only.)
-2. **Dangling logistics FK on logistics delete (resolved gap).** Confirmed: `DELETE_LogisticsCode`
-   nulls only `INV_SUPPLIER_MST.IN_LOGISTICS_ID`, **not** `INV_PARTS_STOCK_MST.IN_LOGISTICS_ID`, so a
-   part can end up pointing at a deleted logistics row. Is this intended (parts get logistics via
-   their supplier, and the part's own `IN_LOGISTICS_ID` is vestigial), or a bug the rebuild should
-   fix by nullifying parts too? (Same question for **part-type delete**, which has no unlink trigger
-   at all.)
-3. **Transactional-child cleanup on part delete.** `DELETE_PartsStockInfo` deletes the part and
-   blanks only the assy-ratio/forecast string-code references. Open orders, rejects, stocktaking,
-   and part-shipping rows that reference the part **by number** are left dangling, and the qty
-   triggers can't re-balance a part that no longer exists. Should deleting an in-use part be
-   **blocked** (restrict) instead of allowed?
-4. **Part-number rename safety.** `UPDATE_PartNumber` cascades a rename to assy-ratio/forecast
-   string codes **only when exactly one row is updated**, and never to the transactional children
-   (which key on the old number). Is renaming a part number an expected operation? Should the
-   rebuild standardize **all** consumers on the surrogate `IN_PART_ID` (treating the number as a
-   display label) so renames are safe?
-5. **Add-point dependency on supplier.** A part's receiving-qty behavior (add at shipping vs
-   arrival) is read from its supplier's `VC_INVENTORY_ADD_POINT`, and a NULL `IN_SUPPLIER_ID` part
-   silently stops receiving qty updates. Is this coupling intended, and should add-point move onto
-   the part itself?
+2. ✅ **RESOLVED (D3): block the delete (RESTRICT) — don't nullify, don't dangle.** Per decision D3
+   (docs/analysis/decisions.md), deleting a **logistics** (or **part-type**) record that is still
+   referenced by any part is **blocked**. The rebuild does not replicate the legacy
+   `DELETE_LogisticsCode` behavior (nulls only `INV_SUPPLIER_MST.IN_LOGISTICS_ID`, leaving
+   `INV_PARTS_STOCK_MST.IN_LOGISTICS_ID` dangling) and does not nullify part links; part-type, which
+   has no unlink trigger at all today, is likewise blocked while referenced. Removal of an in-use
+   master is via the future **archival** capability, not delete.
+3. ✅ **RESOLVED (D3): block deleting an in-use part (RESTRICT).** Per decision D3
+   (docs/analysis/decisions.md), deleting a part that is still referenced by any open order, reject,
+   stocktaking, part-shipping, assy-ratio, or forecast row is **blocked**. This ends the legacy
+   `DELETE_PartsStockInfo` hazard (deletes the part, blanks only the assy-ratio/forecast string codes,
+   leaves transactional children dangling by number, and strands the qty triggers). To retire an
+   in-use part, use the future **archival** capability (soft-delete / hide), not delete.
+4. ✅ **RESOLVED (D2): standardize **all** consumers on the surrogate `IN_PART_ID`; `VC_PART_NUMBER`
+   is an editable, non-key attribute.** Per decision D2 (docs/analysis/decisions.md), the surrogate
+   id is the sole key. The fragile legacy `UPDATE_PartNumber` string-cascade (which only cascaded to
+   assy-ratio/forecast string codes, and only when exactly one row matched, and never to the
+   transactional children keyed on the old number) **goes away**: every consumer — assy-ratio,
+   forecast, open orders, rejects, stocktaking, part-shipping — links by `IN_PART_ID`. Renaming a
+   part number is then **allowed** (extremely rare) and **safe with no cascade**, treating the number
+   as a display label. The number stays unique **per-site** (composite `(site_id, VC_PART_NUMBER)`,
+   per D1) as an attribute constraint, not a key.
+5. ✅ **RESOLVED (D4): add-point is supplier-level only — keep the coupling, do NOT move it to the
+   part.** Per decision D4 (docs/analysis/decisions.md), `VC_INVENTORY_ADD_POINT` stays on the
+   supplier; a part's receiving-qty behavior (add at shipping `S` vs arrival `A`) is read from its
+   supplier, and that coupling is **intended**. Add-point is **not** moved onto the part. To remove
+   the silent-no-add hazard, the rebuild should require a part to have a supplier and require the
+   supplier's add-point to be a valid `S`/`A` (recommended enforcement).
 6. **`VC_LINE_NAME` from the ALC `LINE` catalog (cross-DB, string, default `'TUNDRA'`).** Should the
    assembly line become a real FK/lookup, and how does the cross-database `LINE` catalog map in a
    multi-site web app (is `LINE` per-site)?

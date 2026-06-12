@@ -305,10 +305,12 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
    rows for the same assy code, and the invoice JOINs would then emit duplicate (doubled)
    invoice lines. Has this ever happened? What should the rebuild enforce — unique code, or
    unique non-overlapping window per code?
-3. **Delete with referencing invoices:** deleting a price silently removes the matching
-   invoice/report lines (inner JOIN, no trigger, no RI). Should deletion be **blocked** when
-   the assy code is referenced by any ASN-detail/invoice, **soft-deleted**, or is hard
-   delete acceptable because prices are only ever future-dated?
+3. ✅ **RESOLVED (D3): block the delete (RESTRICT).** Per decision D3 (docs/analysis/decisions.md),
+   deleting a manifest-cost price whose assy code is referenced by any ASN-detail / invoice line is
+   **blocked**. This ends the legacy silent line-loss (the billing inner-JOIN dropping invoice/report
+   lines when a price was deleted, with no trigger/RI). "Hard delete is OK because prices are
+   future-dated" is **rejected** — block instead; to retire a price use the future **archival**
+   capability (soft-delete / supersede), not delete.
 4. **Multi-site scope:** ✅ RESOLVED (D1, docs/analysis/decisions.md): **per-site** —
    assembly prices are NOT shared. `INV_MANIFEST_COST_MST` (today no site/plant column, every
    query returning all rows unfiltered) gains a `site_id` (NOT NULL) FK to the new `sites`
