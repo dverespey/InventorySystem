@@ -61,3 +61,7 @@ Findings that span modules (live legacy defects, recurring hazards) live in `cro
   Verdict: **LEAN-GO**, gated on a ~1–2 week vertical-slice spike on `PartsStockMaster`. The D1–D8
   decisions and spec §1–§5/§7–§9 are platform-neutral and carry over; only the §6 "Target design
   (Rails primary)" sections would be redone. **Not final** — Rails remains the fallback.
+- [`ignition-spike-plan.md`](ignition-spike-plan.md) — the **gating vertical-slice spike** (~1–2 weeks)
+  that converts the LEAN-GO into a hard **GO/STAY**: three checks on `PartsStockMaster` — (A) Perspective
+  UI velocity, (B) a structural `siteScopedQuery()` multi-site guard, (C) EDI shared-dir file I/O
+  re-scope + single-owner/atomic handling. Don't redo any §6 section until it passes.
