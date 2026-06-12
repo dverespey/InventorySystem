@@ -322,10 +322,12 @@ line 243** (the daily-build-total Excel import). It:
       legacy single-site DB stays untouched during the parallel run.
 
 ## 8. Open questions for the user (domain expert)
-1. **Delta vs absolute count:** confirm stocktaking `IN_QTY` is intended as a **signed adjustment
-   delta** (the triggers add/subtract it), **not** an absolute counted on-hand value. (If operators
-   *think* they're entering the counted total, the legacy behavior is a serious mismatch — a count of
-   "100" would *add* 100 to existing stock, not set it.) This is the single most important domain check.
+1. ✅ **RESOLVED (D5): signed adjustment delta.** Per decision D5 (docs/analysis/decisions.md),
+   stocktaking `IN_QTY` is a **signed adjustment delta** — the triggers add/subtract it from on-hand
+   (entering `100` raises on-hand by 100; `-30` lowers it by 30), **not** an absolute counted total.
+   The legacy trigger behavior is the intended behavior and is preserved. The rebuild's UI must label
+   the field as an adjustment (+/−) so it's never mistaken for "set on-hand to this count"; a true
+   physical-count→set-absolute flow, if ever wanted, is a separate feature that computes the delta.
 2. **The unpersisted Date picker:** the form lets users pick a date but it is **never saved** — the row
    timestamp is always "now". Should the rebuild (a) keep "now" semantics and drop the picker, or (b)
    persist a real **adjustment/count date** (enabling backdated physical counts)?

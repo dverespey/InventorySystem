@@ -245,13 +245,13 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
       side also scope to the current site.
   - **Validations (deliberate improvements over legacy, which had none):** presence of
     `assy_part_number_code`, `start_manifest`, `end_manifest`, `price`; `price`
-    numericality (≥ 0 — confirm with domain expert); `start_manifest <= end_manifest`;
-    and the **critical uniqueness/overlap rule** — at minimum a unique index on
-    `(site_id, assy_part_number_code)` (if one-price-per-assembly) or a **no-overlapping-window**
-    validation per (site, assy code) (if time-bounded pricing is real). Per decision D1
-    (docs/analysis/decisions.md) the key is unique **per-site**, so the unique index is the
-    composite `(site_id, assy_part_number_code)`, not a global one. This is the fix for the
-    double-billing hazard (§4, §8).
+    numericality (≥ 0 — confirm with domain expert); `start_manifest <= end_manifest`
+    (**enforced** — per decision D6, `start > end` is rejected); and the **critical overlap rule** —
+    per **decision D6 (docs/analysis/decisions.md), pricing is genuinely time-bounded**, so the rule
+    is a **no-overlapping-window validation per (site, assy code)** (NOT a single unique code: two
+    rows for one assy code are allowed only when their windows don't overlap). Per decision D1 the
+    scope is **per-site**, so the constraint is on `(site_id, assy_part_number_code, window)`. This is
+    the fix for the double-billing hazard (§8.2).
   - **No enums** (no P4). `assy_manifest_number` is a free 2-char string (`'01'..'99'`).
   - Timestamps: write `vc_add` on create and `vc_last_update` on create+update as
     `yyyymmddHHMMSSff` strings during **parallel run** (P2); normalize at the Postgres phase.
@@ -268,8 +268,9 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
   (`SELECT/INSERT/UPDATE/DELETE_ManifestCost`) via `tiny_tds` for guaranteed parity — but
   **do NOT reproduce the wrong-target retry recursion** (§3); use a single connection/retry
   policy (P8). The billing read path (`SELECT_INVOICEItems`, `REPORT_EDI810*`) is owned by
-  the Invoice/EDI module — coordinate the "price lookup by assy code, window-aware?"
-  decision there.
+  the Invoice/EDI module — per **decision D6** it **must be made window-aware**: select the price
+  whose `[start_manifest, end_manifest]` window contains the **ASN production date**, not just any
+  row matching the assy code. The legacy window-blind join is a **confirmed bug** to fix there.
 - **Reports:** none owned by this module; it *feeds* the 810/invoice reports.
 
 ## 7. Migration plan for this module
@@ -294,17 +295,19 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
       untouched during the parallel run.
 
 ## 8. Open questions for the user (domain expert)
-1. **One price per assembly, or time-bounded prices?** The schema has start/end windows,
-   but **every billing consumer ignores them** (joins on assy code only). Is the intent
-   (a) exactly one current price per assembly (then make assy code UNIQUE and drop/repurpose
-   the window), or (b) genuinely time-bounded pricing (then the **invoice/810 procs are
-   buggy** — they should filter by the ASN production date within the window, and the
-   rebuild must add a no-overlapping-window constraint)? This decision directly affects
-   invoice correctness and is the most important open question.
-2. **Duplicate-code safety / double-billing:** today nothing prevents two manifest-cost
-   rows for the same assy code, and the invoice JOINs would then emit duplicate (doubled)
-   invoice lines. Has this ever happened? What should the rebuild enforce — unique code, or
-   unique non-overlapping window per code?
+1. ✅ **RESOLVED (D6): time-bounded pricing is real — option (b).** Per decision D6
+   (docs/analysis/decisions.md), assembly prices are **genuinely time-bounded**: the
+   `start_manifest`/`end_manifest` window is meaningful. Because every current billing consumer
+   **ignores** the window (joins on assy code only), **the legacy invoice/810 procs are confirmed
+   buggy**: the rebuild's billing read path must select the price whose window **contains the ASN
+   production date**, and the schema must enforce a **no-overlapping-window** constraint per
+   `(site_id, VC_ASSY_PART_NUMBER_CODE)`. Directly fixes invoice correctness.
+2. ✅ **RESOLVED (D6): enforce unique non-overlapping windows per code** (not a single unique
+   code). Per decision D6 (docs/analysis/decisions.md), since pricing is time-bounded, two rows for
+   the same assy code are allowed **only if their windows don't overlap**. The rebuild enforces a
+   **no-overlapping-window** constraint per `(site_id, VC_ASSY_PART_NUMBER_CODE)`, which prevents the
+   doubled-invoice-line hazard while still supporting price changes over time. (The "has this ever
+   happened?" historical-incident sub-question is informational and not blocking.)
 3. ✅ **RESOLVED (D3): block the delete (RESTRICT).** Per decision D3 (docs/analysis/decisions.md),
    deleting a manifest-cost price whose assy code is referenced by any ASN-detail / invoice line is
    **blocked**. This ends the legacy silent line-loss (the billing inner-JOIN dropping invoice/report
@@ -324,8 +327,10 @@ by the Delete-retry's wrong-target `DeleteSupplierInfo` call.
 6. **EDI feature-flag gate:** the screen replaces the legacy `MonthlyPOMaster` only when
    `fiGenerateEDI` is on. Is `MonthlyPOMaster` still in use anywhere (non-EDI sites), or can
    the rebuild drop it and keep only Manifest Cost?
-7. **Negative/zero price and `start > end`:** the form accepts them silently. Are these ever
-   legitimate, or should the rebuild reject them?
+7. **Negative/zero price and `start > end`:** the form accepts them silently. — **`start > end`
+   half ✅ RESOLVED (D6):** with windows real, a row where `start_manifest > end_manifest` is invalid
+   and the rebuild **rejects** it. **Negative/zero-price half — still open:** are a zero or negative
+   `MO_PRICE` ever legitimate, or should the rebuild reject them?
 8. **`VC_LAST_UPDATE` (underscore) vs `VC_LASTUPDATE`:** confirm this column naming
    divergence from the other masters is intentional (it is real in the schema), so the
    rebuilt model maps the right column.

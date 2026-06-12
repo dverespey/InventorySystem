@@ -300,14 +300,15 @@ status *value* written to whichever status column the keyword selects (ship date
    this "Receiving")? Confirm the canonical status keyword set — the code recognizes exactly
    `INTRANSIT / ARRIVEDNUMMI / ARRIVEDMANUF / ARRIVEDUNION / ARRIVEDCONS / TERMINATED`; are there others
    (an unknown keyword is currently silently ignored)?
-2. **Stock-qty semantics confirmation:** via *this* module, the **only** stock movement is an `INTRANSIT`
-   (shipped) line **adding** stock for `VC_INVENTORY_ADD_POINT = 'S'` suppliers (the trigger's shipping-add
-   branch). The `ARRIVED*` lines **do not** move stock here, because the procs set `VC_STATUS_PLANT_YARD` /
-   `VC_WAREHOUSE` and **never set `VC_ARRIVAL`**, which is the only column the trigger's arrival-add branch
-   watches. So where does the `'A'`-supplier *arrival* stock add actually happen — which other module stamps
-   `VC_ARRIVAL`? And is it intended that for `'A'`-parts this carrier feed records arrival status **without**
-   counting stock (stock only counted by that other arrival path)? We need this pinned before re-homing the
-   trigger.
+2. ✅ **RESOLVED (D7): the arrival stock-add happens in Receiving Confirmation (`RecConfStat`).** Per
+   decision D7 (docs/analysis/decisions.md), confirmed against code: this carrier feed's only stock
+   movement is the `INTRANSIT` shipping-add for `'S'` suppliers; the `ARRIVED*` lines set
+   `VC_STATUS_PLANT_YARD` / `VC_WAREHOUSE` and **never** `VC_ARRIVAL`, so they intentionally record
+   arrival **status only** for `'A'` parts (no stock count here). The `'A'`-supplier arrival-add is
+   stamped by **`RecConfStat`** — its arrival-date field → `UPDATE_RecConfStatInfo` /
+   `UPDATE_RecConfStatRenbanInfo` (`DataModule.pas:3346`/`:3269`) `SET VC_ARRIVAL = @Arrival`, firing
+   the trigger's arrival-add branch (guard `RecConfStat.pas:818`: INTRANSIT must precede arrival). The
+   rebuild re-homes the arrival-add to the **receiving-confirmation** action, not this ingest.
 3. **The dead "un-arrived" trigger branch** (`WHERE i.VC_ARRIVAL = '' AND i.VC_ARRIVAL <> ''`) can never be
    true. Was there meant to be a real "arrival reversed → subtract stock" path? Should the rebuild implement
    the intended reversal, or is reversal genuinely not supported?
