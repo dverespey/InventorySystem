@@ -54,3 +54,10 @@ Findings that span modules (live legacy defects, recurring hazards) live in `cro
 - [`trigger-source-reconciliation.md`](cross-cutting/trigger-source-reconciliation.md) — the **24 live
   triggers** (`DB Schema/Create Inventory.sql` is authoritative); **`docs/triggers.sql` is an obsolete
   pre-int-FK-refactor snapshot** (keys on dropped string columns, missing 5 triggers). Don't port from it.
+
+## Target-stack reconsideration
+- [`ignition-feasibility.md`](ignition-feasibility.md) — multi-agent go/no-go on switching the rebuild
+  target from **Rails + Python** to **Ignition + Perspective** (to consolidate with the GALC migration).
+  Verdict: **LEAN-GO**, gated on a ~1–2 week vertical-slice spike on `PartsStockMaster`. The D1–D8
+  decisions and spec §1–§5/§7–§9 are platform-neutral and carry over; only the §6 "Target design
+  (Rails primary)" sections would be redone. **Not final** — Rails remains the fallback.
