@@ -78,6 +78,13 @@ checkbox, long varchar→text-area, else text-field; FK ids grouped; audit cols 
 hidden. Data binding is a self-contained Perspective **script transform** calling
 `system.db.runPrepQuery(..., "Inventory_Spike")` — no Named-Query resource needed to prove the screen.
 
+**Render + read round-trip CONFIRMED (2026-06-13):** in the Designer **Preview Mode** with view param
+`recordId=12`, the generated Detail screen rendered and **populated all 32 fields from live data** (the
+`runPrepQuery`→`view.custom.record` script-transform binding works end to end). So: generate-from-schema
+→ loads → renders → binds live data, all proven. Remaining for GO-final: the **save/write** path and FK
+dropdowns. (Note: page/session config still absent — view tested via Designer Preview, not a launched
+session; Session Launcher needs a page config.)
+
 **Preliminary Check-A read (trending GO, not yet final):**
 - The veto premise — "no scaffold generator → per-field drag/bind × ~45 screens" — is **directly
   undercut**: a generator emits any table's CRUD screen in seconds. One-time cost = building the
