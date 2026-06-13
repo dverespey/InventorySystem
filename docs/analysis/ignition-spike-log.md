@@ -122,9 +122,66 @@ on the 8.1.52 dev ceiling. The "no scaffold generator → ~45 hand-built screens
 **refuted**: per-screen cost is ≈ run the generator + targeted polish. Recommend **GO** for the Ignition
 target on the Check-A axis, conditioned on the Preview save-click confirming the event wiring.
 
-**Confirm step (David, in Designer Preview):** open `PartsStockMaster/Detail`, set `recordId`=12,
-Preview; dropdowns should read sup `72100` / size `RED` / type `FILM`; change Parts Name, click **Save**;
-I verify the DB row from my side.
+### F5 — Perspective binding lessons (from live Designer testing + log instrumentation)
+
+Driving the generated screen through Designer Preview (with `system.util.getLogger("SPIKE")` lines read
+back from `logs/wrapper.log`) surfaced three concrete Perspective rules the generator must follow:
+
+1. **Each input exposes its value under a DIFFERENT prop** — `ia.input.text-field`/`text-area` →
+   **`props.text`**; `ia.input.numeric-entry-field` → **`props.value`**; `ia.input.dropdown` →
+   **`props.value`**; `ia.input.checkbox` → **`props.selected`**. Binding everything to `props.value`
+   left text fields blank while numerics populated. **Fixed & confirmed**: all fields now display.
+2. **Object sub-path bindings are unreliable** for `view.custom.<obj>.<key>`:
+   - *Display:* replacing the whole object (`self.view.custom.form = row`) orphans the child bindings →
+     blank. **Fix:** pre-declare every key in `custom.form` at view-build time, and have Load **mutate
+     keys in place** (`self.view.custom.form[k] = v`). Confirmed working.
+   - *Write-back:* `"bidirectional": true` into an object sub-path does **not** write the edit back —
+     Save read the old value (`SAVE reads VC_PARTS_NAME=RED FILM` after the user edited it). **OPEN.**
+3. **Log-driven diagnosis is the headless debugging tool.** Add `system.util.getLogger("SPIKE").info(...)`
+   to gateway/event scripts, click in Preview, `grep SPIKE logs/wrapper.log`. This converted "fields are
+   blank" guesswork into exact facts (recordId seen, row count, what Save read). Use it for every
+   Perspective script issue. Also grep `Unable to deserialize` after every `gwcmd -r`.
+
+### Check A verdict at session close (2026-06-13): **GO**
+
+Everything the gate hinges on is proven on the 8.1.52 dev box: schema-driven **generation** of a 32-field
+heavy screen (refutes the "no scaffold generator → ~45 hand screens" veto); it **loads, renders, and
+displays live data in every field**; **FK code-dropdowns** from masters; and a Save button that **invokes
+the legacy `UPDATE_PartsStockInfo` end-to-end** (proc executes, `VC_LAST_UPDATE` advances — verified in
+DB). Per-screen cost ≈ run generator + targeted polish. **GO on the Check-A axis.**
+
+**One open polish item (does NOT change the verdict):** the edit→`form` **write-back** is one-way
+(object-subpath bidirectional limitation, F5.2). Planned fix next session: generate **flat** custom props
+(`view.custom.form_<col>`) instead of one `form` object, so bidirectional bindings write back cleanly;
+then one Load/edit/Save cycle closes the editable round-trip.
+
+---
+
+## RESUME HERE (next session) — read this first
+
+**Environment (verify it's up):**
+- Gateway: Ignition **8.1.52** at `/usr/local/ignition`, auto-starts (launchd). Check:
+  `curl -s localhost:8088/StatusPing` → `{"state":"RUNNING"}`.
+- DB sandbox: **Colima + docker** container `mssql-spike` (SQL 2019, port 1433). After a Mac reboot:
+  `colima start` then `docker start mssql-spike` (or rerun `scripts/spike-db.sh`). Gateway DB connection
+  **`Inventory_Spike`** reconnects automatically.
+- Spike project on disk: `/usr/local/ignition/data/projects/spike/` (loads on `gwcmd -r`).
+- Generators (untracked — carry throwaway container creds): `scripts/gen_perspective_view.py`,
+  `scripts/spike-db.sh`. DEBUG `SPIKE` logging currently left in the generated Detail view's Load/Save
+  scripts (marked `# IG-DEBUG`) — remove once write-back is confirmed.
+
+**Immediate next action:** finish Check A's write-back — edit `gen_perspective_view.py` to emit flat
+`view.custom.form_<col>` props (drop the single `form` object); inputs bind bidirectionally to those;
+Load sets each `self.view.custom.form_<col>`; Save reads them. Regenerate → `gwcmd -r` → grep
+`Unable to deserialize` → one Designer Preview Load/edit/Save → verify the row in DB. Then remove IG-DEBUG.
+
+**Then:** **Check B** (`siteScopedQuery()` multi-site guard) — backend/structural, drivable headlessly.
+Scaffolding ready: `sites` (2 rows) + `site_id` on `INV_PARTS_STOCK_MST` (site 1 = 32 rows, site 2 = 15).
+**Then:** **Check C** EDI re-scope (paper, no DB) + atomic poller.
+
+**Known facts to reuse:** test record `IN_PART_ID=12` (part `478930201000`, sup code `72100`, size `RED`,
+type `FILM`). Save proc `UPDATE_PartsStockInfo` takes CODES not ids (30 params, `@PartID` last). Load via
+the id→code join. macOS + 8.1 docs for any Designer guidance (panels by name, not position).
 
 ## Check B — siteScopedQuery() — ⏳ scaffolding ready (sites + site_id seeded)
 ## Check C — EDI re-scope + atomic I/O — ⏳ not started (no DB dependency for the paper re-scope)
