@@ -46,6 +46,52 @@ Adding `site_id` to `INV_PARTS_STOCK_MST` immediately broke an **UPDATE**: trigg
 
 ---
 
-## Check A — UI velocity — ⏳ not started (unblocks once JDBC connection exists)
+## Check A — UI velocity — 🔄 in progress
+
+**JDBC connection live:** gateway connection **`Inventory_Spike`** → `localhost:1433/Inventory`,
+status *Valid* (connect URL `jdbc:sqlserver://localhost:1433;databaseName=Inventory;encrypt=true;trustServerCertificate=true`).
+
+### F2 — Perspective views load from hand-authored on-disk JSON (codegen path PROVEN)
+
+Created `data/projects/spike/` by hand (project.json + one Perspective view as
+`com.inductiveautomation.perspective/views/Test/{view.json,resource.json}`), restarted the gateway, and
+it **imported the project, validated the view, and re-signed `resource.json`** (stamped
+`lastModificationSignature`). Gateway log: `Starting project: spike` + `Setting LastModification to
+"external" on spike/Test`. **No Designer GUI required to create Perspective views.**
+
+- **Why this is the headline Check-A result:** Perspective's weakness (no scaffold generator → per-field
+  drag/bind × ~45 screens) is the whole reason Check A is the gating veto. If view JSON can be
+  *generated from the table schema*, that cost line collapses from "hours of drag-drop per screen" to
+  "run a generator." This directly attacks the one veto.
+- **Caveat (don't over-claim yet):** must still prove a *generated* heavy screen (the ~40-control
+  PartsStockMaster) actually renders + round-trips data, not just a one-label view. In progress.
+- **Format notes (8.1.52):** view type `ia.container.coord` / `ia.display.label`; resource folder
+  `com.inductiveautomation.perspective`; `resource.json` needs `scope/version/files`, gateway fills
+  `attributes`. On-disk projects load on **gateway restart** (no live FS watch observed).
+### F3 — A heavy CRUD screen GENERATED from schema loads in Perspective
+
+`scripts/gen_perspective_view.py` reads `INV_PARTS_STOCK_MST`'s columns from the live DB and emits the
+**PartsStockMaster Detail view (32 fields incl. the 12-cell weekday matrix) + a List view** (Table bound
+to `SELECT_PartsStockInfo`). After a gateway restart both views **deserialize and load clean** (gateway
+re-signs them; no `Unable to deserialize` warnings). Type→component mapping: int→numeric-entry, bit→
+checkbox, long varchar→text-area, else text-field; FK ids grouped; audit cols read-only; `site_id`
+hidden. Data binding is a self-contained Perspective **script transform** calling
+`system.db.runPrepQuery(..., "Inventory_Spike")` — no Named-Query resource needed to prove the screen.
+
+**Preliminary Check-A read (trending GO, not yet final):**
+- The veto premise — "no scaffold generator → per-field drag/bind × ~45 screens" — is **directly
+  undercut**: a generator emits any table's CRUD screen in seconds. One-time cost = building the
+  generator + format discovery (done this session); per-screen cost ≈ run generator + targeted polish.
+- **Still to prove before GO is final (honest gaps):** (1) the screen **visually renders + is usable**
+  (open in Designer/browser); (2) the **save/write round-trip** via `system.db.createSProcCall` on the
+  CRUD proc; (3) **FK combos** generated as real `ia.input.dropdown` (currently numeric stubs);
+  (4) validation/formatting + the weekday-matrix layout look; (5) a **manual Designer build** of one
+  screen timed as the baseline to quantify codegen-vs-hand.
+- **8.1.52 caveat:** generated on the dev ceiling; component prop schemas may differ slightly on 8.3
+  (`# IG83-TODO` in the generator). Nothing 8.1-only used so far.
+
+**Next for Check A:** David eyeballs the generated views in the Designer (fidelity + the matrix), and
+times a hand-built screen for the baseline; then I add FK dropdowns + the createSProcCall save path.
+
 ## Check B — siteScopedQuery() — ⏳ scaffolding ready (sites + site_id seeded)
 ## Check C — EDI re-scope + atomic I/O — ⏳ not started (no DB dependency for the paper re-scope)
