@@ -97,8 +97,34 @@ session; Session Launcher needs a page config.)
 - **8.1.52 caveat:** generated on the dev ceiling; component prop schemas may differ slightly on 8.3
   (`# IG83-TODO` in the generator). Nothing 8.1-only used so far.
 
-**Next for Check A:** David eyeballs the generated views in the Designer (fidelity + the matrix), and
-times a hand-built screen for the baseline; then I add FK dropdowns + the createSProcCall save path.
+### F4 — Editable screen: FK code-dropdowns + createSProcCall save (generated)
+
+Generator now emits, from the table + the `UPDATE_PartsStockInfo` signature: **5 FK `ia.input.dropdown`s**
+(options from the master tables; value = the business **code**), an **id→code resolving load join**, and a
+**Save button** whose `onActionPerformed` builds `system.db.createSProcCall("dbo.UPDATE_PartsStockInfo",
+"Inventory_Spike")` with all 30 params in `sys.parameters` order and execs it. Both views deserialize
+clean after reload.
+
+- **Key legacy semantic (faithful):** `UPDATE_PartsStockInfo` takes CODES, not ids — it re-resolves
+  `VC_SUPPLIER_CODE→IN_SUPPLIER_ID` etc. internally and stamps the 16-char `VC_LAST_UPDATE`. The screen
+  therefore loads/saves codes; ids never leave the DB.
+- **SQL save path PROVEN independently:** edited part 12's name via the proc with the exact positional
+  param set and reverted — `VC_PARTS_NAME` changed then restored, FK ids preserved (`72100`→sup 6,
+  `RED`→size 12), `VC_LAST_UPDATE`=`2026061307010654`; the `_HIST` `SELECT *` trigger fired fine (F1 fix
+  holds). The Perspective Save button uses the same positional mapping → correct by construction.
+- **Remaining:** one UI click in Preview to confirm the button→proc wiring end-to-end (below).
+
+### Check A verdict: **GO** (pending one confirmation click)
+
+A schema+proc-driven generator produces a **fully editable heavy screen** (32 fields, 12-cell matrix, FK
+code-dropdowns, read load + createSProcCall save) that loads, renders, binds, and round-trips live data —
+on the 8.1.52 dev ceiling. The "no scaffold generator → ~45 hand-built screens" veto premise is
+**refuted**: per-screen cost is ≈ run the generator + targeted polish. Recommend **GO** for the Ignition
+target on the Check-A axis, conditioned on the Preview save-click confirming the event wiring.
+
+**Confirm step (David, in Designer Preview):** open `PartsStockMaster/Detail`, set `recordId`=12,
+Preview; dropdowns should read sup `72100` / size `RED` / type `FILM`; change Parts Name, click **Save**;
+I verify the DB row from my side.
 
 ## Check B — siteScopedQuery() — ⏳ scaffolding ready (sites + site_id seeded)
 ## Check C — EDI re-scope + atomic I/O — ⏳ not started (no DB dependency for the paper re-scope)
