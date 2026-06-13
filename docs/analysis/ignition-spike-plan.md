@@ -34,6 +34,11 @@ unmitigable problem → **STAY**.
 - A throwaway **`sites`** table stub (2 rows) + a `site_id` column on the one table the slice touches
   (`INV_PARTS_STOCK_MST`), so B can be tested. This is spike scaffolding, **not** the D1 migration.
 - Confirm Ignition scripting is **Jython 2.7** in this install (affects C).
+- **Version note:** the dev box runs **Ignition 8.1.52** (verified `gwcmd -i`; Intel Mac, 8.3 won't run
+  on it); production targets **8.3**. Build for 8.3 semantics but keep everything runnable on 8.1.52,
+  with greppable retrofit markers (`# IG83-TODO:` / `# IG81-COMPAT:`). Policy + version-detect helper +
+  known 8.1→8.3 deltas live in [`ignition-version-strategy.md`](ignition-version-strategy.md). The
+  gateway is up at `http://localhost:8088` with **Perspective + Reporting** already installed.
 
 ---
 
@@ -62,6 +67,11 @@ If this one is tolerable, the simpler masters (Supplier/Size/Logistics) are easy
 **Pass threshold (calibrate, don't guess):** scaffold + this heavy screen land within ~3–4 days, and
 the extrapolated ~45-screen total is a UI budget you're willing to carry (review's rough band was
 +2–4 dev-months vs Rails). If the *first* screen blows past a week, that's a STAY signal.
+
+> **Version note:** built on **8.1.52 Perspective — the mature LTS line**, so the velocity reading is
+> broadly representative of the 8.3 target (only a small discount where an 8.3-only component would save
+> time). The "no scaffold generator" cost is inherent to Perspective on every version — that's the real
+> signal here. See [`ignition-version-strategy.md`](ignition-version-strategy.md).
 
 ---
 
