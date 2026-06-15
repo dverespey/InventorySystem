@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Bash(/usr/local/ignition/gwcmd.sh --restart)",
+      "Bash(/usr/local/ignition/gwcmd.sh -r)",
+      "Bash(/usr/local/ignition/gwcmd --restart)",
+      "Bash(/usr/local/ignition/gwcmd -r)",
+      "Bash(./gwcmd.sh --restart)",
+      "Bash(./gwcmd.sh -r)",
+      "Bash(cd /usr/local/ignition && ./gwcmd.sh --restart)",
+      "Bash(cd /usr/local/ignition && ./gwcmd.sh -r)"
+    ]
+  }
+}
