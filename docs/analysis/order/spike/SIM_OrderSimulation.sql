@@ -39,7 +39,12 @@ CREATE PROCEDURE dbo.SIM_OrderSimulation
     @Today                  date         = NULL,        -- order/anchor date; NULL => getdate()
     @FillDays               int          = 23,          -- production day-columns (INI default 23, max 50)
     @ForecastUsageCompare   int          = 7,           -- usage-vs-forecast window (unused in cell calc; reserved)
-    @UseFirstProductionDay  bit          = 0,           -- week-offset path; we map by VC_WEEK_DATE so offset is implicit
+    @UseFirstProductionDay  bit          = 1,           -- R1: forecast resolved by ISO week# − weekoffset (year-blind),
+                                                         -- weekoffset = INT_FIRST_PRODUCTION_WEEK[year]-1 (0 when off).
+                                                         -- Default 1: golden client config has UseFirstProductionDay=TRUE
+                                                         -- (with offset=0 the passing TIRE groups regress). Toggleable.
+                                                         -- IG83-TODO: in prod this flag is driven by [INIT] fiUseFirstProductionDay
+                                                         -- (INI/config), NOT a hardcoded default — do not inherit '1' into the port.
     @Section                char(1)      = NULL          -- IG81-COMPAT (bs §"IG81-COMPAT"): Ignition reads only the
                                                          -- FIRST result set, so the Perspective NQs call this proc once
                                                          -- per section: 'A' day-headers | 'B' grid rows | 'C' phased cells.
@@ -298,9 +303,19 @@ BEGIN
 
     /* =================================================================
        STEP 4 — phased forecast usage per (part, fill_pos)  (spec §3.2)
-       fForecast[j] = INV_BREAKDOWN_FC_INF.IN_QTY{weekday} for the production
-       day's week. VC_WEEK_DATE = Monday of the week (yyyymmdd); IN_QTYn n=ISO
-       weekday. This subsumes the UseFirstProductionDay week-number offset.
+       R1 FIX: the legacy resolves the forecast breakdown by ISO WEEK NUMBER
+       (year-blind), NOT by absolute VC_WEEK_DATE. (Order.pas:1145-1196
+       UpdateForecast → SELECT_ForecastPartNumberWeek, inv.sql:6309-6355:
+       WHERE IN_WEEK_NUMBER=@WeekNo AND VC_PART_NUMBER=@PartNo — no date/year
+       filter.) For each production day d:
+         @WeekNo = WeekOfTheYear(d) [ISO-8601] − weekoffset
+         weekoffset = (@UseFirstProductionDay=1 ? INT_FIRST_PRODUCTION_WEEK[year(d)]−1 : 0)
+         GUARD (Order.pas:1175-1178): if @WeekNo<1, offset is NOT applied (use bare ISO week).
+       Matching by week-number (not VC_WEEK_DATE) lets 2026 production days find
+       the 2025-dated FILM breakdown rows whose week numbers match. TIRE/WHEEL/VALVE
+       are unaffected: their 2026 breakdown has IN_WEEK_NUMBER = ISO(VC_WEEK_DATE)−1,
+       so ISO(prod)−1 selects the SAME row the old VC_WEEK_DATE rule did.
+       Weekday column IN_QTY{n}, n=ISO weekday (Mon=1..Sun=7) — unchanged.
        ================================================================= */
     DECLARE @usage TABLE (part_number varchar(12), fill_pos int, qty int,
                           PRIMARY KEY (part_number, fill_pos));
@@ -312,12 +327,27 @@ BEGIN
                     WHEN 7 THEN b.IN_QTY7 END, 0)
     FROM @parts pr
     CROSS JOIN (SELECT cal_offset, fill_pos, serial_date, weekday FROM @cal WHERE is_prod=1) c
+    -- weekoffset for this production day's year (INT_FIRST_PRODUCTION_WEEK−1; 0 when off).
+    -- NOTE: on a MISSING year row the ISNULL(...,1) degrades to offset 0 (bare-ISO match).
+    -- Legacy diverges here (empty recordset → AsInteger 0 → weekoffset −1 → iso+1); we do
+    -- NOT reproduce that legacy edge (every year 2018-2026 is populated, so it never fires).
+    CROSS APPLY (
+        SELECT CASE WHEN @UseFirstProductionDay = 1
+                    THEN ISNULL((SELECT INT_FIRST_PRODUCTION_WEEK FROM INV_FIRST_PRODUCTION_DAY
+                                 WHERE VC_PRODUCTION_YEAR = CONVERT(varchar(4), YEAR(c.serial_date))), 1) - 1
+                    ELSE 0 END AS weekoffset
+    ) wo
     OUTER APPLY (
+        -- TOP 1: INV_BREAKDOWN_FC_INF has exactly one row per (part, week#) (verified), so the
+        -- pick is deterministic without ORDER BY. Underflow guard below is faithful to
+        -- Order.pas:1175-1178 (offset dropped, not wrapped) but is not exercised at this anchor.
         SELECT TOP 1 b.IN_QTY1,b.IN_QTY2,b.IN_QTY3,b.IN_QTY4,b.IN_QTY5,b.IN_QTY6,b.IN_QTY7
         FROM INV_BREAKDOWN_FC_INF b
         WHERE b.VC_PART_NUMBER = pr.part_number
-          AND b.VC_WEEK_DATE = CONVERT(varchar(8),
-                  DATEADD(day, -((DATEDIFF(day,'19000101',c.serial_date))%7), c.serial_date), 112)
+          AND b.IN_WEEK_NUMBER =
+                CASE WHEN (DATEPART(ISO_WEEK, c.serial_date) - wo.weekoffset) < 1
+                     THEN DATEPART(ISO_WEEK, c.serial_date)                       -- underflow guard
+                     ELSE DATEPART(ISO_WEEK, c.serial_date) - wo.weekoffset END
     ) b;
 
     /* =================================================================

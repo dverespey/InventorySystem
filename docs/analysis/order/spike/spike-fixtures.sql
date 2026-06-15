@@ -51,44 +51,30 @@ INSERT INTO dbo.SIM_SpecialDate_Fixture (DT_DATE, VC_STATUS_ABRV) VALUES
     ('2026-07-03','O');   -- overtime inside a long-leadtime window -> 2nd fOvertimes entry
 GO
 
-/* ---------- (2) future open-order + in-transit seed for 4261102Q8000 ---------- */
--- clean any prior spike seed
+/* ---------- (2) M1 4261102Q8000 receipts — use the REAL renban-grouped prod data ----------
+   R3 (resolved 2026-06-15): an earlier version of this fixture INJECTED 8 synthetic
+   blank-renban "SPIKEFX" open/in-transit rows for 4261102Q8000 to exercise font/bucket
+   scenarios. That was UNFAITHFUL: 4261102Q8000 is PALLETIZED (BIT_LOT_SIZE_ORDERS=1, which
+   is the inverted prod flag => lot-sized FALSE) and renban-grouped (group CMWA). In prod its
+   open orders ALWAYS carry a renban (a placeholder that the RenbanOrder grouping form
+   overwrites with the grouped CMWA renban); there is NEVER a blank-renban row, and the
+   breakdown step DELETEs the placeholders so duplicates never reach Order Start. The injected
+   blank rows coexisted with the real 855 CMWA rows (from Inventory.bak), double-counting the
+   receipts (e.g. 06-15: golden CMWA 440 + injected blank 500 = 940). The Order receipt
+   projection (SELECT_OrderOpenOrderList / PutOpenOrderCount) SUMS all rows by VC_FRS_DATE with
+   NO renban filter, so SIM_OrderSimulation STEP 5 (sum-all-rows) is already faithful — the bug
+   was purely the injected fixture rows. FIX = drop them; the real CMWA prod data alone
+   reproduces the golden M1 receipts [440,880,880,880,400,0]. NO proc change.  */
+-- Remove the unfaithful synthetic seed (keep this so a re-seed cleans any prior SPIKEFX rows).
+-- The FOR-DELETE trigger DELETE_RecConfStatPartsStockMstQTY writes into the cross-DB "Activity"
+-- catalog (absent in the spike container) and would roll the DELETE back, so disable it just
+-- around the cleanup. SIM_OrderSimulation is READ-ONLY so the trigger is irrelevant to the sim.
+DISABLE TRIGGER dbo.DELETE_RecConfStatPartsStockMstQTY ON dbo.INV_OPEN_ORDER_INF;
+GO
 DELETE FROM dbo.INV_OPEN_ORDER_INF WHERE VC_ADD = 'SPIKEFX';
 GO
--- The FOR-INSERT trigger INSERT_RecConfStatPartsStockMstQTY bumps stock for
--- shipping-status rows by calling INTO the cross-DB "Activity" catalog, which
--- does NOT exist in the spike container -> the insert rolls back. SIM_OrderSimulation
--- is READ-ONLY (spec §1: Start does no writes) so the trigger's coupling is
--- irrelevant to the sim; disable it ONLY around the spike seed, then re-enable so
--- the real commit-path semantics (spec §6 hazard 8) are left intact for later phases.
--- SPIKE-ONLY.
-DISABLE TRIGGER dbo.INSERT_RecConfStatPartsStockMstQTY ON dbo.INV_OPEN_ORDER_INF;
+ENABLE TRIGGER dbo.DELETE_RecConfStatPartsStockMstQTY ON dbo.INV_OPEN_ORDER_INF;
 GO
--- 8 future open orders for the case (e) part, dated across the fixture window.
--- 06-15..06-19 (Mon..Fri of anchor week) + 06-22/06-23 next week to exercise
--- the overtime-day bucket. Status columns all empty => OPEN-ORDER (font 10),
--- EXCEPT the 06-18 row which we flip to shipping => IN-TRANSIT (font 23, case c)
--- and which lands on the X / fill_pos 2 hazard-7 day.
-INSERT INTO dbo.INV_OPEN_ORDER_INF
-    (VC_SUPPLIER_CODE, VC_PART_NUMBER, VC_FRS_NUMBER, VC_RENBAN_NUMBER, IN_QTY,
-     VC_STATUS_SUPPLIER_SHIPPING, VC_ARRIVAL, VC_TRAILER_NUMBER, VC_STATUS_PLANT_YARD,
-     VC_PLANT_PARKING, VC_STATUS_ASSEMBLER_YARD, VC_ASSEMBLER_LOCATION,
-     VC_STATUS_EMPTY_TRAILER, VC_DETENTION, VC_ORDER_DATE, VC_WAREHOUSE, VC_TERMINATED,
-     VC_SHIP_DATE, VC_KANBAN_NUMBER, VC_FRS_DATE, VC_LAST_UPDATE, VC_ADD)
-VALUES
-    ('0572B','4261102Q8000','6061501','',         500, '', '','','','','','','','','20260613','','','','M1','20260615','20260613','SPIKEFX'),
-    ('0572B','4261102Q8000','6061601','',         480, '', '','','','','','','','','20260613','','','','M1','20260616','20260613','SPIKEFX'),
-    ('0572B','4261102Q8000','6061701','',         460, '', '','','','','','','','','20260613','','','','M1','20260617','20260613','SPIKEFX'),
-    -- the 06-18 (X-day / fill_pos 2) row flipped to SHIPPING => IN-TRANSIT (case c):
-    ('0572B','4261102Q8000','6061801','',         440, 'Y','','','','','','','','','20260613','','','','M1','20260618','20260613','SPIKEFX'),
-    ('0572B','4261102Q8000','6061901','',         420, '', '','','','','','','','','20260613','','','','M1','20260619','20260613','SPIKEFX'),
-    ('0572B','4261102Q8000','6062201','',         400, '', '','','','','','','','','20260613','','','','M1','20260622','20260613','SPIKEFX'),
-    -- 06-23 lands on the OVERTIME day (fill_pos 5):
-    ('0572B','4261102Q8000','6062301','',         380, '', '','','','','','','','','20260613','','','','M1','20260623','20260613','SPIKEFX'),
-    ('0572B','4261102Q8000','6062401','',         360, '', '','','','','','','','','20260613','','','','M1','20260624','20260613','SPIKEFX');
-GO
-
-ENABLE TRIGGER dbo.INSERT_RecConfStatPartsStockMstQTY ON dbo.INV_OPEN_ORDER_INF;
 GO
 
 PRINT 'spike-fixtures.sql applied: SIM_SpecialDate_Fixture + 8 SPIKEFX open orders (1 in-transit).';

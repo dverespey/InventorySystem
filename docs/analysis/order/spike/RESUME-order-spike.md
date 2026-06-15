@@ -17,9 +17,10 @@ live gateway by automated headless test (12/12)**. The spike's foundation is unc
   (Beg / Receipts-per-supplier / Usage / End + gray separator), numbers+color-only (peach editable
   order-by cell, red below-safety End), glyph clutter dropped, order entry locked to each supplier's
   order-by cell, client-side live End recompute (row-23 mechanic). `domId`s added + loaded.
-- **SC verdicts:** SC1 = **14/20 size-groups cell-for-cell PASS, order-by 22/22** (see
-  `sc1-parity-results.md`; 6 misses are the tracked R1/R2/R3 below); SC2 = PASS (palette/CF known);
-  SC3 = PASS, live-confirmed (`ia.display.table`, no Flex-Repeater).
+- **SC verdicts (updated 2026-06-15):** SC1 = **19/20 size-groups cell-for-cell PASS, order-by 22/22**
+  (R1 + R3 closed; the only miss is 17D1 = R2, the excluded manual demo edit → effectively 20/20 of
+  reproducible groups; see `sc1-parity-results.md`); SC2 = PASS (palette/CF known); SC3 = PASS,
+  live-confirmed (`ia.display.table`, no Flex-Repeater). E2E harness 28/28.
 
 ### This session (2026-06-15) — what got done
 1. **Req #3 resolved from source:** "Lead (P)" is a single stored field (`IN_LEADTIME` by weekday); legacy
@@ -76,18 +77,24 @@ then read with `openpyxl` (LibreOffice is installed). (`/tmp/golden/*.xlsx` from
    (E2E: `edit ACCEPTED: 4265202R6000|5` PASS.)
 
 ## NEXT STEPS (do this on resume) — in priority order
-1. **E2E scroll-to-row capability.** The harness (`scripts/e2e/test_order_spike.py`) asserts against the
-   top-visible group (15D) because `ia.display.table` is **virtualized**. Add a helper that scrolls the
-   grid body to bring an off-screen group into view (or use the table filter) so deep groups can be
-   asserted — target **18DL** (pooled End day0 must = 47,885; DUNLOP peach @06-22 / fill_pos 5, MICHELIN
-   @06-23 / fill_pos 6) and the **SPARE** group. Then extend `test_order_spike.py` with per-group value +
-   peach assertions for ≥2 deep groups. (Prefer the loaded `domId` `#spike-order-grid` as the scroll root.)
-2. **Close the 2 proc-fidelity gaps (R1, R3 below)** to push SC1 from 14/20 → 20/20: delphi-architect
-   confirms the exact legacy rules → ignition-developer revises `SIM_OrderSimulation` → re-run
-   `parity_diff.py` + the E2E harness. R1 (FILM forecast week-number mapping) is the bigger one.
-3. **Commit path** (still DEFERRED — see below): only after parity is clean. SERIALIZABLE + UPDLOCK +
+1. ✅ **DONE (2026-06-15) — E2E scroll-to-row capability.** `scripts/e2e/test_order_spike.py` now scrolls
+   the virtualized `#spike-order-grid .ReactVirtualized__Grid` (reads each matched row in the same evaluate
+   it's mounted) and asserts deep groups **18DL** (End day0=47,885; DUNLOP peach lead5, MICHELIN lead6) and
+   **SPARE** (End day0=-754; YOKOHAMA lead5, MAXXIS lead7). Harness now **28/28** (12 base + 16 deep).
+2. ✅ **DONE (2026-06-15) — R1 + R3 closed. SC1 now 19/20** (was 14/20; the 20th is R2, the excluded manual
+   demo edit, so effectively 20/20 of reproducible groups). usage 20/20, end 19/20, receipts 21/22, orderby
+   22/22. See `sc1-parity-results.md` (R1/R3 sections) + [[project-order-renban-domain]] memory.
+   - **R1 (forecast week#):** `SIM_OrderSimulation` STEP 4 now matches by ISO week-number − UseFirstProductionDay
+     offset (year-blind); view binding passes `@UseFirstProductionDay=1`. FILM ×4 fixed, no tire/wheel/valve regression.
+   - **R3 (M1 receipts):** was a FIXTURE bug, not proc-math. Legacy sums all rows (no renban filter); the
+     RenbanOrder breakdown deletes placeholder rows so only renban-grouped rows reach Order Start. Removed
+     the 8 synthetic blank-renban SPIKEFX rows from `spike-fixtures.sql` + the live DB. Proc unchanged.
+3. **Commit path** (still DEFERRED — see below): only after parity is clean (now is). SERIALIZABLE + UPDLOCK +
    commit-claim; needs delphi-architect sign-off on single-writer assumption first.
-4. **Export `Order/OrderSpike` view + the NQ SQL into git** (currently gateway-only) once stable.
+4. **Export `Order/OrderSpike` view + the NQ SQL into git** (currently gateway-only) — the view binding now
+   carries the R1 `@UseFirstProductionDay=1` fix, so export to capture it. Also the proc + fixture changes
+   this session are in the working tree (uncommitted): `SIM_OrderSimulation.sql`, `spike-fixtures.sql`,
+   `scripts/gen_parity_tsv.sh` (NEW — regenerates parity TSVs), `scripts/e2e/test_order_spike.py`.
 
 ## NOTED FOR FUTURE — proc-fidelity gaps surfaced by SC1 parity (2026-06-14)
 SC1 = **14/20 size-groups pass cell-for-cell**, order-by **22/22** (see `sc1-parity-results.md`).

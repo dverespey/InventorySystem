@@ -26,17 +26,39 @@ Encoded both as `H` rows in `SIM_SpecialDate_Fixture` (representing what `AD_Get
 returns). This took End/Usage parity from 0/20 → 14/20 (the rest are the data/proc gaps
 below). The original fictional fixture rows are backed up at `/tmp/fixture_backup.sql`.
 
-## Summary
+## Summary (updated 2026-06-15 — R1 + R3 CLOSED)
 
 | Channel | Pass/Total | Status |
 |---|---|---|
 | Order-by date placement | **22/22** | ✅ exact (req #3 confirmed: order-by = Today + P production days; P = `IN_LEADTIME`-by-weekday, single combined field, NO separate logistics add) |
-| Receipts (per supplier) | 20/22 | 2 explained below |
-| Usage (pooled) | 16/20 | FILM ×4 below |
-| End Balance (pooled) | 14/20 | FILM ×4 + M1 below |
+| Receipts (per supplier) | **21/22** | ✅ R3 closed; the 1 miss is 17D1 = R2 (manual demo edit, excluded) |
+| Usage (pooled) | **20/20** | ✅ R1 closed (FILM ×4 now pass) |
+| End Balance (pooled) | **19/20** | ✅ R1+R3 closed; the 1 miss is 17D1 = R2 (excluded) |
 
-**14 of 20 size-groups pass cell-for-cell.** Passing groups: TIRE 15D, 16D, 16DL, 16G, 16H,
-17DL, 18DL, SPARE; WHEEL 15D1, 16D2, 16F, 18D2; VALVE RV, TPMSS.
+**19 of 20 size-groups pass cell-for-cell** (was 14). The only remaining miss is WHEEL 17D1 = R2,
+David's manual row-23 demo edit, which the proc legitimately cannot reproduce (excluded from scoring) —
+so this is effectively 20/20 of the reproducible groups. Passing groups: TIRE 15D, 16D, 16DL, 16G, 16H,
+17DL, 18DL, SPARE; WHEEL 15D1, 16D2, 16F, 18D2, **M1**; VALVE RV, TPMSS; **FILM BLACK, BLUE, GREEN, RED**.
+
+### R1 — CLOSED (2026-06-15). FILM forecast week-number mapping.
+Legacy resolves the forecast breakdown by **ISO week-number** (year-blind), not absolute `VC_WEEK_DATE`:
+`@WeekNo = DATEPART(ISO_WEEK, prodDate) − weekoffset`, `weekoffset = INT_FIRST_PRODUCTION_WEEK[year]−1`
+when `@UseFirstProductionDay=1` (the golden client config; 2026 first-prod-week=2 → offset 1), with an
+underflow guard. Matching by week-number lets 2026 production days find the 2025-dated FILM rows; TIRE/
+WHEEL/VALVE are unaffected (their 2026 breakdown has `IN_WEEK_NUMBER = ISO(VC_WEEK_DATE)−1`, so the same
+row is picked). Source: Order.pas:1145-1196, SELECT_ForecastPartNumberWeek (CreateInventory.sql:6309-6355),
+guard Order.pas:1175-1178. Implemented in `SIM_OrderSimulation.sql` STEP 4; the OrderSpike view binding now
+passes `@UseFirstProductionDay=1` (QA caught a hardcoded `=0` that had defeated the fix at the browser).
+
+### R3 — CLOSED (2026-06-15) as a FIXTURE bug, NOT a proc-math change.
+The legacy receipt projection (`SELECT_OrderOpenOrderList`/`PutOpenOrderCount`) **sums ALL rows by
+`VC_FRS_DATE`, no renban filter** — so STEP 5's sum-all-rows was already faithful. The overcount came from
+`spike-fixtures.sql` injecting 8 synthetic blank-renban "SPIKEFX" rows for M1 (4261102Q8000) ON TOP of the
+real 855 renban-grouped CMWA prod rows. In prod, M1 is palletized (BIT_LOT_SIZE_ORDERS=1 = inverted flag =
+lot-sized FALSE), renban-grouped, and its orders are created with a placeholder renban that the RenbanOrder
+breakdown form overwrites (DELETE_OrderRenban removes placeholders → no blank-renban rows ever reach Order
+Start). Fix = delete the 8 SPIKEFX rows so the spike reflects the post-breakdown state; the CMWA rows alone
+sum to the golden [440,880,880,880,400,0]. No proc change. See [[project-order-renban-domain]] memory.
 
 ## Residual failures — all root-caused
 
