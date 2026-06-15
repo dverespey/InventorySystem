@@ -76,3 +76,6 @@ scripts/e2e/.env
 scripts/e2e/artifacts/
 __pycache__/
 *.pyc
+
+# Local dev-sandbox bring-up script — carries the throwaway SQL Server sa cred
+scripts/spike-db.sh
