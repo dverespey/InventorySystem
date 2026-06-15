@@ -26,7 +26,9 @@
      :Today                 Date     (gateway now() at simulate time)
      :FillDays              Integer  default 23  (max 50, clamped in proc)
      :ForecastUsageCompare  Integer  default 7
-     :UseFirstProductionDay Integer  default 0   (bit)
+     :UseFirstProductionDay Integer  default 1   (bit; R1: golden client config = TRUE,
+                                                  forecast resolved by ISO week# − weekoffset.
+                                                  The OrderSpike view binding passes 1.)
    ===================================================================== */
 
 /* ---- NQ: Order/sim/SIM_OrderSimulation_DayHeaders  (result set A) ---- */

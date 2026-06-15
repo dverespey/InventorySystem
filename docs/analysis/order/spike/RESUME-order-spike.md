@@ -91,10 +91,17 @@ then read with `openpyxl` (LibreOffice is installed). (`/tmp/golden/*.xlsx` from
      the 8 synthetic blank-renban SPIKEFX rows from `spike-fixtures.sql` + the live DB. Proc unchanged.
 3. **Commit path** (still DEFERRED — see below): only after parity is clean (now is). SERIALIZABLE + UPDLOCK +
    commit-claim; needs delphi-architect sign-off on single-writer assumption first.
-4. **Export `Order/OrderSpike` view + the NQ SQL into git** (currently gateway-only) — the view binding now
-   carries the R1 `@UseFirstProductionDay=1` fix, so export to capture it. Also the proc + fixture changes
-   this session are in the working tree (uncommitted): `SIM_OrderSimulation.sql`, `spike-fixtures.sql`,
-   `scripts/gen_parity_tsv.sh` (NEW — regenerates parity TSVs), `scripts/e2e/test_order_spike.py`.
+4. ✅ **DONE (2026-06-15) — Exported `Order/OrderSpike` view into git.** `perspective-views/Order/OrderSpike/`
+   ({view.json, resource.json} + README with redeploy steps). The view binding carries the R1
+   `@UseFirstProductionDay=1` fix. `named-queries.sql` doc refreshed (UseFirstProductionDay default 0→1).
+   NOTE: the view is a SNAPSHOT (still edited in the Designer, not git) — re-export after Designer edits.
+   Session proc/fixture/harness changes committed in 52321f5; gitignore lockdown in 27b97ec.
+
+### Remaining (next phase)
+- **Commit/write path** (DEFERRED): SERIALIZABLE + UPDLOCK + commit-claim. Template now captured —
+  `ProcessOrder_ButtonClick` (Order.pas:628) + RenbanOrder grouping pipeline (see [[project-order-renban-domain]]
+  memory). Open: the `LotSizeOrders` inverted-flag→'TRUE'/'FALSE' worksheet-load mapping; delphi-architect
+  sign-off on the single-writer assumption.
 
 ## NOTED FOR FUTURE — proc-fidelity gaps surfaced by SC1 parity (2026-06-14)
 SC1 = **14/20 size-groups pass cell-for-cell**, order-by **22/22** (see `sc1-parity-results.md`).

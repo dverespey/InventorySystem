@@ -1,0 +1,544 @@
+{
+  "custom": {
+    "lineName": "COROLLA",
+    "partType": "TIRE",
+    "sortBy": "FAITHFUL",
+    "fillDays": 25,
+    "today": "2026-06-15",
+    "runNonce": 0,
+    "editNonce": 0,
+    "editQty": {},
+    "gridModel": {
+      "data": [],
+      "columns": []
+    }
+  },
+  "params": {},
+  "propConfig": {
+    "custom.gridModel": {
+      "binding": {
+        "type": "expr",
+        "config": {
+          "expression": "{view.custom.partType} + '|' + {view.custom.fillDays} + '|' + {view.custom.today} + '|' + {view.custom.sortBy} + '|' + {view.custom.lineName} + '|' + {view.custom.runNonce} + '|' + {view.custom.editNonce}"
+        },
+        "transforms": [
+          {
+            "type": "script",
+            "code": "\t# ---- Order/OrderSpike PhasedGrid builder \u2014 FAITHFUL 4-ROW LEDGER (rebuild 2026-06-14) ----\n\t# Reproduces the golden per-size-group block, NUMBERS ONLY + COLOR ONLY:\n\t#   Beg Balance (pooled) -> one Receipts row PER SUPPLIER -> Usage (pooled)\n\t#   -> End Balance (pooled) -> gray separator (#969696).\n\t# Pooling rule (parity-verified): pooled = SUM of per-part Section-C values.\n\t#   Beg(0)=Sum(total_inv-in_transit); Usage=Sum(forecast_usage);\n\t#   End=Beg+Recv-Usage (PAB); Beg(day+1)=End(day). Receipts row per supplier\n\t#   = that part's receipt_qty per day PLUS any locally-typed qty (req #4).\n\t# Colors ONLY: peach #FFCC99 on each supplier's single editable order-by cell\n\t#   (fill_pos == orderby_col_index); red #FF0000 on an End cell where End < safety.\n\t# Edit lock (req #2): day columns are editable at column level, but every\n\t#   NON-order-by day cell carries editable:false; only the peach cell is editable.\n\t# Live recompute (req #4): typed qtys live in view.custom.editQty keyed\n\t#   \"PART|FILLPOS\"; onEditCellCommit writes them + bumps editNonce (in the\n\t#   binding expression) so this transform re-runs and folds them into pooled End.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\t# value is the upstream expr binding: partType|fillDays|today|sortBy|lineName|runNonce|editNonce\n\tparts = unicode(value).split(\"|\")\n\tptype  = parts[0]\n\tfd     = int(float(parts[1]))\n\ttoday  = parts[2]\n\tline   = parts[4]\n\n\tPEACH = \"#FFCC99\"   # editable order-by cell (legacy ColorIndex 40)\n\tRED   = \"#FF0000\"   # End < safety stock (below-safety font)\n\tSEP   = \"#969696\"   # gray block separator (golden)\n\tBEGBG = \"#EEF3F8\"; USEBG = \"#FFFFFF\"; ENDBG = \"#F4F6F8\"; RECBG = \"#FFFFFF\"\n\tLBLBG = \"#ECEFF1\"\n\n\t# typed order qtys overlaid client-side (req #4). Keys \"PART|FILLPOS\" -> int.\n\teditQty = {}\n\ttry:\n\t\traw = self.view.custom.editQty\n\t\tif raw is not None:\n\t\t\tfor k in raw.keys():\n\t\t\t\tv = raw[k]\n\t\t\t\teditQty[unicode(k)] = int(v) if v not in (None, \"\") else 0\n\texcept Exception, e:\n\t\tlog.warn(\"SPIKE editQty read failed: %s\" % e)\n\n\t# IG81-COMPAT: one proc call per section (Ignition reads only the first result set).\n\tcommon = \"@LineName=?,@PartType=?,@SortType=?,@Today=?,@FillDays=?,@ForecastUsageCompare=7,@UseFirstProductionDay=1\"\n\targs = [line, ptype, 'PART NUMBER', today, fd]\n\tdsA = system.db.runPrepQuery(\"EXEC dbo.SIM_OrderSimulation \" + common + \",@Section='A'\", args, DB)\n\tdsB = system.db.runPrepQuery(\"EXEC dbo.SIM_OrderSimulation \" + common + \",@Section='B'\", args, DB)\n\tdsC = system.db.runPrepQuery(\"EXEC dbo.SIM_OrderSimulation \" + common + \",@Section='C'\", args, DB)\n\tlog.info(\"SPIKE grid: A=%d B=%d C=%d rows (line=%s type=%s fd=%d edits=%d)\" % (dsA.rowCount, dsB.rowCount, dsC.rowCount, line, ptype, fd, len(editQty)))\n\n\t# ---- columns: frozen-left label + identity, then one column per production day ----\n\twk = [\"\",\"Mon\",\"Tue\",\"Wed\",\"Thu\",\"Fri\",\"Sat\",\"Sun\"]\n\tdayCols = []          # ordered fill_pos list\n\tcolumns = []\n\tfor f, t, w, sticky in [(\"label\",\"\",130,\"left\"),(\"size\",\"Size\",70,\"left\"),(\"sup\",\"Brand / Supplier\",130,\"left\"),(\"lead\",\"Lead\",55,None)]:\n\t\tcol = {\"field\": f, \"header\": {\"title\": t}, \"editable\": False}\n\t\tif w: col[\"strictWidth\"] = w\n\t\tif sticky: col[\"sticky\"] = sticky\n\t\tcolumns.append(col)\n\tfor r in xrange(dsA.rowCount):\n\t\tfp = int(dsA.getValueAt(r, \"fill_pos\"))\n\t\tsd = str(dsA.getValueAt(r, \"serial_date\"))[:10]\n\t\twd = wk[int(dsA.getValueAt(r, \"weekday\"))]\n\t\tdayCols.append(fp)\n\t\t# day columns editable at column level so per-cell editable:false can LOCK them\n\t\tcolumns.append({\"field\": \"d%d\" % fp, \"header\": {\"title\": \"%s %s\" % (wd, sd[5:])}, \"strictWidth\": 78, \"editable\": True, \"align\": \"right\"})\n\n\t# ---- Section C -> per-(part,fill_pos): forecast_usage, receipt_qty ----\n\tcFc = {}; cRec = {}\n\tfor r in xrange(dsC.rowCount):\n\t\tpn = dsC.getValueAt(r, \"part_number\")\n\t\tfp = int(dsC.getValueAt(r, \"fill_pos\"))\n\t\tfcv = dsC.getValueAt(r, \"forecast_usage\"); rcv = dsC.getValueAt(r, \"receipt_qty\")\n\t\tcFc[(pn, fp)] = int(fcv) if fcv is not None else 0\n\t\tcRec[(pn, fp)] = int(rcv) if rcv is not None else 0\n\n\t# ---- Section B -> size groups (ordered), per-part identity + order-by index ----\n\torder = []; gmap = {}\n\tfor r in xrange(dsB.rowCount):\n\t\tif dsB.getValueAt(r, \"row_kind\") != \"PART\":\n\t\t\tcontinue\n\t\tsc = dsB.getValueAt(r, \"size_code\")\n\t\tif sc not in gmap:\n\t\t\tss = dsB.getValueAt(r, \"safety_stock\")\n\t\t\tgmap[sc] = {\"size_name\": dsB.getValueAt(r, \"size_name\"),\n\t\t\t            \"safety\": int(ss) if ss is not None else 0, \"parts\": []}\n\t\t\torder.append(sc)\n\t\tob = dsB.getValueAt(r, \"orderby_col_index\")\n\t\tti = dsB.getValueAt(r, \"total_inv\"); it = dsB.getValueAt(r, \"in_transit\")\n\t\tgmap[sc][\"parts\"].append({\n\t\t\t\"pn\": dsB.getValueAt(r, \"part_number\"),\n\t\t\t\"sup\": dsB.getValueAt(r, \"supplier_name\"),\n\t\t\t\"lead\": dsB.getValueAt(r, \"lead_time\"),\n\t\t\t\"orderby\": int(ob) if ob is not None else None,\n\t\t\t\"total_inv\": int(ti) if ti is not None else 0,\n\t\t\t\"in_transit\": int(it) if it is not None else 0,\n\t\t})\n\n\tdef dcell(v, bg=None, fg=None, bold=False, editable=False):\n\t\to = {\"value\": v, \"editable\": editable}\n\t\tstyle = {}\n\t\tif bg: style[\"backgroundColor\"] = bg\n\t\tif fg: style[\"color\"] = fg\n\t\tif bold: style[\"fontWeight\"] = \"bold\"\n\t\tif style: o[\"style\"] = style\n\t\treturn o\n\n\t# ---- build the 4-row ledger per size group (pooled), folding in typed edits ----\n\trows = []\n\tfor sc in order:\n\t\tg = gmap[sc]; parts = g[\"parts\"]; safety = g[\"safety\"]\n\t\tbeg0 = sum(p[\"total_inv\"] - p[\"in_transit\"] for p in parts)\n\t\t# pooled usage + pooled receipts (base + typed) per day\n\t\tusage = {}; pooledRecv = {}\n\t\tfor fp in dayCols:\n\t\t\tusage[fp] = sum(cFc.get((p[\"pn\"], fp), 0) for p in parts)\n\t\t\tbase = sum(cRec.get((p[\"pn\"], fp), 0) for p in parts)\n\t\t\ttyped = sum(editQty.get(\"%s|%d\" % (p[\"pn\"], fp), 0) for p in parts)\n\t\t\tpooledRecv[fp] = base + typed\n\t\t# pooled PAB recurrence\n\t\tbeg = beg0; pBeg = {}; pEnd = {}\n\t\tfor fp in dayCols:\n\t\t\tpBeg[fp] = beg\n\t\t\tpEnd[fp] = beg + pooledRecv[fp] - usage[fp]\n\t\t\tbeg = pEnd[fp]\n\n\t\t# Beg Balance row (pooled)\n\t\tbr = {\"label\": dcell(\"Beg Balance\", bg=LBLBG), \"size\": sc, \"sup\": \"\", \"lead\": \"\"}\n\t\tfor fp in dayCols:\n\t\t\tbr[\"d%d\" % fp] = dcell(pBeg[fp], bg=BEGBG)\n\t\trows.append(br)\n\n\t\t# Receipts row PER SUPPLIER\n\t\tfor p in parts:\n\t\t\t# hidden fields (no matching column): part_number + order-by fill_pos\n\t\t\t# let the onEditCellCommit handler validate the one editable cell cheaply.\n\t\t\trr = {\"label\": dcell(\"Receipts\", bg=LBLBG), \"size\": sc, \"sup\": p[\"sup\"], \"lead\": p[\"lead\"],\n\t\t\t      \"part\": p[\"pn\"], \"_obfp\": (p[\"orderby\"] if p[\"orderby\"] is not None else -1)}\n\t\t\tfor fp in dayCols:\n\t\t\t\tbase = cRec.get((p[\"pn\"], fp), 0)\n\t\t\t\ttyped = editQty.get(\"%s|%d\" % (p[\"pn\"], fp), 0)\n\t\t\t\tv = base + typed\n\t\t\t\tif fp == p[\"orderby\"]:\n\t\t\t\t\t# the ONE valid, editable, peach cell (req #2 + #3)\n\t\t\t\t\trr[\"d%d\" % fp] = dcell(v, bg=PEACH, editable=True)\n\t\t\t\telse:\n\t\t\t\t\trr[\"d%d\" % fp] = dcell(v if v else \"\", bg=RECBG, editable=False)\n\t\t\trows.append(rr)\n\n\t\t# Usage row (pooled)\n\t\tur = {\"label\": dcell(\"Usage\", bg=LBLBG), \"size\": sc, \"sup\": \"\", \"lead\": \"\"}\n\t\tfor fp in dayCols:\n\t\t\tur[\"d%d\" % fp] = dcell(usage[fp], bg=USEBG)\n\t\trows.append(ur)\n\n\t\t# End Balance row (pooled) \u2014 red where End < safety stock (req #1)\n\t\ter = {\"label\": dcell(\"End Balance\", bg=LBLBG), \"size\": sc, \"sup\": \"\", \"lead\": \"\"}\n\t\tfor fp in dayCols:\n\t\t\tv = pEnd[fp]\n\t\t\tif safety > 0 and v < safety:\n\t\t\t\ter[\"d%d\" % fp] = dcell(v, bg=ENDBG, fg=RED, bold=True)\n\t\t\telse:\n\t\t\t\ter[\"d%d\" % fp] = dcell(v, bg=ENDBG)\n\t\trows.append(er)\n\n\t\t# gray separator row\n\t\tsep = {\"label\": dcell(\"\", bg=SEP), \"size\": dcell(\"\", bg=SEP), \"sup\": dcell(\"\", bg=SEP), \"lead\": dcell(\"\", bg=SEP)}\n\t\tfor fp in dayCols:\n\t\t\tsep[\"d%d\" % fp] = dcell(\"\", bg=SEP)\n\t\trows.append(sep)\n\n\treturn {\"data\": rows, \"columns\": columns}\n"
+          }
+        ]
+      }
+    }
+  },
+  "props": {
+    "defaultSize": {
+      "width": 1500,
+      "height": 880
+    }
+  },
+  "root": {
+    "type": "ia.container.flex",
+    "meta": {
+      "name": "root"
+    },
+    "props": {
+      "direction": "column",
+      "style": {
+        "padding": "12px",
+        "gap": "10px",
+        "backgroundColor": "#F5F6F8"
+      }
+    },
+    "children": [
+      {
+        "type": "ia.display.label",
+        "meta": {
+          "name": "Title"
+        },
+        "props": {
+          "text": "Order \u2014 What to Order  \u00b7  Faithful 4-Row Ledger  \u00b7  WIRED to SIM_OrderSimulation (Inventory_Spike)",
+          "style": {
+            "fontSize": "15px",
+            "fontWeight": "bold",
+            "color": "#222222"
+          }
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "SelectOrderBar"
+        },
+        "props": {
+          "direction": "row",
+          "wrap": "wrap",
+          "alignItems": "flex-end",
+          "style": {
+            "gap": "14px",
+            "backgroundColor": "#FFFFFF",
+            "padding": "10px",
+            "border": "1px solid #D0D4DA",
+            "borderRadius": "4px"
+          }
+        },
+        "position": {
+          "grow": 0,
+          "shrink": 0,
+          "basis": "auto"
+        },
+        "children": [
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "TodayWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "TodayCaption"
+                },
+                "props": {
+                  "text": "Today (order date, read-only)",
+                  "style": {
+                    "fontSize": "11px",
+                    "color": "#666666"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "TodayValue"
+                },
+                "props": {
+                  "style": {
+                    "fontSize": "14px",
+                    "fontWeight": "bold",
+                    "padding": "6px 8px",
+                    "backgroundColor": "#ECEFF1",
+                    "borderRadius": "3px"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.today"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "LineWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "LineWrapCap"
+                },
+                "props": {
+                  "text": "Line",
+                  "style": {
+                    "fontSize": "11px",
+                    "color": "#666666"
+                  }
+                }
+              },
+              {
+                "type": "ia.input.dropdown",
+                "meta": {
+                  "name": "LineDropdown",
+                  "domId": "spike-line"
+                },
+                "props": {
+                  "options": [
+                    {
+                      "value": "COROLLA",
+                      "label": "COROLLA"
+                    }
+                  ]
+                },
+                "position": {
+                  "basis": "160px"
+                },
+                "propConfig": {
+                  "props.value": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.lineName"
+                      },
+                      "bidirectional": true
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "PartTypeWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "PartTypeWrapCap"
+                },
+                "props": {
+                  "text": "Part Type",
+                  "style": {
+                    "fontSize": "11px",
+                    "color": "#666666"
+                  }
+                }
+              },
+              {
+                "type": "ia.input.dropdown",
+                "meta": {
+                  "name": "PartTypeDropdown",
+                  "domId": "spike-parttype"
+                },
+                "props": {
+                  "options": [
+                    {
+                      "value": "TIRE",
+                      "label": "TIRE"
+                    },
+                    {
+                      "value": "WHEEL",
+                      "label": "WHEEL"
+                    },
+                    {
+                      "value": "VALVE",
+                      "label": "VALVE"
+                    },
+                    {
+                      "value": "FILM",
+                      "label": "FILM"
+                    }
+                  ]
+                },
+                "position": {
+                  "basis": "160px"
+                },
+                "propConfig": {
+                  "props.value": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.partType"
+                      },
+                      "bidirectional": true
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "FillDaysWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "FillDaysWrapCap"
+                },
+                "props": {
+                  "text": "Fill Days (\u2264 50)",
+                  "style": {
+                    "fontSize": "11px",
+                    "color": "#666666"
+                  }
+                }
+              },
+              {
+                "type": "ia.input.numeric-entry-field",
+                "meta": {
+                  "name": "FillDaysField"
+                },
+                "position": {
+                  "basis": "90px"
+                },
+                "propConfig": {
+                  "props.value": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.fillDays"
+                      },
+                      "bidirectional": true
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "SimulateButton",
+              "domId": "spike-simulate-btn"
+            },
+            "props": {
+              "text": "Simulate",
+              "style": {
+                "backgroundColor": "#1976D2",
+                "color": "#FFFFFF",
+                "fontWeight": "bold"
+              }
+            },
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "type": "script",
+                  "scope": "G",
+                  "config": {
+                    "script": "\t# Force-rerun SIM_OrderSimulation (legacy 'Start'). Bumping runNonce changes\n\t# the gridModel expression input -> re-fires binding + transform.\n\tself.view.custom.runNonce = (self.view.custom.runNonce or 0) + 1\n\tsystem.util.getLogger(\"SPIKE\").info(\"Simulate clicked -> runNonce=\" + str(self.view.custom.runNonce))\n"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "ResetEditsButton",
+              "domId": "spike-reset-btn"
+            },
+            "props": {
+              "text": "Reset Typed Orders",
+              "style": {
+                "backgroundColor": "#607D8B",
+                "color": "#FFFFFF"
+              }
+            },
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "type": "script",
+                  "scope": "G",
+                  "config": {
+                    "script": "\t# Clear all locally-typed order qtys and recompute the clean ledger (req #4).\n\tself.view.custom.editQty = {}\n\tself.view.custom.editNonce = (self.view.custom.editNonce or 0) + 1\n\tsystem.util.getLogger(\"SPIKE\").info(\"Reset typed orders -> nonce=\" + str(self.view.custom.editNonce))\n"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "CommitButton"
+            },
+            "props": {
+              "text": "Commit Orders (later phase)",
+              "enabled": false,
+              "style": {
+                "backgroundColor": "#B0BEC5",
+                "color": "#FFFFFF"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "ia.display.label",
+        "meta": {
+          "name": "FixtureNote"
+        },
+        "props": {
+          "text": "Faithful 4-row ledger (Beg / Receipts-per-supplier / Usage / End), numbers + color only. Peach = the one editable order-by cell per supplier; red End = below safety stock. Type a qty into a peach cell to recompute End live (no DB write \u2014 commit deferred). Calendar is FIXTURE-backed (AD_GetSpecialDate stubbed, anchor 2026-06-15).",
+          "style": {
+            "fontSize": "11px",
+            "color": "#37474F",
+            "fontStyle": "italic"
+          }
+        },
+        "position": {
+          "grow": 0,
+          "shrink": 0,
+          "basis": "auto"
+        }
+      },
+      {
+        "type": "ia.display.table",
+        "meta": {
+          "name": "PhasedGrid",
+          "domId": "spike-order-grid"
+        },
+        "position": {
+          "grow": 1,
+          "shrink": 1,
+          "basis": "460px"
+        },
+        "props": {
+          "selection": {
+            "mode": "none"
+          },
+          "virtualized": true,
+          "filtering": {
+            "enabled": false
+          },
+          "pager": {
+            "enabled": true,
+            "rowsPerPage": 100,
+            "options": [
+              50,
+              100,
+              200
+            ]
+          }
+        },
+        "propConfig": {
+          "props.data": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.gridModel.data"
+              }
+            }
+          },
+          "props.columns": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.gridModel.columns"
+              }
+            }
+          }
+        },
+        "events": {
+          "component": {
+            "onEditCellCommit": {
+              "type": "script",
+              "scope": "G",
+              "config": {
+                "script": "\t# onEditCellCommit \u2014 req #2 (lock to one cell) + req #4 (live recompute).\n\t# Day columns are editable at column level; the builder validates with two hidden\n\t# scalar fields on each Receipts row: \"part\" (part number) and \"_obfp\" (the\n\t# order-by fill_pos). A commit is VALID only when the row label is \"Receipts\"\n\t# and the committed day column d<fp> matches that row's _obfp (the single peach\n\t# cell). Valid -> store typed qty in view.custom.editQty[\"PART|FILLPOS\"] and bump\n\t# editNonce so the gridModel binding re-runs and folds it into the pooled End.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tcol = event.column            # e.g. \"d5\"\n\trowIdx = event.row\n\tnewVal = event.value\n\tif not (isinstance(col, basestring) and col.startswith(\"d\") and col[1:].isdigit()):\n\t\tlog.info(\"SPIKE edit IGNORED (non-day col %s)\" % col)\n\t\treturn\n\trows = self.view.custom.gridModel.data\n\tif rowIdx < 0 or rowIdx >= len(rows):\n\t\tlog.warn(\"SPIKE edit: row %s out of range\" % rowIdx)\n\t\treturn\n\tsrcRow = rows[rowIdx]\n\tlabel = srcRow[\"label\"]\n\tlabelTxt = label[\"value\"] if hasattr(label, \"keys\") else label\n\tobfp = srcRow[\"_obfp\"] if \"_obfp\" in srcRow else None\n\tfp = int(col[1:])\n\tif labelTxt != \"Receipts\" or obfp is None or int(obfp) != fp:\n\t\tlog.info(\"SPIKE edit REJECTED (locked): row=%s col=%s label=%s obfp=%s\" % (rowIdx, col, labelTxt, obfp))\n\t\treturn\n\ttry:\n\t\tqty = int(round(float(newVal))) if newVal not in (None, \"\") else 0\n\texcept Exception:\n\t\tlog.warn(\"SPIKE edit non-numeric '%s' ignored\" % newVal)\n\t\treturn\n\tpn = srcRow[\"part\"]\n\tkey = \"%s|%d\" % (pn, fp)\n\tedits = dict(self.view.custom.editQty) if self.view.custom.editQty else {}\n\tif qty == 0:\n\t\tedits.pop(key, None)\n\telse:\n\t\tedits[key] = qty\n\tself.view.custom.editQty = edits\n\tself.view.custom.editNonce = (self.view.custom.editNonce or 0) + 1\n\tlog.info(\"SPIKE edit ACCEPTED: %s = %d (nonce=%d, %d total edits)\" % (key, qty, self.view.custom.editNonce, len(edits)))\n"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "Legend"
+        },
+        "props": {
+          "direction": "row",
+          "wrap": "wrap",
+          "alignItems": "center",
+          "style": {
+            "gap": "14px",
+            "backgroundColor": "#FFFFFF",
+            "padding": "10px",
+            "border": "1px solid #D0D4DA",
+            "borderRadius": "4px"
+          }
+        },
+        "position": {
+          "grow": 0,
+          "shrink": 0,
+          "basis": "auto"
+        },
+        "children": [
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "LegendTitle"
+            },
+            "props": {
+              "text": "Legend:",
+              "style": {
+                "fontWeight": "bold",
+                "fontSize": "12px"
+              }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "LegendOrderBy"
+            },
+            "props": {
+              "text": "Editable order-by cell (peach #FFCC99) \u2014 type the order qty here",
+              "style": {
+                "fontSize": "12px",
+                "backgroundColor": "#FFCC99",
+                "padding": "4px 8px",
+                "borderRadius": "3px"
+              }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "LegendBelow"
+            },
+            "props": {
+              "text": "End Balance below safety stock (red #FF0000)",
+              "style": {
+                "fontSize": "12px",
+                "color": "#FF0000",
+                "fontWeight": "bold",
+                "padding": "4px 8px"
+              }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "LegendSep"
+            },
+            "props": {
+              "text": "Gray row separates size groups (#969696)",
+              "style": {
+                "fontSize": "12px",
+                "color": "#FFFFFF",
+                "backgroundColor": "#969696",
+                "padding": "4px 8px",
+                "borderRadius": "3px"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
