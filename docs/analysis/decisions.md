@@ -292,3 +292,51 @@ the genuine residue is the **Shipping signature mismatches (M1/M2/M3 + SELECT_Pa
 REAL vs the live schema and confirm the ManualShipping / daily-pull / auto-scrap paths are broken in the
 deployed code (a real defect to fix in the rebuild, not a snapshot artifact). Resolves the
 "verify-live / snapshot-drift" §8 items across shipping, edi, forecasting, admin specs.
+
+---
+
+## D10 — Forecast week numbering is TEMA-supplied and production-relative (ISO − 1 for 2026); the Order R1 fix is validated against a real 830
+
+*Recorded 2026-06-16. Resolves forecast-breakdown.md §8 Q1 (the highest-risk forecast question) and
+confirms the shipped `SIM_OrderSimulation` R1 fix.*
+
+**Evidence:** David provided a real TMMMS 830 forecast feed (`EDI/830000008976.EDI`, gitignored client
+data — sender Toyota DUNS `808369495`, receiver Magnolia `71930`, horizon 5/08–7/31, generated 2026-04-27).
+Its FST (Forecast Schedule) segments carry the week number in the **FST09 "DO" reference number**, e.g.:
+
+```
+FST*144*D*W*20260615*20260619***DO*2624   → production week of 6/15, DO ref 2624
+```
+
+The legacy parser reads `week = copy(delSL[9], 3, 2)` = chars 3-4 of the DO ref → for `2624` → **`24`**.
+The DO ref is structured `2` + `6` (year 2026) + `WW` (week), so `2624` = "2026, week 24".
+
+**Measured across the whole horizon, `ISO_week(start_date) − TEMA_DO_week = 1` for every normal
+production week** (the lone exception, the 7/12 single-day `FST*0…*2628`, is the mid-July shutdown stub —
+zero qty, off-cycle):
+
+| FST start | DO ref | TEMA wk | ISO wk | ISO − TEMA |
+|---|---|---|---|---|
+| 2026-06-08 | 2623 | 23 | 24 | 1 |
+| 2026-06-15 | 2624 | 24 | 25 | 1 |
+| 2026-06-22 | 2625 | 25 | 26 | 1 |
+
+(…holds for all 12 normal weeks 18→30.)
+
+**What this means for the rebuild.**
+1. **The forecast week number is TEMA-supplied, NOT app-computed.** It is parsed verbatim from the 830's
+   FST09 DO reference (chars 3-4) and stored as `INV_BREAKDOWN_FC_INF.IN_WEEK_NUMBER`. The forecast WRITE
+   side stores it unmodified (`checkweeknumber`); the FirstProductionDay offset is applied only to a local
+   holiday-lookup variable, never to the row (per the Forecasting spec).
+2. **TEMA's numbering is production-relative, running exactly `ISO − 1` for 2026** — which equals
+   `weekoffset = INT_FIRST_PRODUCTION_WEEK[2026] − 1 = 2 − 1 = 1` (the value `INV_FIRST_PRODUCTION_DAY`
+   carries; see [[project-order-renban-domain]] / the Production-calendar spec).
+3. **The shipped Order R1 fix (`SIM_OrderSimulation` STEP 4) is VALIDATED.** The READ side computes
+   `@WeekNo = ISO_week(prodDate) − weekoffset = ISO − 1`, and the stored `IN_WEEK_NUMBER` = the TEMA DO
+   week = `ISO − 1`. They match exactly on real data. The "three week-number conventions coexist; consistency
+   hinges on the 830 being production-relative" risk (Forecasting §8 Q1) is **confirmed safe** — the feed IS
+   production-relative.
+4. **Rebuild rule:** ingest `IN_WEEK_NUMBER` from FST09 chars 3-4 verbatim; do not recompute from the date.
+   When the read side needs a week for a production date, use `ISO_week(date) − (INT_FIRST_PRODUCTION_WEEK[year] − 1)`.
+   The "year + week" DO encoding (`26` + `WW`) is the durable key; carry both year and week, not just week,
+   to disambiguate across year boundaries (the legacy stores week-only and relies on delete-forward each cycle).

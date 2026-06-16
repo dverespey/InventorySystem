@@ -236,12 +236,15 @@ a **gateway Python/Jython service**, not Named-Query-per-screen.
       surrogate-key resolution (D2), and a defined delete predicate.
 
 ## 8. Open questions for the user (domain expert)
-- **Q1 (candidate D#) — the canonical week-number convention.** Three different week computations
-  coexist: write stores the **raw feed week** (`checkweeknumber`, offset applied only to the holiday
-  lookup); Order reads **`WeekOfTheYear(prod) − (FirstWeek−1)`** with an underflow guard; the usage
-  rollup reads **`WeekOfTheYear(now)`** with *no* offset. Confirm: does TEMA's 830 number weeks
-  **production-relative** (so the stored raw week already equals Order's offset-subtracted ISO week)?
-  Lock one definition for the rebuild; this is the single highest-risk math decision (R1).
+- **Q1 ✅ RESOLVED (D10) — the canonical week-number convention.** Three week computations coexist: write
+  stores the **raw feed week** (`checkweeknumber`); Order reads **`WeekOfTheYear(prod) − (FirstWeek−1)`**;
+  the usage rollup reads **`WeekOfTheYear(now)`** with no offset. **A real TMMMS 830 (`EDI/830000008976.EDI`)
+  settles it: TEMA's week number is supplied in the FST09 "DO" reference (`copy(delSL[9],3,2)`, e.g. `2624`
+  → wk 24) and is PRODUCTION-RELATIVE — exactly `ISO_week(date) − 1` for 2026 across the whole horizon
+  (= `INT_FIRST_PRODUCTION_WEEK[2026] − 1 = 1`).** So the stored raw week already equals Order's
+  offset-subtracted ISO week → the write/read conventions reconcile, and the shipped R1 fix is validated.
+  Rebuild: ingest `IN_WEEK_NUMBER` from FST09 verbatim (don't recompute); read with `ISO(date) − offset`.
+  See decision **D10**.
 - **Q2 — `DELETE_ForecastInfo` semantics.** The form calls a 3-param `@WeekDate/@HistWeekDate/
   @PartNumber` proc that is **absent from the snapshot**. What does the live proc actually delete
   (forward-from-WeekDate? a window between HistWeekDate and WeekDate? per part?). Without it the rebuild
