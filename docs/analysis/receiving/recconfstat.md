@@ -294,10 +294,11 @@ never moves** for that part (edge case; ties to D4).
 4. **Supplier-blind delete key.** `DELETE_RecConfStatInfo` omits supplier code — two suppliers sharing
    a part/FRS/RENBAN would both be deleted. Confirm the rebuild should key the delete on the full
    tuple (incl. supplier + site).
-5. **`'A'` arrival via the three alternative statuses.** The INSERT/DELETE `'A'` legs treat
-   `VC_STATUS_PLANT_YARD`/`VC_STATUS_ASSEMBLER_YARD`/`VC_WAREHOUSE` as arrival-equivalents, but the
-   **UPDATE** `'A'` add-leg fires only on `VC_ARRIVAL` proper. Is arriving-via-plant-yard-only (no
-   `VC_ARRIVAL` stamp) on an *edit* supposed to count stock? Today it doesn't (potential under-count).
+5. ✅ RESOLVED (D12) — **plant-yard AND assembler-yard count as arrival on edit too.** David:
+   *"Plant/yard both count as arrival."* The legacy UPDATE `'A'` add-leg fires only on `VC_ARRIVAL`, so
+   plant-yard/assembler-yard on an edit under-counts vs insert/delete. The rebuild's receiving action
+   treats plant-yard and assembler-yard as arrival-equivalent on edit (symmetric with insert) so the
+   `'A'`-supplier stock-add fires consistently — folds into the stock-ledger service with D7 + D8(3).
 6. **`VC_FRS_DATE` derivation.** Confirm the year-rollover rule (compare last digit of current year
    vs FRS prefix) is correct, and whether a 2030s prefix collision (single-digit) is a concern.
 7. ✅ **RESOLVED (D7):** the `'A'`-supplier arrival stock-add happens here, via the `VC_ARRIVAL`

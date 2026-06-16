@@ -297,13 +297,11 @@ defaults may mask it. Flag for verification, do not assume.*
   shipping feature.
 
 ## 8. Open questions for the user (domain expert)
-1. **Is the Assy Ratio Master screen really meant to be off?** `MasterMaint.pas:78` hides its button
-   unconditionally with "not used yet" since 2002. Are `INV_ASSY_RATIO_MST` rows still used at all, and
-   if so, **how are they maintained today** (direct SQL? a different screen? import)? This decides whether
-   the rebuild surfaces this view, retires it, or merges it into forecast-detail.
-2. **Is `INV_ASSY_RATIO_MST` superseded by `INV_FORECAST_DETAIL_INF`?** They overlap (broadcast/assy →
-   tire/wheel + ratio) but only forecast-detail feeds the live explosion. Should the multi-component
-   (3-way split) capability be carried into the new BOM, or dropped?
+1. ✅ RESOLVED (D12) — **DROP for the rebuild.** David: *"INV_ASSY_RATIO_MST failed conversion thought,
+   drop for rebuild."* The screen + table were an abandoned design (hidden "not used yet"; no forecast/order
+   proc reads the table). Do NOT port `INV_ASSY_RATIO_MST`, `AssyRatioMaster`, or `BCRatioMaster`.
+2. ✅ RESOLVED (D12) — moot: the table is dropped (Q1). The live broadcast→part ratio model lives entirely
+   in `INV_FORECAST_DETAIL_INF`, which the rebuild carries.
 3. **Who owns `VC_BLANKET_PO` and `MO_ASSEMBLY_COST`?** The editor never sets them; an assembly-cost
    proc joins them to `INV_ASSY_MONTHLY_PO`. Confirm these are maintained by the MonthlyPO/Manifest-Cost
    module and verify whether the live DB has DEFAULT constraints (otherwise `INSERT_AssyRatioInfo` would

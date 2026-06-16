@@ -366,9 +366,9 @@ the same drop dir:
    AK9 group codes (`A` accept / `E` accept-with-errors / `P` partial / `R` reject) to distinct
    statuses, and must it tolerate `AK2/AK3/AK4` detail segments between AK1 and AK9? (Recommend:
    yes, parse AK9 explicitly.)
-3. **820 remittance persistence.** Source has an unfinished "Store in Table" TODO; today 820 is
-   report-only. Should the rebuild persist remittance (payment date, amount, per-manifest paid) and
-   reconcile it against invoices (`INV_INV_MST`)? What is the payment-status model?
+3. ✅ RESOLVED (D12) — **820 stays REPORT-ONLY.** David: *"Keep report only now, site isn't using it."*
+   No remittance persistence in the rebuild for now; revisit if a site adopts remittance reconciliation.
+   (Still fix the latent parse bugs — `SE*` EOF loop, `TStringList` leak — if/when the report is rebuilt.)
 4. **824 application-advice action.** Today 824 produces an Excel error list and updates nothing.
    Should a 824 NTE error **flag/reject the named ASN** (`INV_ASN_MST` by manifest) automatically,
    or stay an operator report? Confirm the manifest/part columns are stable fixed-width offsets.

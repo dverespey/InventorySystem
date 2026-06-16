@@ -177,7 +177,9 @@ Each report = **one Named Query** (per-proc practice) + a consumer:
 1. **D1 cross-site (HIGH):** no `REPORT_*` filters by site/plant (the `IN_ASN_EIN`/`IN_INV_EIN` columns are
    output identity, not filters). Should reports be per-site by default on the shared DB, and which fact tables
    carry the authoritative `site_id`?
-2. Monthly order range on **ship date** not order date — intended?
+2. ✅ RESOLVED (D12): monthly order reports must range on **ORDER date** (`VC_ORDER_DATE`), not the
+   ship date (`VC_STATUS_SUPPLIER_SHIPPING`) the legacy uses — confirmed bug. (Daily order reports already
+   use order date correctly; invoice reports unaffected.)
 3. ✅ RESOLVED (D11): `REPORT_INVOICESSummary`/`MonthlyINVOICESSummary` **will be made window-aware** (D6) —
    same shared window-aware manifest-cost lookup as the EDI 810/856 path.
 4. ✅ RESOLVED (D11): `REPORT_UnusedWheelPartNumbers` checking the TIRE column is a **confirmed bug** — the

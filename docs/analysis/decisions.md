@@ -382,3 +382,42 @@ implements the corrected behavior (the legacy is NOT hotfixed — see the P12 NO
 > All nine are fixed structurally in the rebuild. Where a fix lands in the re-homed **stock-ledger**
 > service (4 partially, 9), it composes with the additive-delta ledger model. D6 (1) shares one
 > window-aware manifest-cost lookup across EDI + Reporting.
+
+---
+
+## D12 — Group C domain-judgment answers (David, 2026-06-16)
+
+*Resolves the remaining genuine-domain §8 questions across Assembly, EDI, Receiving, and Reporting.
+This closes the §8 decisions pass for the InventorySystem analysis (D1–D12).*
+
+**1. Drop `INV_ASSY_RATIO_MST` from the rebuild.** *(Assembly — assy-ratio-master §8.1/§8.2)*
+Verbatim intent: *"INV_ASSY_RATIO_MST failed conversion thought, drop for rebuild."* The table + its
+AssyRatioMaster screen were an abandoned design (the screen is hidden "not used yet"; no forecast/order
+proc reads the table — the live explosion uses `INV_FORECAST_DETAIL_INF`). **Do NOT port** `INV_ASSY_RATIO_MST`,
+`AssyRatioMaster`, or `BCRatioMaster` (already dead). The broadcast→part ratio model lives entirely in
+`INV_FORECAST_DETAIL_INF`.
+
+**2. EDI 820 remittance stays report-only.** *(EDI — edi-upload §8)*
+Verbatim intent: *"Keep report only now, site isn't using it."* The legacy 820 path's "Store in Table"
+TODO stays unimplemented; the rebuild renders 820 as a report (no payment-application persistence) for now.
+Revisit if a site starts using remittance reconciliation. (Still fix the latent parse bugs — `SE*` EOF
+loop, the `TStringList` leak — if/when the report is rebuilt.)
+
+**3. Plant-yard AND assembler-yard count as arrival on edit.** *(Receiving — recconfstat §8.5)*
+Verbatim intent: *"Plant/yard both count as arrival."* The legacy UPDATE arrival-add leg fires only on
+`VC_ARRIVAL`, so stamping plant-yard/assembler-yard on an EDIT of an `'A'` order under-counts vs the
+INSERT/DELETE legs (which treat plant-yard/assembler-yard/warehouse as arrival-equivalents). The rebuild's
+receiving action treats **plant-yard and assembler-yard as arrival-equivalent on edit too** — symmetric
+with insert — so the `'A'`-supplier stock-add fires consistently however arrival status is recorded. (Folds
+into the stock-ledger service alongside D7 + the D8(3) reversal.)
+
+**4. Monthly order reports range on ORDER date.** *(Reporting — reporting §8.2)*
+Verbatim intent: *"Should range on order date."* The legacy monthly supplier/logistics ORDER reports
+(`REPORT_MonthlySupplierOrders`/`…Cost`/`REPORT_MonthlyLogisticsOrders`) filter on
+`VC_STATUS_SUPPLIER_SHIPPING` (ship date), which is wrong — an order placed in month M-1 and shipped in M
+shows in M. The rebuild ranges these on **`VC_ORDER_DATE`** instead. (Confirmed bug; behaves like a D11
+fix. The daily order reports already use `VC_ORDER_DATE` correctly. Invoice reports are unaffected.)
+
+> Closes the InventorySystem §8 decisions pass. D1–D12 cover the cross-cutting decisions + every spec's
+> confirmed-bug and domain-judgment open items. Remaining spec §8 entries are narrow "verify during build"
+> notes, not decisions.
