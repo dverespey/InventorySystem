@@ -134,9 +134,12 @@ ADO `CmdStoredProc` binds **positionally** — works today; **a name-binding por
 unless reconciled. Also `REPORT_MonthlySupplierInvoices` defaults `@Supplier=''` (not `'ALL'`) → else-branch
 filters `VC_SUPPLIER_NAME=''` → empty; live caller never hits it (dialog coerces blank→`'ALL'`).
 
-**4.3 Snapshot drift (verify-live, not confirmed bug).** `REPORT_ASNWithCost` (`MainMenu.pas:3261`) and
-`REPORT_ForecastCAMEXReport` (`ForecastCamexreport.pas:104`) referenced by live code but absent from
-`Create Inventory.sql` — consistent with prior EDI/forecast snapshot-lag findings ([[reference-schema-snapshot-vs-live]]).
+**4.3 DEPRECATED (D9 — not missing-proc bugs).** `REPORT_ASNWithCost` (`MainMenu.pas:3261`) and
+`REPORT_ForecastCAMEXReport` (`ForecastCamexreport.pas:104`) are absent from the **live dump**
+(`CreateInventory.sql`, 2026-06-12) too — they are **deprecated**: David confirmed **CAMEX is a
+decommissioned site**. `REPORT_NUMMILotLocation[W]` (live but unreferenced by the menu) are likewise
+**NUMMI decommissioned-site relics**. All of these + `ForecastCamexreport.pas` are **out of rebuild scope**;
+do not port them. (See D9 + [[project-system-landscape]].)
 
 **4.4 Dates.** `varchar(8)` `yyyymmdd`; reformatted `mm/dd/yy` via `substring(x,5,2)+'/'+substring(x,7,2)+'/'+
 substring(x,3,2)` (e.g. `schema:4449`). Monthly *order* reports range on **ship date**
@@ -178,8 +181,10 @@ Each report = **one Named Query** (per-proc practice) + a consumer:
 3. Confirm `REPORT_INVOICESSummary`/`MonthlyINVOICESSummary` should be made window-aware (D6); have downstream
    numbers been "consistent-but-wrong" vs the 810?
 4. `REPORT_UnusedWheelPartNumbers` checks the TIRE column — bug?
-5. Supply live bodies for `REPORT_ASNWithCost` + `REPORT_ForecastCAMEXReport`.
-6. Confirm `REPORT_NUMMILotLocation[W]` are dead relics; only PLANT variants ship.
+5. ✅ RESOLVED (D9): `REPORT_ASNWithCost` + `REPORT_ForecastCAMEXReport` are **deprecated** (CAMEX
+   decommissioned) — out of scope, do not port.
+6. ✅ RESOLVED (D9): `REPORT_NUMMILotLocation[W]` are **NUMMI decommissioned-site relics** — only PLANT
+   variants ship; out of scope.
 
 ## 9. Test cases / parity checks
 - D6 multi-window: 2 non-overlapping price windows, run `REPORT_INVOICESSummary @PDate=<window2>` → legacy

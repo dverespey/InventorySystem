@@ -250,3 +250,45 @@ in the **receiving-confirmation** action alongside the arrival-add, not the carr
 
 > Closes the confirm-and-fix batch. All three are real defects; the rebuild fixes them (Bug 3 by
 > implementing the intended arrival-reversal).
+
+---
+
+## D9 — The live server dump `CreateInventory.sql` (2026-06-12) is the authoritative schema; resolution of the "snapshot-drift" findings
+
+*Recorded 2026-06-16.*
+
+**Verbatim intent (David):** "The dump is live." `DB Schema/CreateInventory.sql` (no space, dated
+2026-06-12) is the **current live-server schema** — 182 procs / 42 tables / 25 triggers. The older
+`Create Inventory.sql` (spaced, 2026-06-01) was a stale snapshot, now renamed
+`Create Inventory.superseded-2026-06-01.sql` (retained only so pre-2026-06-16 specs' `schema:NNNN`
+line cites still resolve). Also: **CAMEX is a decommissioned site** (as is NUMMI); their reports are
+deprecated relics, out of rebuild scope.
+
+**What this means for the rebuild.** Many analysis specs flagged proc-signature mismatches / missing
+procs as "vs the checked-in snapshot — verify live" ([[reference-schema-snapshot-vs-live]]). Re-verified
+against the LIVE dump, each finding now has a concrete verdict:
+
+| Finding | Spec | Verdict vs LIVE dump |
+|---|---|---|
+| EDI `@EIN` on `REPORT_EDI810` + `REPORT_EDI856` (D1 cross-site-bleed risk) | edi/asn-invoice | **RESOLVED** — both procs declare `@EIN INTEGER=0` and use it (`IF @EIN=0`→all, else `WHERE …_EIN=@EIN`). Passing `@EIN` correctly scopes to one site. The D1-blocking concern is GONE. |
+| `DELETE_ForecastInfo` (was "missing") | forecasting/forecast-breakdown | **RESOLVED** — exists, 3 params (`@WeekDate,@HistWeekDate,@PartNumber`) matching the caller exactly. |
+| `INV_FORECAST_DETAIL_INF` label/misc columns | forecasting/forecast-detail | **RESOLVED** — live table HAS `VC_LABEL_PART_NUMBER`/`VC_MISC1_PART_NUMBER`/`VC_MISC2_PART_NUMBER`; CRUD procs reference them. |
+| `UPDATE_UserPassword` (was "missing") | admin/auth-users | **RESOLVED on existence** — exists, 2 params (`@UserID,@NewPass`). **But NEW REAL mismatch:** caller passes `@Password` (DataModule.pas:6310) ≠ proc `@NewPass` → by-name ADO bind fails. |
+| Shipping M1 `INSERT_ShippingDetail` | shipping/shipping | **REAL** — live declares 4 params (`@PartShipID,@PartNumber,@Productiondate,@Qty`); caller passes 5 (diff names). |
+| Shipping M2 `INSERT_StockTakingInfo` | shipping/dailybuildtotal | **REAL** — live 3 params (`@PartNumber,@QTY,@Reason`); caller passes 5. |
+| Shipping M3 `INSERT_ShippingInfo` | shipping/shipping | **REAL** — live 9 params (incl. `@ShippingID OUTPUT,@DTStartSeq,@DTEndSeq`); caller passes 6. |
+| `SELECT_PartsStockInfo` (auto-scrap) | shipping/dailybuildtotal | **REAL** — live still 1 param (`@PartNum`); caller passes 3 and reads a `'Last Scrap Count'` column the proc doesn't return → `FieldByName` raises. |
+| `REPORT_ASNWithCost`, `REPORT_ForecastCAMEXReport` | reporting, forecasting | **DEPRECATED** — absent from live; CAMEX decommissioned. Not bugs. |
+| `REPORT_NUMMILotLocation[W]`, `ForecastCamexreport.pas` | reporting | **DEPRECATED RELIC** — NUMMI/CAMEX decommissioned sites; out of scope. |
+
+**NEW findings surfaced by the live dump (real, for the build):**
+- **Hardcoded site EIN in `REPORT_EDI856`:** one branch has `WHERE a.IN_ASN_EIN = 6440` (live `:3683`) —
+  a literal site EIN baked into the proc. A D1 hazard (pins one site); the rebuild must parameterize it.
+- **`UPDATE_UserPassword` param-name mismatch:** caller `@Password` vs proc `@NewPass` — reconcile in the
+  auth rebuild (moot once auth moves to the Ignition User Source).
+
+**Net:** the four scariest "snapshot-drift" items (EDI cross-site, the three missing procs) are RESOLVED;
+the genuine residue is the **Shipping signature mismatches (M1/M2/M3 + SELECT_PartsStockInfo)** — these are
+REAL vs the live schema and confirm the ManualShipping / daily-pull / auto-scrap paths are broken in the
+deployed code (a real defect to fix in the rebuild, not a snapshot artifact). Resolves the
+"verify-live / snapshot-drift" §8 items across shipping, edi, forecasting, admin specs.

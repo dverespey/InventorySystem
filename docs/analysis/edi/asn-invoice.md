@@ -166,15 +166,14 @@ Driven over `EDI810DataSet` (= `REPORT_EDI810`). Segments (`EDI810Object.pas:112
   a recreate filter (`REPORT_EDI810Recreate`). The `ASNStatus_ComboBox` index→`@List` letter map
   (`ASNInvoice.pas`): 0=`X`(all) / 1=`C`(not-created/editable) / 2=`S`(sent) / 3=`A`(accepted) / 4=`R`(rejected).
 - **810 generation** is **EIN-driven on recreate** (`ASNInvoice.pas:857-895`): selects `REPORT_EDI810` by
-  `@EIN`, builds via `T810EDI`, writes `810<copy(PickUpDate,5,4)>.txt`. *(`REPORT_EDI810` as defined takes
-  **no** `@EIN` parameter (`schema:4303` — `AS` with no params) yet the caller passes `@EIN`; this is a
-  signature mismatch vs the snapshot — verify the live proc actually accepts `@EIN`.)*
-  ⚠️ **The SAME `@EIN` mismatch is on the 856 path** — `ASNInvoice.pas:808-809` passes `@EIN` to
-  `REPORT_EDI856`, but `schema:4377` is also param-less. If the live procs are param-less, BOTH the 810
-  and 856 recreate paths would return *every* un-invoiced/un-sent line across all ASNs **and all sites**
-  into one document — a D1 cross-site-bleed + over-bill hazard, not just a runtime error. **Elevate to a
-  D1-blocking question: dump BOTH live procs' signatures before implementing site-scoped EDI** (see
-  [[reference-schema-snapshot-vs-live]] + §8).
+  `@EIN`, builds via `T810EDI`, writes `810<copy(PickUpDate,5,4)>.txt`.
+  ✅ **RESOLVED (D9) vs the live dump:** both `REPORT_EDI810` AND `REPORT_EDI856` **DO** declare `@EIN INTEGER=0`
+  and use it — `IF @EIN=0` returns all rows, else `WHERE …_EIN=@EIN` scopes to that site's EIN. Passing `@EIN`
+  is correct; the earlier "param-less, cross-site-bleed" concern was a **stale-snapshot artifact** (the 6/1
+  snapshot showed these procs param-less; the live 6/12 dump has them EIN-aware). NOT a D1 blocker.
+  ⚠️ **NEW finding (D9) — hardcoded site EIN in `REPORT_EDI856`:** one branch has `WHERE a.IN_ASN_EIN = 6440`
+  (live `CreateInventory.sql:3683`) — a literal site EIN baked into the proc. The rebuild MUST parameterize
+  this (it pins one site; a D1 hazard).
 - **Unsend:** ASN `UPDATE_ASNUnsend` (`'S'`→`'C'`); Invoice `UPDATE_INVUnsend` **hard-deletes** the
   `INV_INV_MST` row and nulls the detail links (not a soft "C" status, despite the screen label "Unsend").
 
