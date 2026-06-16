@@ -15,11 +15,20 @@ Ground truth was read off the live spike DB (`Inventory` on `mssql-spike`), not 
 - `sites` table exists, 2 rows: `(1,'MAS','TMMMS')`, `(2,'HERO','TMMTX')` (seeded by `spike-db.sh`).
 - `IX_INV_SUPPLIER_MST` is a **single-column** UNIQUE index on `VC_SUPPLIER_CODE` (not yet composite).
 - The five procs (`SELECT/INSERT/UPDATE/DELETE_SupplierInfo`, `SELECT_PartsSupplier`) all exist.
+- **`DELETE_SupplierCode` trigger (live body, verified 2026-06-16) does THREE things, not one:**
+  (1) `UPDATE INV_PARTS_STOCK_MST SET IN_SUPPLIER_ID=null WHERE ... = DELETED` (the nullify we knew about),
+  (2) `DELETE FROM INV_BREAKDOWN_FC_INF WHERE VC_SUPPLIER_CODE=(SELECT VC_SUPPLIER_CODE from DELETED)`,
+  (3) `DELETE FROM INV_FORECAST_INF WHERE VC_SUPPLIER_CODE=(SELECT VC_SUPPLIER_CODE from DELETED)`.
+  Both forecast tables are populated and keyed by supplier **CODE** (not id): `INV_BREAKDOWN_FC_INF` ≈959
+  rows, `INV_FORECAST_INF` ≈1066 rows. **The supplier spec §2 under-documented this trigger** (it described
+  only the nullify branch) — *spec correction needed: §2 must list the two forecast hard-deletes.* This is
+  load-bearing for the delete gate (A.5 / B.5): a refCount that counts only `INV_PARTS_STOCK_MST` is **blind**
+  to the forecast cascade.
 - `INSERT_SupplierInfo` resolves logistics **by name**, narrows `@SupPerson`→25 / `@SupDirectory`→215,
   computes the 16-char `yyyymmddHHMMSSff` timestamp inline, and **takes no `site_id`**.
-- FK lookup tables confirmed: `INV_LOGISTICS_MST(IN_LOGISTICS_ID,VC_LOGISTICS_NAME)`,
-  `INV_PART_TYPE_MST(IN_PART_TYPE_ID,VC_PART_TYPE,VC_PART_TYPE_DESCRIPTION)`,
-  `INV_ADD_POINT_INF(IN_ADD_POINT_ID,VC_ADD_POINT_ABRV,VC_ADD_POINT)`.
+- FK lookup tables confirmed: `INV_LOGISTICS_MST(IN_LOGISTICS_ID,VC_LOGISTICS_NAME)` (genuine surrogate FK),
+  `INV_PART_TYPE_MST(VC_PART_TYPE,...)` (Create-Order-Sheet combo, code-valued). `INV_ADD_POINT_INF` exists
+  but is **not** used — Inventory-Add-Point is the static S/A enum (D4 / R6), no NQ.
 
 ---
 
@@ -51,15 +60,36 @@ Do **not** add `site_id` to `INV_SUPPLIER_MST` (or the other master tables) in t
   - The **uniqueness check NQ** (A.4) is written composite-ready the same way: today it checks
     `VC_SUPPLIER_CODE` alone (matching the live single-column `IX_INV_SUPPLIER_MST`); the `:site_id`
     predicate is the commented `IG-SITE` line, flipped on with the composite index in the Postgres phase.
+  - **R3 — flip ordering is ONE atomic, ordered migration step (uncomment AFTER index is composite).**
+    Uncommenting the `-- AND s.site_id = :site_id` predicate on `checkCodeUnique` *before*
+    `IX_INV_SUPPLIER_MST` is rebuilt as composite `(site_id, VC_SUPPLIER_CODE)` would let the SAME code be
+    inserted under two sites with the single-column unique index still rejecting it — the validator and the
+    index would fight. **Required order within the single Postgres-phase migration:** (a) add `site_id`
+    column + backfill; (b) DROP single-column `IX_INV_SUPPLIER_MST`, CREATE composite
+    `(site_id, VC_SUPPLIER_CODE)` UNIQUE; (c) **only then** uncomment every `-- IG-SITE:` predicate
+    (list/get/update/delete/checkCodeUnique) in one pass. (a)→(b)→(c), atomic, never (c) before (b).
   - **`site_id` is sourced server-side, never from the client.** It comes from
-    `session.custom.siteId` (set at login from the Ignition User Source's site binding — `D1`: "auth binds
-    each user to a site"). A view passes `{session.custom.siteId}` into NQ params; the NQ never trusts a
-    client-supplied site. This is the InventorySystem analogue of the GALC `siteScopedQuery()` rule.
+    `session.custom.siteId`. **R4 — where it is set:** a **gateway login / authentication event** writes
+    `session.custom.siteId` from the authenticated user's site binding on the Ignition User Source (`D1`:
+    "auth binds each user to a site"). It is a **session property set server-side at auth time** — it is
+    **never written from a client binding, view script, or NQ param**, so it cannot be spoofed by a client.
+    A view passes `{session.custom.siteId}` into NQ params; the NQ never trusts a client-supplied site. This
+    is the InventorySystem analogue of the GALC `siteScopedQuery()` rule, and it is the actual tenancy
+    boundary. **This auth→session wiring must be implemented and verified before any `-- IG-SITE:` predicate
+    is flipped on** — flipping the predicate on while `siteId` is still a defaulted/client-writable value
+    would be a false isolation boundary.
   - For the spike, `session.custom.siteId` defaults to `1` (TMMMS). Switching it to `2` exercises the
-    multi-site code path against one-site data — proving the *shape* without needing the column yet.
+    multi-site code path against one-site data — proving the param *plumbs through*, not isolation.
 
-  Net: **one site of data, but multi-site is structurally real** — site flows session → view → NQ param,
-  and turning it on is a per-NQ uncomment + a composite-index migration, not a redesign.
+  Net (R5 — honest scope): **one site of data; the multi-site SHAPE is real** (site flows session → view →
+  NQ param; turning it on is a per-NQ uncomment + composite-index migration per R3, not a redesign). What is
+  **NOT** yet proven is real data isolation — the spike only smoke-tests that the `siteId` param plumbs
+  end-to-end; true isolation (predicate enforced against site-tagged rows, verified server-side auth source)
+  is **deferred to the Postgres phase**. One honest partial today: `spike-db.sh` already adds `site_id` to
+  `INV_PARTS_STOCK_MST` (and its `_HIST`) and seeds 15 site-2 rows, so a **parts-level** isolation test is
+  possible now; **supplier-level** isolation is not (no `site_id` on `INV_SUPPLIER_MST`). Don't overclaim
+  "multi-site is structurally proven" — say "param plumbs; parts-level partial isolation; supplier isolation
+  deferred."
 
 **2. Stage-1 wrap-the-proc vs Stage-3 direct CRUD — for masters, write DIRECT parameterized Named
 Queries against the tables; do NOT wrap the legacy `*_SupplierInfo` procs.** This is a deliberate
@@ -163,11 +193,13 @@ Named Queries/
     update      — UPDATE ... WHERE id = :recordId; all data params + siteId
     delete      — DELETE ... WHERE id = :recordId (after the RESTRICT pre-check, A.5)
     checkCodeUnique  — uniqueness pre-check (A.4); params: code, excludeId, siteId
-    refCount    — D3 RESTRICT pre-check: count referencing rows; param: recordId   (A.5)
+    refCount    — D3 RESTRICT pre-check: count EVERY row the legacy delete-trigger would touch
+                  (per master — for Supplier that is parts + both forecast tables); params: recordId, code  (A.5)
   lookups/
     logistics   — IN_LOGISTICS_ID + VC_LOGISTICS_NAME, site-scoped  (shared FK combo source)
-    partType    — IN_PART_TYPE_ID + VC_PART_TYPE
-    addPoint    — IN_ADD_POINT_ID + VC_ADD_POINT_ABRV + VC_ADD_POINT
+    partType    — VC_PART_TYPE (Create-Order-Sheet combo; code-valued)
+    -- R6: NO addPoint NQ. Inventory-Add-Point is the static S/A enum (D4 / A.6), not an NQ-driven
+    --     combo, so the lookups/addPoint NQ is DROPPED as dead.
 ```
 
 Conventions baked in for every NQ:
@@ -217,8 +249,10 @@ Detail Save (onActionPerformed):
         navigate back to List
 
 Detail Delete:
-        n = runNamedQuery("Supplier/refCount", {recordId})    # A.5 D3 RESTRICT
-        if n > 0: show "Cannot delete — still referenced by N parts"; return
+        # A.5 D3 RESTRICT — refCount counts EVERY table the live trigger touches
+        # (parts by id + both forecast tables by code), not just parts.
+        n = runNamedQuery("Supplier/refCount", {recordId, code: form['VC_SUPPLIER_CODE']})
+        if n > 0: show "Cannot delete — still referenced by N parts/forecast rows"; return
         runNamedQuery("Supplier/delete", {recordId}); navigate List
 ```
 
@@ -254,20 +288,28 @@ carry them:
   codes; `get`/`update`/`delete` key on id; **renames are plain attribute updates** (the code is a
   non-key payload column with a per-site uniqueness constraint). The legacy name→id resolution in
   `INSERT_SupplierInfo` is replaced by passing the id directly.
-- **D3 (RESTRICT on delete) vs the legacy nullify trigger — the reconciliation:**
-  The legacy `DELETE_SupplierCode` trigger **NULLIFIES** `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID` for the
-  deleted supplier's parts (unlink, don't block). **D3 overrides this:** the rebuild **blocks** the
-  delete while any part still references the supplier. Reconciliation, concretely:
-  1. Delete is **gated by a `refCount` NQ** (`SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE
-     IN_SUPPLIER_ID = :recordId`). `> 0` → block with a clear message; never call `delete`.
-  2. Because the live `DELETE_SupplierCode` trigger still exists in the parallel-run DB and would fire
-     (and nullify) if a `DELETE` *did* reach the table, the rebuild's RESTRICT gate ensures we **only
-     ever DELETE rows with zero references** — so the trigger's nullify branch has nothing to act on and
-     is effectively inert. We do **not** drop or edit the legacy trigger during parallel run (P12
-     no-legacy-hotfix; the legacy app may still rely on it). The trigger is formally retired in the
-     Postgres phase when D3 becomes a real FK `ON DELETE NO ACTION`.
+- **D3 (RESTRICT on delete) vs the legacy `DELETE_SupplierCode` trigger — the reconciliation:**
+  The live trigger does THREE things (verified 2026-06-16, see the ground-truth note above): it
+  **NULLIFIES** `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID` for the supplier's parts, **and hard-DELETEs** every
+  `INV_BREAKDOWN_FC_INF` and `INV_FORECAST_INF` row whose `VC_SUPPLIER_CODE` matches the deleted supplier.
+  **D3 overrides the legacy semantics: the rebuild BLOCKS the delete while ANY of those three tables still
+  references the supplier.** The gate cannot just protect parts — it must see everything the trigger touches,
+  or a supplier with zero parts but live forecast rows would pass the gate and the trigger would silently
+  hard-delete hundreds of forecast rows (the R1 data-loss path). Reconciliation, concretely:
+  1. Delete is **gated by a single `refCount` NQ that counts ALL THREE referencing sets** — parts by
+     `IN_SUPPLIER_ID`, plus both forecast tables by `VC_SUPPLIER_CODE` (B.1 `Supplier/refCount`). The gate
+     takes the supplier's **code** as well as its id, because the forecast tables key on code. Any non-zero
+     total → block with a clear message; never call `delete`.
+  2. Because the live trigger still exists in the parallel-run DB and would fire (nullify parts **and**
+     cascade-delete both forecast tables) if a `DELETE` *did* reach the table, the RESTRICT gate ensures we
+     **only ever DELETE rows with zero references in all three tables** — so the trigger has nothing to act
+     on and is effectively inert. P12 forbids editing the live trigger during parallel run (the legacy app
+     may still rely on it), so **the gate is the only lever and it must mirror the full trigger body.** The
+     trigger is formally retired in the Postgres phase when D3 becomes real FK `ON DELETE NO ACTION`.
   3. This is a behavioral **divergence from legacy**, mandated by D3 — document it in the Supplier
-     parity checks: legacy delete-with-parts unlinks; rebuild delete-with-parts is **blocked**.
+     parity checks: legacy delete-with-references nullifies parts and cascade-deletes forecast rows;
+     rebuild delete-with-references is **blocked**, and a *blocked* delete must leave both forecast tables
+     untouched (B.6 must assert this).
   > **Open question for the reviewer / domain expert (flagged, not guessed):** the supplier spec §9 parity
   > check still reads "delete supplier that has parts → parts survive with `IN_SUPPLIER_ID=NULL`." That
   > parity check is *pre-D3* and now contradicts D3. I am following **D3 (block)** as the authoritative,
@@ -277,10 +319,19 @@ carry them:
 
 ### A.6 FK + enum combo sourcing
 
-- **FK combos** (Supplier only, among these four masters): `lookups/logistics`, `lookups/partType`,
-  `lookups/addPoint` NQs return `(id, displayCode)`; dropdown value=id, label=displayCode; site-scoped
-  via `:siteId` (`IG-SITE` seam). Blank/empty selection → save `NULL` (the legacy "empty string bug"
-  workaround in `HoldDetails` — an empty logistics saves `IN_LOGISTICS_ID = NULL`).
+- **FK combos** (Supplier only, among these four masters): `lookups/logistics` (genuine surrogate FK, value
+  = `IN_LOGISTICS_ID`) and `lookups/partType` (code-valued). Site-scoped via `:siteId` (`IG-SITE` seam).
+  Blank/empty selection → save `NULL` (the legacy "empty string bug" workaround in `HoldDetails` — an empty
+  logistics saves `IN_LOGISTICS_ID = NULL`).
+- **R6 — Inventory-Add-Point is the static S/A enum, NOT an NQ-driven combo.** Per D4 it is required and
+  must be `S`/`A`, so it is a static dropdown (below); the `lookups/addPoint` NQ is **dropped as dead** —
+  it was never wired to anything once D4 picked the static enum.
+  > **Logistics name-resolution parity nuance (R6):** the legacy `INSERT_SupplierInfo` resolved logistics
+  > *by name* (`WHERE VC_LOGISTICS_NAME=@SupLogistics`), so it depended on logistics names being unique. The
+  > rebuild resolves by `IN_LOGISTICS_ID` (D2), which removes that dependency — but the `lookups/logistics`
+  > combo still **displays** the name as its label, so a parity check should confirm the label set matches
+  > the legacy name list (and flag any duplicate logistics names that the legacy name-resolution would have
+  > silently mis-resolved).
 - **Enum combos** are static (no NQ): options declared in the view.
   - `VC_OUTPUT_FILE`: `{value:'T',label:'TEXT'}, {'E','EXCEL'}, {'B','BOTH'}`
   - `VC_INVENTORY_ADD_POINT`: `{value:'S',label:'SHIPPED'}, {value:'A',label:'ARRIVED'}` — per **D4**,
@@ -403,10 +454,24 @@ WHERE  VC_SUPPLIER_CODE = :code
 > `excludeId=0` for insert; `excludeId=recordId` for update (lets a row keep its own code). Replaces the
 > legacy client two-step. The `IX_INV_SUPPLIER_MST` unique index is the race backstop.
 
-**`Supplier/refCount`** (Query) — param: `recordId` (Int4)  — the D3 RESTRICT gate
+**`Supplier/refCount`** (Query) — params: `recordId` (Int4), `code` (String) — the D3 RESTRICT gate
 ```sql
-SELECT COUNT(*) AS n FROM INV_PARTS_STOCK_MST WHERE IN_SUPPLIER_ID = :recordId
+-- Counts EVERY table the live DELETE_SupplierCode trigger would touch, so the gate blocks any
+-- delete that would fire the trigger's forecast cascade (R1). Parts key on the surrogate id;
+-- BOTH forecast tables key on the supplier CODE (that is how the trigger matches them).
+SELECT
+    (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST  WHERE IN_SUPPLIER_ID   = :recordId)
+  + (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_SUPPLIER_CODE = :code)
+  + (SELECT COUNT(*) FROM INV_FORECAST_INF     WHERE VC_SUPPLIER_CODE = :code)
+    AS n
 ```
+> **R1 fix (data-loss).** The original gate counted only `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID` and was
+> **blind** to the trigger's two forecast hard-deletes. A supplier with zero parts but live forecast rows
+> would pass the old gate; the rebuild would call `delete`; the live trigger would silently hard-delete
+> hundreds of `INV_BREAKDOWN_FC_INF` (~959) + `INV_FORECAST_INF` (~1066) rows. This NQ now mirrors the full
+> trigger body so any forecast cascade is blocked at the gate. The supplier `code` is sourced from the
+> already-loaded form (it is the deleted row's `VC_SUPPLIER_CODE`); never trust a client-supplied code for
+> a different row.
 
 **`Supplier/delete`** (Update Query) — param: `recordId` (Int4)
 ```sql
@@ -426,17 +491,15 @@ FROM INV_LOGISTICS_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_LOGI
 SELECT VC_PART_TYPE AS id, VC_PART_TYPE AS label
 FROM INV_PART_TYPE_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_PART_TYPE;
 
--- lookups/addPoint   (static enum S/A is preferred per D4; this NQ is only if the live table drives it)
-SELECT VC_ADD_POINT_ABRV AS id, VC_ADD_POINT AS label
-FROM INV_ADD_POINT_INF  ORDER BY VC_ADD_POINT_ABRV;
+-- R6: NO lookups/addPoint NQ. Inventory-Add-Point is the static S/A enum (D4 / A.6 / B.2); the
+--     previously-listed INV_ADD_POINT_INF query is dropped as dead.
 ```
-> **Note (flagged):** `VC_CREATE_ORDER_SHEET` and `VC_INVENTORY_ADD_POINT` are stored as **codes**, not
-> ids — they are not true surrogate FKs (the legacy schema has no FK here; the combos validate-at-entry
-> only). So for these two the dropdown value is the **code string**, not an id. Only `IN_LOGISTICS_ID` is
-> a genuine surrogate FK (value = id, per D2). I'm preserving the legacy code-valued behavior for the two
-> non-FK combos because nothing references them by id; if the rebuild later promotes Part Type / Add Point
-> to real surrogate FKs, that is a separate schema change. (Per D4, Inventory-Add-Point is better as the
-> static `S/A` enum than an NQ-driven combo — recommend static.)
+> **Note (flagged):** `VC_CREATE_ORDER_SHEET` (Create-Order-Sheet) is stored as a **code**, not an id — it
+> is not a true surrogate FK (the legacy schema has no FK here; the combo validates-at-entry only), so its
+> dropdown value is the **code string**, not an id. Only `IN_LOGISTICS_ID` is a genuine surrogate FK
+> (value = id, per D2). `VC_INVENTORY_ADD_POINT` is the **static S/A enum** (D4), not a lookup combo at all
+> (R6 — `lookups/addPoint` dropped). If the rebuild later promotes Part Type to a real surrogate FK, that is
+> a separate schema change.
 
 ### B.2 List + Detail component layout
 
@@ -507,16 +570,25 @@ index is the authoritative backstop (spec §4).
 
 ### B.5 Delete — D3 reconciliation (Supplier)
 
-1. On Delete: `n = runNamedQuery("Supplier/refCount", {recordId})`.
-2. `n > 0` → block: "Cannot delete supplier — still referenced by N part(s). Reassign or archive those
-   parts first." (Archival is the future D3 path; out of scope now.)
+1. On Delete: `n = runNamedQuery("Supplier/refCount", {recordId, code: form['VC_SUPPLIER_CODE']})`.
+   refCount counts **all three** tables the live trigger touches: parts (by id) + `INV_BREAKDOWN_FC_INF`
+   + `INV_FORECAST_INF` (both by code).
+2. `n > 0` → block: "Cannot delete supplier — still referenced by N part(s) / forecast row(s). Reassign
+   or archive those rows first." (Archival is the future D3 path; out of scope now.)
 3. `n == 0` → `runNamedQuery("Supplier/delete", {recordId})` → back to List.
 
-**Divergence from legacy (document in parity checks):** legacy `DELETE_SupplierCode` would *unlink*
-(null the parts' `IN_SUPPLIER_ID`) and delete the supplier; the rebuild **blocks** the delete while parts
-reference it (D3). The live trigger remains in the parallel-run DB but is inert because we only ever delete
-zero-reference rows. **This contradicts the stale supplier §9 parity line** ("parts survive with
-`IN_SUPPLIER_ID=NULL`) — see the A.5 flag; default taken is D3 (block).
+**R1 (data-loss) — why the gate must see the forecast tables:** the live `DELETE_SupplierCode` trigger does
+not only nullify parts; it **hard-DELETEs** matching `INV_BREAKDOWN_FC_INF` + `INV_FORECAST_INF` rows by
+supplier code. A parts-only refCount would let a parts-free-but-forecast-bearing supplier through and the
+trigger would silently destroy hundreds of forecast rows. The gate now mirrors the full trigger body, so the
+**only** `DELETE` we ever issue is against a supplier with zero references in all three tables — making the
+trigger inert by construction. P12 forbids touching the live trigger during parallel run, so the gate is the
+sole lever and must remain in lockstep with the trigger body (re-verify if the trigger changes).
+
+**Divergence from legacy (document in parity checks):** legacy `DELETE_SupplierCode` *unlinked* parts
+(`IN_SUPPLIER_ID=NULL`) **and cascade-deleted both forecast tables**, then deleted the supplier; the rebuild
+**blocks** the delete while parts or forecast rows reference it (D3). **This contradicts the stale supplier §9
+parity line** ("parts survive with `IN_SUPPLIER_ID=NULL`") — see the A.5 flag; default taken is D3 (block).
 
 ### B.6 Parity / divergence checklist (for `ignition-qa`)
 
@@ -532,7 +604,9 @@ zero-reference rows. **This contradicts the stale supplier §9 parity line** ("p
 | Rename code onto existing | rejected (pre-check/index) | parity in outcome |
 | New row returns id | `SCOPE_IDENTITY()` echoed; form flips to edit | **improvement** (legacy never echoed) |
 | Delete supplier w/ parts | **blocked** (D3) | **divergence** (legacy unlinked) — documented; see A.5 flag |
-| Delete supplier w/o parts | row deleted | parity |
+| Delete supplier w/ **forecast rows but zero parts** | **blocked** (D3) — refCount sees `INV_BREAKDOWN_FC_INF`+`INV_FORECAST_INF` by code | **R1 regression guard** — old parts-only gate let this through and the trigger hard-deleted forecast rows |
+| Blocked delete leaves forecast tables intact | row counts of `INV_BREAKDOWN_FC_INF` + `INV_FORECAST_INF` for that supplier code are **unchanged** after a blocked delete (no `DELETE` ever issued) | **R1 assertion** — proves the cascade never fired |
+| Delete supplier w/o **any** references (parts + both forecast tables = 0) | row deleted | parity |
 | `VC_ADD`/`VC_LASTUPDATE` | byte-identical 16-char strings | parity (P2) |
 
 ---
@@ -573,9 +647,27 @@ of Supplier except ManifestCost's overlap rule.
   FKs; D3 blocks if *either* references it. This is the cleanest D3 win (kills the legacy dangle).
 
 ### ManifestCost (`INV_MANIFEST_COST_MST`) — financially load-bearing, the outlier
-- **NQ folder** `ManifestCost/`; key `IN_MANIFEST_COST_ID`, business key `VC_ASSY_PART_NUMBER_CODE`
-  varchar(12). **No PK / no unique index / no trigger exist in the legacy schema** (P11) — the rebuild
-  **adds** them (real PK; the overlap constraint below).
+- **NQ folder** `ManifestCost/`; key `IN_MANIFEST_COST_ID`, assembly business key `VC_ASSY_PART_NUMBER_CODE`
+  varchar(12), manifest id `VC_ASSY_MANIFEST_NUMBER` varchar(2).
+- **⚠️ R2 — live-schema correction (verified 2026-06-16):** the manifest-cost spec §6 and this design
+  previously asserted "**no PK / no unique index / no FK / no trigger** (P11)". That is **stale** against the
+  LIVE spike DB. The live DB **HAS a UNIQUE index `IX_INV_MANIFEST_COST_MST` on `VC_ASSY_MANIFEST_NUMBER`**
+  (the 2-char manifest id) — *not* on the assembly code, *not* composite. So a live INSERT with a fresh assy
+  code and a fresh, non-overlapping window but a **duplicate manifest number** is **rejected by the index**.
+  There is still no PK and no FK; the rebuild adds a surrogate PK. *Spec correction needed: §6 "no unique
+  index" must be replaced with the live `IX_INV_MANIFEST_COST_MST` UNIQUE(`VC_ASSY_MANIFEST_NUMBER`).*
+- **The constraint set the rebuild ENFORCES (re-derived from live schema + spec §8 + D6):**
+  1. **`start_manifest <= end_manifest`** — reject `start > end` (D6, spec §8.7). Validation rule.
+  2. **No-overlapping-window per `(site, VC_ASSY_PART_NUMBER_CODE)`** — D6's real rule: two price rows for the
+     **same assy code** are allowed only when their date windows don't overlap. Enforced by
+     `checkWindowOverlap` (below). This is on the **assembly code**, orthogonal to the manifest number.
+  3. **Global-unique `VC_ASSY_MANIFEST_NUMBER`** — *this is the live `IX_INV_MANIFEST_COST_MST` index*, NOT
+     something the design invented, and **NOT** the same constraint as (2). It forbids two rows sharing a
+     2-char manifest number **regardless of assy code or window**. The rebuild must pre-check it (a
+     `checkManifestNumberUnique` NQ) AND catch the index violation as the backstop — otherwise a D6-valid
+     insert (same manifest number, different assy code, non-overlapping window) sails past `checkWindowOverlap`
+     and dies on the live index with a raw SQLException the try/except wasn't written to expect. **(3) is the
+     R2 fix: it was entirely missing from the previous design.**
 - Columns: assy code (combo, code-valued, sourced from distinct `INV_FORECAST_DETAIL_INF` codes — keep
   but flag spec §8.5: is that the authoritative assembly domain?); manifest number (static `' ','01'..'99'`
   dropdown); start/end manifest (`yyyymmdd` strings → real date pickers, format on save); `MO_PRICE`
@@ -586,11 +678,30 @@ of Supplier except ManifestCost's overlap rule.
   - presence on assy code / both dates / price;
   - `start_manifest <= end_manifest` (reject `start > end`, D6);
   - `MO_PRICE` numericality (≥ 0 half of §8.7 still open — flag);
-  - **no-overlapping-window per `(site, VC_ASSY_PART_NUMBER_CODE)`** — replaces a simple unique-code
-    check. `checkCodeUnique` becomes `checkWindowOverlap`: `SELECT COUNT(*) ... WHERE
-    VC_ASSY_PART_NUMBER_CODE=:code AND IN_MANIFEST_COST_ID<>:excludeId AND NOT
-    (:endManifest < VC_START_MANIFEST OR :startManifest > VC_END_MANIFEST) [AND site_id=:siteId]`;
-    `n>0` → reject. Two prices for one assy code are allowed only when windows don't overlap (D6).
+  - **no-overlapping-window per `(site, VC_ASSY_PART_NUMBER_CODE)`** — `checkCodeUnique` becomes
+    `checkWindowOverlap`: `SELECT COUNT(*) ... WHERE VC_ASSY_PART_NUMBER_CODE=:code AND
+    IN_MANIFEST_COST_ID<>:excludeId AND NOT (:endManifest < VC_START_MANIFEST OR :startManifest >
+    VC_END_MANIFEST) [AND site_id=:siteId]`; `n>0` → reject. Two prices for one assy code are allowed only
+    when windows don't overlap (D6). **This is on the ASSEMBLY code, and by itself does NOT satisfy the
+    live DB** (see next bullet).
+  - **`checkManifestNumberUnique` (R2 — was missing): `SELECT COUNT(*) ... WHERE
+    VC_ASSY_MANIFEST_NUMBER=:manifestNo AND IN_MANIFEST_COST_ID<>:excludeId`.** This pre-check mirrors the
+    **live `IX_INV_MANIFEST_COST_MST` UNIQUE index** so a D6-valid-but-manifest-number-duplicate insert is
+    rejected with a friendly message instead of dying on a raw index SQLException. The validation order is:
+    presence → `start<=end` → `checkWindowOverlap` → `checkManifestNumberUnique`; the index is the race
+    backstop (catch the unique-violation SQLException and surface the friendly manifest-number message).
+    > **R2 reconciliation — FLAGGED FOR DAVID (do not guess):** `checkWindowOverlap` (per-assy, D6) and the
+    > live global-unique manifest number are **two different constraints**. In the current live data they
+    > coincide (45 rows = 45 distinct assy codes = 45 distinct manifest numbers — one window per assy, one
+    > manifest number per row), so the conflict is latent. D6 explicitly contemplates **multiple windows per
+    > assy code**, but the live index forbids reusing a manifest number for the second window — so the moment
+    > a second window is added for an assy code it needs a *different* manifest number, and manifest numbers
+    > are globally scarce (`' '`,`'01'..'99'` = 100 values). **Question for David:** is global manifest-number
+    > uniqueness *intended* (manifest number is a real global slot/identifier), or is it a **legacy quirk** —
+    > the index should arguably be `(VC_ASSY_PART_NUMBER_CODE, VC_ASSY_MANIFEST_NUMBER)` or dropped in favor
+    > of the D6 window rule? Until David rules: the rebuild **honors the live index as-is** (pre-check +
+    > backstop), because the parallel-run legacy app shares the table and the index is live. The developer
+    > builds `checkManifestNumberUnique` against the real index, NOT a phantom "no index" baseline.
 - **Delete (D3):** `refCount` against ASN-detail / invoice-line references on the assy code; block if
   referenced. Ends the legacy silent invoice-line-loss (no trigger today).
 - **Do NOT reproduce** the wrong-target retry recursion (P12) or the positional INSERT (P10) — direct NQ
@@ -607,9 +718,15 @@ of Supplier except ManifestCost's overlap rule.
    Default taken = **D3 block**. Confirm Supplier shouldn't keep nullify-unlink.
 2. **`VC_BREAKDOWN_ORDER_DIRECTORY` model (Supplier/Logistics §8.2 — still open):** rendered as plain
    text now; the per-site output-root model (D1: dirs into `sites`) is undecided. Picker dropped.
-3. **Part Type / Add Point as code-valued combos, not surrogate FKs (B.1 note):** preserved as legacy
-   (no FK exists); confirm we are not expected to promote them to real FK ids now. Recommend static S/A
-   enum for Add Point per D4.
+3. **Part Type (Create-Order-Sheet) as a code-valued combo, not a surrogate FK (B.1 note):** preserved as
+   legacy (no FK exists); confirm we are not expected to promote it to a real FK id now. Add Point is the
+   static S/A enum per D4 (R6 — `lookups/addPoint` NQ dropped).
 4. **Size `0` vs `NULL`** for `IN_USAGE`/`IN_DAYS` (§8.3): default = write field value (0 if blank).
 5. **ManifestCost negative/zero price** (§8.7 half still open) and the **assembly-code domain** (§8.5):
    flagged; not blocking the CRUD build.
+6. **ManifestCost manifest-number global-uniqueness (R2) — NEEDS DAVID.** The live
+   `IX_INV_MANIFEST_COST_MST` is UNIQUE on `VC_ASSY_MANIFEST_NUMBER` (verified 2026-06-16; spec §6 stale).
+   It is a *different* constraint from D6's per-assy non-overlap rule and conflicts with D6's "multiple
+   windows per assy code" the moment a second window is added. Is global manifest-number uniqueness intended
+   or a legacy quirk (→ composite index or drop)? Default until ruled: **honor the live index** (pre-check +
+   backstop). See §C ManifestCost reconciliation block.

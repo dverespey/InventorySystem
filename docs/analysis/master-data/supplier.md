@@ -44,9 +44,15 @@
 | `VC_ADD`,`VC_LASTUPDATE` | varchar(16) | **Timestamps stored as `yyyymmddHHMMSSff` strings** (16 chars: `CONVERT(…,112)` date + 4×`SUBSTRING(…,114)` = HH+MM+SS+`ff`), not datetime ⚠️ |
 
 **Triggers on these tables:**
-- `DELETE_SupplierCode` (on `INV_SUPPLIER_MST` FOR DELETE): sets
-  `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID = NULL` for any parts pointing at the deleted
-  supplier. **Invariant: deleting a supplier unlinks (does NOT delete) its parts.**
+- `DELETE_SupplierCode` (on `INV_SUPPLIER_MST` FOR DELETE) — ⚠️ **CORRECTION (2026-06-16, verified vs the
+  live trigger body):** this does THREE things, not one: (1) sets `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID = NULL`
+  for parts pointing at the deleted supplier (the nullify), **and (2) `DELETE FROM INV_BREAKDOWN_FC_INF
+  WHERE VC_SUPPLIER_CODE = <deleted code>` and (3) `DELETE FROM INV_FORECAST_INF WHERE VC_SUPPLIER_CODE =
+  <deleted code>`** — a hard CASCADE delete of the supplier's forecast rows (both tables keyed by the supplier
+  *code*, and both are populated: ~959 + ~1066 rows live). **Invariant: deleting a supplier unlinks its parts
+  AND destroys its forecast history.** The rebuild's RESTRICT gate (D3) must therefore count references in
+  ALL THREE tables (parts by `IN_SUPPLIER_ID`, both forecast tables by `VC_SUPPLIER_CODE`) — see
+  `IGNITION-master-crud-design.md` §A.5/§B.1 (R1). *(The original spec documented only the nullify.)*
 
 ## 3. Stored procedures used
 | Proc | Op | Business rule (from body) |
