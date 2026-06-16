@@ -340,3 +340,45 @@ zero qty, off-cycle):
    When the read side needs a week for a production date, use `ISO_week(date) − (INT_FIRST_PRODUCTION_WEEK[year] − 1)`.
    The "year + week" DO encoding (`26` + `WW`) is the durable key; carry both year and week, not just week,
    to disambiguate across year boundaries (the legacy stores week-only and relies on delete-forward each cycle).
+
+---
+
+## D11 — Confirmed-bug batch: the rebuild FIXES these (David, 2026-06-16)
+
+*Resolves the "confirmed bug" §8 items across the Receiving/Shipping/Forecasting/EDI/Reporting/
+Production-calendar/Admin specs. The D8 pattern: each is a verified-against-source defect; the rebuild
+implements the corrected behavior (the legacy is NOT hotfixed — see the P12 NO-legacy-hotfix policy).*
+
+**Decision (verbatim intent):** *"Confirm Group B, fix in the rebuild."*
+
+**The batch (all confirmed against the live `CreateInventory.sql` and the `.pas`):**
+
+1. **D6 window-aware pricing — everywhere.** Manifest-cost pricing must pick the price whose
+   `VC_START_MANIFEST`/`VC_END_MANIFEST` window contains the ASN/production date, in **all** instances:
+   the EDI 810 build (`REPORT_EDI810`/`SELECT_INVOICEItems`) and the Reporting invoice summaries
+   (`REPORT_INVOICESSummary`, `REPORT_MonthlyINVOICESSummary`). Copy the correct `REPORT_EDI856` predicate.
+   Enforce non-overlapping windows per (site, assy code); reject `start>end`. (Extends D6 to the Reporting
+   instances found 2026-06-16.)
+2. **`REPORT_UnusedWheelPartNumbers`** queries the TIRE part-number column for wheel parts
+   (schema `…UnusedWheelPartNumbers` `NOT IN (SELECT vc_tire_part_number_code…)`) → use the WHEEL column.
+3. **Forecast day-spread** for valve/film/label/misc uses `wheelcount` (`ForecastBreakdownF.pas:1252-1285`)
+   instead of each component's own count → spread each component on its own count.
+4. **Shipping proc-signature mismatches (M1/M2/M3 + `SELECT_PartsStockInfo`)** — REAL vs the live schema
+   (D9): the ManualShipping / daily-ALC-pull / auto-scrap paths are broken in deployed code. The rebuild
+   uses correct, reconciled signatures (one canonical Named Query per op).
+5. **Hardcoded `WHERE a.IN_ASN_EIN = 6440`** in `REPORT_EDI856` (live `CreateInventory.sql:3683`) →
+   parameterize by the current site's EIN (D1).
+6. **DATAPURGE non-transactional `PurgeMode`** (`DELETE_AutoPurge`) — a mid-run error leaves `PurgeMode=1`
+   + a partial delete. The rebuild wraps the purge in a transaction (set/clear the flag atomically) and
+   re-homes the cross-DB `Activity` audit coupling.
+7. **RenbanGroup counter read-then-write race** — `UPDATE_RenbanGroupCount` + the client-side
+   `Format('%.3d',…)` count (RenbanOrder/RenbanGroupMaster) → atomic, by-id increment in the rebuild.
+8. **`INV_FIRST_PRODUCTION_DAY`** has no PK and `INSERT_FirstProductionDay` never dedups (the form's
+   "already exists" message is fiction) → real PK on `(site_id, production_year)` + a true upsert.
+9. **Reject-delete inflates on-hand** — `DELETE_RejectParts` has no purge bypass (unlike RecConfStat), so
+   purging a reject row adds its qty back. The rebuild's single stock-ledger service handles reject
+   reversal correctly (a reject delete is not a stock movement).
+
+> All nine are fixed structurally in the rebuild. Where a fix lands in the re-homed **stock-ledger**
+> service (4 partially, 9), it composes with the additive-delta ledger model. D6 (1) shares one
+> window-aware manifest-cost lookup across EDI + Reporting.

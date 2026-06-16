@@ -178,9 +178,10 @@ Each report = **one Named Query** (per-proc practice) + a consumer:
    output identity, not filters). Should reports be per-site by default on the shared DB, and which fact tables
    carry the authoritative `site_id`?
 2. Monthly order range on **ship date** not order date — intended?
-3. Confirm `REPORT_INVOICESSummary`/`MonthlyINVOICESSummary` should be made window-aware (D6); have downstream
-   numbers been "consistent-but-wrong" vs the 810?
-4. `REPORT_UnusedWheelPartNumbers` checks the TIRE column — bug?
+3. ✅ RESOLVED (D11): `REPORT_INVOICESSummary`/`MonthlyINVOICESSummary` **will be made window-aware** (D6) —
+   same shared window-aware manifest-cost lookup as the EDI 810/856 path.
+4. ✅ RESOLVED (D11): `REPORT_UnusedWheelPartNumbers` checking the TIRE column is a **confirmed bug** — the
+   rebuild uses the WHEEL part-number column.
 5. ✅ RESOLVED (D9): `REPORT_ASNWithCost` + `REPORT_ForecastCAMEXReport` are **deprecated** (CAMEX
    decommissioned) — out of scope, do not port.
 6. ✅ RESOLVED (D9): `REPORT_NUMMILotLocation[W]` are **NUMMI decommissioned-site relics** — only PLANT

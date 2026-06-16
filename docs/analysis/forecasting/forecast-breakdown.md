@@ -252,9 +252,9 @@ a **gateway Python/Jython service**, not Named-Query-per-screen.
 - **Q3 — year-blindness.** Is forecasting genuinely intended to be year-agnostic (week 30 = week 30
   forever until overwritten), relying on the delete-forward each cycle to avoid stale carryover? Or
   should the rebuild add a year/effective-date dimension to the breakdown key?
-- **Q4 — valve/film/label/misc qty.** All non-tire components are day-spread using **`wheelcount`**
-  (`:1242-1287`), not a per-component count. Intentional (these parts track the wheel rate) or legacy
-  shortcut to fix?
+- **Q4 ✅ RESOLVED (D11) — valve/film/label/misc qty.** All non-tire components are day-spread using
+  **`wheelcount`** (`:1242-1287`), not a per-component count. David confirmed this is a **bug to fix** —
+  the rebuild day-spreads each component on its OWN count.
 - **Q5 — additive vs replace upsert.** `INSERTUPDATE_BreakdownForecastInfo` is **additive** (`+= qty`).
   Is a re-run within the same delete-window meant to accumulate, or is that a bug masked by the
   delete-first step? (If a delete is skipped/failed, counts double.)
