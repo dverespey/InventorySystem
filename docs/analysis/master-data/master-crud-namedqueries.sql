@@ -1208,3 +1208,179 @@ SELECT DISTINCT VC_PART_NUMBER AS id, VC_PART_NUMBER AS label
 FROM   INV_PARTS_STOCK_MST
 WHERE  VC_PART_NUMBER <> ''  /* IG-SITE: AND site_id = :siteId */
 ORDER BY VC_PART_NUMBER;
+
+
+/* ============================================================================
+   ManifestCost  (INV_MANIFEST_COST_MST)  —  the SIXTH / final master.
+   The financially load-bearing billing master: MO_PRICE is the per-assembly
+   unit price the EDI 810 invoice + every invoice/PO report bills the customer
+   at, keyed by VC_ASSY_PART_NUMBER_CODE over a date window. Spec:
+   docs/analysis/master-data/manifest-cost.md ; design IGNITION-master-crud-design.md
+   §C ManifestCost ; decision D13.2 (option b).
+
+   8 columns (verified live 2026-06-17):
+     IN_MANIFEST_COST_ID    int IDENTITY  -> RecordID (D2 surrogate key)
+     VC_ASSY_PART_NUMBER_CODE varchar(12) -> assy code (business identity); combo
+                                             sourced from DISTINCT
+                                             INV_FORECAST_DETAIL_INF.VC_ASSY_PART_NUMBER_CODE
+                                             (legacy combo source) — STORE THE STRING.
+     VC_ASSY_MANIFEST_NUMBER  varchar(2)  -> 2-char manifest id; legacy hard-codes a
+                                             ' ','01'..'99' dropdown — reproduce as a
+                                             STATIC dropdown (no DB lookup).
+     VC_START_MANIFEST        varchar(8)  -> window start, yyyymmdd STRING
+     VC_END_MANIFEST          varchar(8)  -> window end,   yyyymmdd STRING
+     MO_PRICE                 money       -> billed unit price (4 dp, >= 0)
+     VC_LAST_UPDATE           varchar(16) -> audit (WITH underscore, like Size)
+     VC_ADD                   varchar(16) -> audit
+
+   AUDIT (16-char yyyymmddHHMMSSff): the legacy positional INSERT writes the SAME
+   16-char string to BOTH VC_ADD and VC_LAST_UPDATE on insert (a never-updated row
+   has VC_ADD = VC_LAST_UPDATE). We REPRODUCE that (set both equal on insert) to
+   match the legacy audit shape. UPDATE rewrites only VC_LAST_UPDATE (VC_ADD
+   preserves the original insert time).
+
+   *** THE KEY VALIDATION DELTA — D13.2 option (b). DO NOT build manifest-number
+       uniqueness. ***
+   The live DB carried IX_INV_MANIFEST_COST_MST UNIQUE on VC_ASSY_MANIFEST_NUMBER
+   (global manifest-number uniqueness). David ruled this a legacy quirk to CORRECT
+   (D13.2 "use b"): the rebuild RELAXES it. As the D13.3 conversion step, the spike
+   DROPS that constraint/index up front:
+     ALTER TABLE INV_MANIFEST_COST_MST DROP CONSTRAINT IX_INV_MANIFEST_COST_MST;
+   (it backed a UNIQUE KEY constraint, so it is dropped as a CONSTRAINT, not an
+   INDEX). Applied 2026-06-17 as 'sa' — verified no unique index/constraint remains,
+   row count unchanged at 45. After the drop there is NO DB uniqueness backstop on
+   this table at all; the app checkWindowOverlap below is the sole enforcement.
+   ROLLOUT (D13.3): the production cutover script must drop this constraint and add
+   the D6 per-(site, assy code) non-overlapping-window constraint/check.
+
+   The REAL constraint set the rebuild enforces (D6):
+     1. presence on assy code + both dates (+ price);
+     2. start_manifest <= end_manifest  (reject start > end);
+     3. MO_PRICE >= 0  (reject negative — §8.7 ≥0 half; zero allowed);
+     4. NO-OVERLAPPING-WINDOW per (site, assy code) -> checkWindowOverlap.
+   Two prices for ONE assy code are allowed ONLY when their windows don't overlap.
+   There is NO manifest-number-uniqueness check (that quirk is dropped).
+
+   DELETE: this master has NO trigger and NO stored FK children — prices are JOINed
+   live by the invoice/EDI810 procs at report time on the assy code, with no stored
+   child row to orphan. So this is a SIMPLE HARD DELETE (faithful to the legacy,
+   which had no referenced-by check). No refCount gate. [Future note, flag only: a
+   price with billing history should be ARCHIVED not deleted — not built here.]
+
+   D6 CROSS-REF: this master only FEEDS the price + enforces non-overlap. The actual
+   window-BLIND 810 pricing bug (the invoice JOIN ignores the date window) is fixed
+   in the EDI/Reporting module (D6/D11#1), NOT here.
+
+   D1: every NQ takes :siteId; predicate is the commented `-- IG-SITE:` seam (no
+   site_id on this table yet — Postgres phase). D2: RecordID = IN_MANIFEST_COST_ID.
+   Do NOT reproduce the legacy positional INSERT (P10) or the wrong-target retry
+   recursion (P12) — explicit column list + a single try/except.
+   IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.
+   IG83-TODO: replace the yyyymmddHHMMSSff audit-string recipe with a real datetime
+   default at the Postgres phase; flip the IG-SITE predicates with a composite index;
+   add the D6 exclusion/overlap constraint at the DB layer as the backstop.
+   ============================================================================ */
+
+-- ManifestCost/list   params: searchTerm (String, ''), siteId (Int4)
+--   Grid load. Server-side LIKE on assy code + manifest number (improves on the
+--   legacy in-memory [Assy] LIKE filter, P7). searchTerm='' returns all 45 rows.
+--   Legacy SELECT_ManifestCost had NO ORDER BY (DB-natural); we default to assy-code
+--   order (documented divergence — consistent with the other masters).
+SELECT  IN_MANIFEST_COST_ID      AS "RecordID",
+        VC_ASSY_PART_NUMBER_CODE AS "AssyCode",
+        VC_ASSY_MANIFEST_NUMBER  AS "ManifestNo",
+        VC_START_MANIFEST        AS "StartManifest",
+        VC_END_MANIFEST          AS "EndManifest",
+        MO_PRICE                 AS "Price"
+FROM    INV_MANIFEST_COST_MST
+WHERE  (:searchTerm = '' OR VC_ASSY_PART_NUMBER_CODE LIKE '%' + :searchTerm + '%'
+                        OR VC_ASSY_MANIFEST_NUMBER  LIKE '%' + :searchTerm + '%')
+-- IG-SITE:  AND site_id = :siteId
+ORDER BY VC_ASSY_PART_NUMBER_CODE;
+
+-- ManifestCost/get   params: recordId (Int4), siteId (Int4)
+--   One row by surrogate id (D2). assy code feeds the combo (value == stored string);
+--   manifest number feeds the static dropdown; dates feed the date/text inputs.
+SELECT  IN_MANIFEST_COST_ID, VC_ASSY_PART_NUMBER_CODE, VC_ASSY_MANIFEST_NUMBER,
+        VC_START_MANIFEST, VC_END_MANIFEST, MO_PRICE
+FROM    INV_MANIFEST_COST_MST
+WHERE   IN_MANIFEST_COST_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+-- ManifestCost/insert   (Update Query, returns identity) — data params + siteId
+--   Explicit column list (kills legacy positional-INSERT fragility, P10). Writes the
+--   SAME 16-char yyyymmddHHMMSSff string to BOTH VC_ADD and VC_LAST_UPDATE (legacy
+--   parity: a never-updated row has VC_ADD = VC_LAST_UPDATE).
+INSERT INTO INV_MANIFEST_COST_MST
+    (VC_ASSY_PART_NUMBER_CODE, VC_ASSY_MANIFEST_NUMBER, VC_START_MANIFEST,
+     VC_END_MANIFEST, MO_PRICE, VC_LAST_UPDATE, VC_ADD
+     /* IG-SITE: , site_id */)
+VALUES
+    (:assyCode, :manifestNo, :startManifest, :endManifest, :price,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2),
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+     /* IG-SITE: , :siteId */);
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+
+-- ManifestCost/update   (Update Query) — data params + recordId + siteId
+--   Keys on surrogate id (D2). VC_LAST_UPDATE (underscore) audit; VC_ADD untouched
+--   (preserves the original insert time, so post-update VC_LAST_UPDATE > VC_ADD).
+--   The assy code IS editable (legacy rewrites it); the overlap check re-runs in Save.
+UPDATE INV_MANIFEST_COST_MST SET
+    VC_ASSY_PART_NUMBER_CODE=:assyCode, VC_ASSY_MANIFEST_NUMBER=:manifestNo,
+    VC_START_MANIFEST=:startManifest, VC_END_MANIFEST=:endManifest, MO_PRICE=:price,
+    VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE IN_MANIFEST_COST_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+-- ManifestCost/checkWindowOverlap   params: code (String), startManifest (String),
+--                                           endManifest (String), excludeId (Int4, default 0),
+--                                           siteId (Int4)
+--   *** THE D6 HEADLINE RULE (D13.2 b) — NOT checkCodeUnique, NOT manifest-number unique. ***
+--   Counts existing rows for the SAME assy code whose [start,end] window OVERLAPS the
+--   candidate [startManifest,endManifest]. Overlap test (string compare is valid for
+--   yyyymmdd): two closed intervals overlap unless one is entirely before the other:
+--       NOT (:endManifest < VC_START_MANIFEST OR :startManifest > VC_END_MANIFEST)
+--   n > 0 -> REJECT (overlapping window for the same assy code). Two prices for one
+--   assy code are allowed ONLY when their windows don't overlap. excludeId lets an
+--   UPDATE skip its own row (D2). After D13.3 dropped the manifest-number unique index
+--   this is the ONLY uniqueness/overlap enforcement on the table (no DB backstop).
+SELECT COUNT(*) AS n
+FROM   INV_MANIFEST_COST_MST
+WHERE  VC_ASSY_PART_NUMBER_CODE = :code
+  AND  IN_MANIFEST_COST_ID     <> :excludeId
+  AND  NOT (:endManifest < VC_START_MANIFEST OR :startManifest > VC_END_MANIFEST)
+-- IG-SITE:  AND site_id = :siteId
+;
+
+-- ManifestCost/delete   param: recordId (Int4), siteId (Int4)
+--   SIMPLE HARD DELETE by surrogate id. No trigger, no stored FK children, so NO
+--   refCount gate (faithful to the legacy DELETE_ManifestCost, which had no in-use
+--   check). [Future flag only: archive a price with billing history rather than
+--   delete — not built here.]
+DELETE FROM INV_MANIFEST_COST_MST WHERE IN_MANIFEST_COST_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+/* ----------------------------------------------------------------------------
+   ManifestCost assy-code combo lookup (CODE-STRING, not a surrogate FK).
+   Sourced from DISTINCT INV_FORECAST_DETAIL_INF.VC_ASSY_PART_NUMBER_CODE (the legacy
+   SelectSingleField source), value == label == the varchar(12) assy-code STRING the
+   master stores. Prepends a blank item (legacy prepends ' '). 50 distinct codes today.
+   (Spec §8.5 flags whether forecast-detail is the authoritative assembly domain — open.)
+   The manifest-number combo is NOT a DB lookup: it is the STATIC legacy list
+   ' ','01'..'99', built in the view (FormCreate parity), so no NQ here.
+   ---------------------------------------------------------------------------- */
+-- lookups/assyCode   (value == label == VC_ASSY_PART_NUMBER_CODE string; :siteId plumbed)
+SELECT DISTINCT VC_ASSY_PART_NUMBER_CODE AS id, VC_ASSY_PART_NUMBER_CODE AS label
+FROM   INV_FORECAST_DETAIL_INF
+WHERE  VC_ASSY_PART_NUMBER_CODE <> ''  /* IG-SITE: AND site_id = :siteId */
+ORDER BY VC_ASSY_PART_NUMBER_CODE;

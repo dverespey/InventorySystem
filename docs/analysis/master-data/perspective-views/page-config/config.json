@@ -27,6 +27,10 @@
     "/assemblydetail": {
       "viewPath": "Master/AssemblyDetail/AssemblyDetail",
       "title": "Assembly Detail"
+    },
+    "/manifestcost": {
+      "viewPath": "Master/ManifestCost/ManifestCost",
+      "title": "Manifest Cost Master"
     }
   },
   "sharedDocks": {}
