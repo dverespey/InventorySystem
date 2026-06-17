@@ -572,3 +572,165 @@ DELETE FROM INV_LOGISTICS_MST WHERE IN_LOGISTICS_ID = :recordId
 ;
 
 /* Logistics is a LEAF master: NO lookups/* queries (no FK combos, no enums). */
+
+
+/* ============================================================================
+   RenbanGroup master CRUD  —  INV_RENBAN_GROUP_MST  (fourth master)
+   ----------------------------------------------------------------------------
+   Author:  ignition-developer / 2026-06-17
+   Spec:    docs/analysis/admin/master-remainders.md §A
+   Mirrors: the Size canonical template (audit cols VC_LAST_UPDATE + VC_ADD,
+            same recipe; single combined view; D3 RESTRICT delete gate).
+
+   GROUND TRUTH (read off live `Inventory` on mssql-spike, verified 2026-06-17):
+     - 12 columns. Key IN_RENBAN_ID (int identity). Business key
+       VC_RENBAN_GROUP_CODE varchar(5) (e.g. "CMWA"); UNIQUE index
+       IX_INV_RENBAN_GROUP_MST is on VC_RENBAN_GROUP_CODE (confirmed).
+     - Audit cols: VC_LAST_UPDATE (WITH underscore) + VC_ADD — same as Size,
+       NOT Logistics' no-underscore VC_LASTUPDATE.
+     - Editable fields: VC_RENBAN_GROUP_CODE (text), VC_RENBAN_GROUP_COUNT
+       varchar(3) (3-char zero-padded counter "001".."999"), IN_SHIP_DAYS int,
+       and 6 per-weekday IN_SHIP_DAYS_MONDAY..SATURDAY int. (No Sunday column.)
+     - 5 rows today: CAP, CMWA, DICAS, HCAP, PACF.
+
+   COUNTER (VC_RENBAN_GROUP_COUNT):  the legacy form left-pads the typed value to
+     exactly 3 chars before save (1->"001", 12->"012"). Reproduced in the view's
+     Save script (numeric 0..999, then "%03d"). The AUTOMATIC counter increment
+     (UPDATE_RenbanGroupCount, the read-then-write race D11#7) is OUT OF SCOPE for
+     this CRUD form — it belongs to the Order/RenbanOrder pipeline. This form does
+     ONLY the manual zero-padded edit.
+
+   ⚠️ SPEC CORRECTION (R1):  master-remainders.md §A says "Triggers: none" — WRONG.
+     The live DB HAS a FOR-DELETE trigger DELETE_RenbanGroupCode. Verified body
+     (2026-06-17):
+        CREATE TRIGGER [dbo].[DELETE_RenbanGroupCode] ON [dbo].[INV_RENBAN_GROUP_MST]
+        FOR DELETE AS
+          UPDATE INV_PARTS_STOCK_MST SET IN_RENBAN_ID = null
+          FROM INV_PARTS_STOCK_MST p, DELETED d
+          WHERE p.IN_RENBAN_ID = d.IN_RENBAN_ID
+     It nullifies the CURRENT parts' IN_RENBAN_ID and IGNORES
+     INV_PARTS_STOCK_MST_HIST (which ALSO carries IN_RENBAN_ID, COL_LENGTH=4) — the
+     same dangling-_HIST pattern as Size/Logistics. Per D3 (RESTRICT) the refCount
+     gate counts BOTH parts + _HIST and BLOCKs on any non-zero total, so the trigger
+     is never reached while references exist (kills the dangle).
+   ============================================================================ */
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/list   (Query)  — grid rows for the List view
+   params (ordered):  searchTerm (String), searchTerm (String), siteId (Int)
+   returns: RecordID + display columns. ORDER BY VC_RENBAN_GROUP_CODE (parity).
+   ---------------------------------------------------------------------------- */
+SELECT  IN_RENBAN_ID           AS "RecordID",
+        VC_RENBAN_GROUP_CODE   AS "RenbanGroupCode",
+        VC_RENBAN_GROUP_COUNT  AS "Count",
+        IN_SHIP_DAYS           AS "ShipDays"
+FROM    INV_RENBAN_GROUP_MST
+WHERE  (:searchTerm = '' OR VC_RENBAN_GROUP_CODE LIKE '%' + :searchTerm + '%')
+-- IG-SITE:  AND site_id = :siteId
+ORDER BY VC_RENBAN_GROUP_CODE;
+/* Parity: searchTerm='' matches the legacy list ordering. Single business-key
+   column so the LIKE search is on the code only. */
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/get   (Query)  — one row by surrogate id, for the Detail form
+   params:  recordId (Int), siteId (Int)
+   returns: code + counter + IN_SHIP_DAYS + the 6 per-weekday ship-days.
+   Surrogate key IN_RENBAN_ID resolves the row (D2).
+   ---------------------------------------------------------------------------- */
+SELECT  IN_RENBAN_ID, VC_RENBAN_GROUP_CODE, VC_RENBAN_GROUP_COUNT, IN_SHIP_DAYS,
+        IN_SHIP_DAYS_MONDAY, IN_SHIP_DAYS_TUESDAY, IN_SHIP_DAYS_WEDNESDAY,
+        IN_SHIP_DAYS_THURSDAY, IN_SHIP_DAYS_FRIDAY, IN_SHIP_DAYS_SATURDAY
+FROM    INV_RENBAN_GROUP_MST
+WHERE   IN_RENBAN_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/insert   (Update Query, returns identity)
+   params (ordered):  code, count(3-char zero-padded), shipDays, mon, tue, wed,
+                      thu, fri, sat   ( + siteId, IG-SITE only)
+   returns: SCOPE_IDENTITY() AS newId.
+   audit:   ⚠️ VC_ADD = byte-identical 16-char yyyymmddHHMMSSff recipe (same as Size).
+   counter: VC_RENBAN_GROUP_COUNT is passed already left-padded to 3 chars by the
+            view's Save script ("%03d" of the numeric value).
+   ---------------------------------------------------------------------------- */
+INSERT INTO INV_RENBAN_GROUP_MST
+    (VC_RENBAN_GROUP_CODE, VC_RENBAN_GROUP_COUNT, IN_SHIP_DAYS,
+     IN_SHIP_DAYS_MONDAY, IN_SHIP_DAYS_TUESDAY, IN_SHIP_DAYS_WEDNESDAY,
+     IN_SHIP_DAYS_THURSDAY, IN_SHIP_DAYS_FRIDAY, IN_SHIP_DAYS_SATURDAY, VC_ADD
+     /* IG-SITE: , site_id */)
+VALUES
+    (:code, :count, :shipDays, :mon, :tue, :wed, :thu, :fri, :sat,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+     /* IG-SITE: , :siteId */);
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/update   (Update Query)  — keyed on the surrogate id (D2; rename-safe)
+   params (ordered):  code, count, shipDays, mon, tue, wed, thu, fri, sat,
+                      recordId   ( + siteId, IG-SITE only)
+   audit:   ⚠️ VC_LAST_UPDATE (WITH underscore) = same 16-char recipe; VC_ADD untouched.
+   ---------------------------------------------------------------------------- */
+UPDATE INV_RENBAN_GROUP_MST SET
+    VC_RENBAN_GROUP_CODE=:code, VC_RENBAN_GROUP_COUNT=:count, IN_SHIP_DAYS=:shipDays,
+    IN_SHIP_DAYS_MONDAY=:mon, IN_SHIP_DAYS_TUESDAY=:tue, IN_SHIP_DAYS_WEDNESDAY=:wed,
+    IN_SHIP_DAYS_THURSDAY=:thu, IN_SHIP_DAYS_FRIDAY=:fri, IN_SHIP_DAYS_SATURDAY=:sat,
+    VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE IN_RENBAN_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/checkCodeUnique   (Query)  — uniqueness pre-check on the CODE
+   params:  code (String), excludeId (Int, default 0), siteId (Int)
+   Checks INV_RENBAN_GROUP_MST.VC_RENBAN_GROUP_CODE (the business key).
+   excludeId = 0 on insert; = recordId on update (rename support, D2). The live
+   IX_INV_RENBAN_GROUP_MST UNIQUE index is the race backstop. Code is varchar(5)
+   -> cap at 5 (no fixed-length==N rule; spec states none).
+   ---------------------------------------------------------------------------- */
+SELECT COUNT(*) AS n
+FROM   INV_RENBAN_GROUP_MST
+WHERE  VC_RENBAN_GROUP_CODE = :code
+  AND  IN_RENBAN_ID        <> :excludeId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/refCount   (Query)  — the D3 RESTRICT delete gate (R1-critical)
+   params:  recordId (Int)
+   The live DELETE_RenbanGroupCode trigger (verified body, 2026-06-17) only
+   nullifies INV_PARTS_STOCK_MST.IN_RENBAN_ID and IGNORES
+   INV_PARTS_STOCK_MST_HIST (which ALSO carries IN_RENBAN_ID, COL_LENGTH=4). Per
+   D3 (RESTRICT) this gate counts BOTH inbound references and BLOCKs on any
+   non-zero total — never reaching the trigger while references exist. This kills
+   the legacy _HIST dangle.
+   ---------------------------------------------------------------------------- */
+SELECT
+    (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST       WHERE IN_RENBAN_ID = :recordId)
+  + (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST  WHERE IN_RENBAN_ID = :recordId)
+    AS n;
+
+
+/* ----------------------------------------------------------------------------
+   RenbanGroup/delete   (Update Query)  — only reached AFTER refCount = 0
+   param:  recordId (Int)
+   The live DELETE_RenbanGroupCode trigger then has nothing to act on (inert by
+   construction). NEVER let a delete reach the trigger while references exist.
+   ---------------------------------------------------------------------------- */
+DELETE FROM INV_RENBAN_GROUP_MST WHERE IN_RENBAN_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+/* RenbanGroup is a LEAF master: NO lookups/* queries (no FK combos, no enums). */

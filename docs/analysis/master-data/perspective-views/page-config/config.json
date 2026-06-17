@@ -15,6 +15,10 @@
     "/logistics": {
       "viewPath": "Master/Logistics/Logistics",
       "title": "Logistics Master"
+    },
+    "/renbangroup": {
+      "viewPath": "Master/RenbanGroup/RenbanGroup",
+      "title": "Renban Group Master"
     }
   },
   "sharedDocks": {}
