@@ -391,3 +391,180 @@ DELETE FROM INV_SIZE_MST WHERE IN_SIZE_ID = :recordId
 ;
 
 /* Size is a LEAF master: NO lookups/* queries (no FK combos, no enums). */
+
+
+/* ============================================================================
+   LOGISTICS MASTER  —  third master-data rebuild module (leaf, NAME-keyed)
+   ----------------------------------------------------------------------------
+   Status:  build artifact for the Logistics master CRUD (replicates the PROVEN Size
+            template; leaf master keyed by a NAME, not a 5-char code).
+   Author:  ignition-developer / 2026-06-17
+   Source:  docs/analysis/master-data/logistics.md  +  IGNITION-master-crud-design.md §C
+   View:    Master/Logistics/Logistics  (combined master-detail, route /logistics)
+
+   SAME MECHANISM as Size/Supplier above: NOT on-disk NQ resources — this is the
+   canonical SQL, executed at runtime via inline system.db.runPrepQuery inside the
+   view's binding/script transforms (positional '?' placeholders, ordered args).
+
+   GROUND TRUTH (read off live `Inventory` on mssql-spike, 2026-06-17):
+     INV_LOGISTICS_MST: PK IN_LOGISTICS_ID identity; BUSINESS KEY VC_LOGISTICS_NAME
+       varchar(25) — a NAME, NOT a code; UNIQUE IX_INV_LOGISTICS_MST on
+       VC_LOGISTICS_NAME (single-column); NO site_id.
+       Data columns: VC_ADDRESS(50), VC_CITY(50), VC_STATE(50), VC_ZIP(10),
+       VC_COUNTRY(50), VC_TEL(10), VC_FAX(10), VC_PERSON(50), VC_EMAIL_ADDRESS(255),
+       VC_BREAKDOWN_ORDER_DIRECTORY(512).
+       ⚠️ Audit columns: VC_LASTUPDATE (NO underscore — SAME as Supplier, DIFFERS
+       from Size's VC_LAST_UPDATE) + VC_ADD. Both varchar(16). 1 row live.
+     LEAF MASTER: no FK combos, no enums (drop all lookups/*).
+     DELETE_LogisticsCode trigger (verified live body, 2026-06-17):
+       UPDATE INV_SUPPLIER_MST SET IN_LOGISTICS_ID=null FROM INV_SUPPLIER_MST a,
+       DELETED d WHERE a.IN_LOGISTICS_ID = d.IN_LOGISTICS_ID.
+       It nullifies ONLY supplier FKs and LEAVES INV_PARTS_STOCK_MST.IN_LOGISTICS_ID
+       (and _HIST.IN_LOGISTICS_ID — COL_LENGTH=4, present) DANGLING. Per D3 (RESTRICT,
+       no unlink, no dangling), refCount below counts ALL THREE (supplier + parts +
+       _HIST) and BLOCKS the delete on any non-zero total — this kills the legacy
+       dangle (the cleanest D3 win).
+     Audit recipe below is byte-identical to the live INSERT/UPDATE_LogisticsInfo
+       procs (the same 16-char yyyymmddHHMMSSff recipe Supplier/Size use).
+
+   8.1 ↔ 8.3:
+     # IG83-TODO: replace the yyyymmddHHMMSSff audit string with a real datetime
+                  DEFAULT/trigger at the Postgres phase; drop the string form.
+     # IG83-TODO: flip every `-- IG-SITE:` predicate on + add composite
+                  (site_id, VC_LOGISTICS_NAME) UNIQUE index (R3 ordered migration).
+     # IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.
+
+   DIVERGENCES FROM LEGACY (documented, intentional):
+     - Validation added: presence(name) + per-site uniqueness on VC_LOGISTICS_NAME.
+       Legacy form had NO presence check (a blank name was insertable). NO fixed-
+       length rule (there is no code). checkCodeUnique checks the NAME column;
+       excludeId supports rename (D2).
+     - WIDEN proc-truncated fields: legacy procs narrowed @LogPerson to varchar(25)
+       and @LogDirectory to varchar(215). Direct NQ writes the FULL DB widths
+       (VC_PERSON 50, VC_BREAKDOWN_ORDER_DIRECTORY 512).
+     - VC_COUNTRY surfaced as a field (legacy form hid it) — same posture as Supplier.
+     - Delete is D3 RESTRICT (block) instead of the legacy supplier-nullify +
+       parts-dangle behavior.
+   ============================================================================ */
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/list   (Query)  — grid rows for the List view
+   params (ordered):  searchTerm (String), searchTerm (String), siteId (Int)
+   returns: RecordID + display columns (no enums, no joins). Mirrors legacy
+            SELECT_LogisticsInfo '' ordering (ORDER BY VC_LOGISTICS_NAME).
+   ---------------------------------------------------------------------------- */
+SELECT  IN_LOGISTICS_ID    AS "RecordID",
+        VC_LOGISTICS_NAME  AS "Logistics Name",
+        VC_CITY            AS "City",
+        VC_STATE           AS "State",
+        VC_TEL             AS "Telephone",
+        VC_PERSON          AS "Person"
+FROM    INV_LOGISTICS_MST
+WHERE  (:searchTerm = '' OR VC_LOGISTICS_NAME LIKE '%' + :searchTerm + '%'
+                        OR VC_PERSON LIKE '%' + :searchTerm + '%')
+-- IG-SITE:  AND site_id = :siteId
+ORDER BY VC_LOGISTICS_NAME;
+/* Parity: searchTerm='' matches SELECT_LogisticsInfo '' ordering/contents. Server-
+   side LIKE search improves on the legacy client-side exact Filter (documented). */
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/get   (Query)  — one row by surrogate id, for the Detail form
+   params:  recordId (Int), siteId (Int)
+   returns: all editable columns (name + address block + contact + directory +
+            country). Surrogate key IN_LOGISTICS_ID resolves the row (D2).
+   ---------------------------------------------------------------------------- */
+SELECT  IN_LOGISTICS_ID, VC_LOGISTICS_NAME, VC_ADDRESS, VC_CITY, VC_STATE, VC_ZIP,
+        VC_COUNTRY, VC_TEL, VC_FAX, VC_PERSON, VC_EMAIL_ADDRESS,
+        VC_BREAKDOWN_ORDER_DIRECTORY
+FROM    INV_LOGISTICS_MST
+WHERE   IN_LOGISTICS_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/insert   (Update Query, returns identity)
+   params (ordered):  name, address, city, state, zip, country, tel, fax, person,
+                      email, directory   ( + siteId, IG-SITE only)
+   returns: SCOPE_IDENTITY() AS newId (legacy proc never echoed it — improvement).
+   audit:   VC_ADD = byte-identical 16-char yyyymmddHHMMSSff recipe (matches live
+            INSERT_LogisticsInfo). WIDENS person->50, directory->512 (full DB width).
+   ---------------------------------------------------------------------------- */
+INSERT INTO INV_LOGISTICS_MST
+    (VC_LOGISTICS_NAME, VC_ADDRESS, VC_CITY, VC_STATE, VC_ZIP, VC_COUNTRY,
+     VC_TEL, VC_FAX, VC_PERSON, VC_EMAIL_ADDRESS, VC_BREAKDOWN_ORDER_DIRECTORY, VC_ADD
+     /* IG-SITE: , site_id */)
+VALUES
+    (:name, :address, :city, :state, :zip, :country,
+     :tel, :fax, :person, :email, :directory,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+     /* IG-SITE: , :siteId */);
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/update   (Update Query)  — keyed on the surrogate id (D2; rename-safe)
+   params (ordered):  name, address, city, state, zip, country, tel, fax, person,
+                      email, directory, recordId   ( + siteId, IG-SITE only)
+   audit:   ⚠️ VC_LASTUPDATE (NO underscore) = same 16-char recipe; VC_ADD untouched.
+   ---------------------------------------------------------------------------- */
+UPDATE INV_LOGISTICS_MST SET
+    VC_LOGISTICS_NAME=:name, VC_ADDRESS=:address, VC_CITY=:city, VC_STATE=:state,
+    VC_ZIP=:zip, VC_COUNTRY=:country, VC_TEL=:tel, VC_FAX=:fax, VC_PERSON=:person,
+    VC_EMAIL_ADDRESS=:email, VC_BREAKDOWN_ORDER_DIRECTORY=:directory,
+    VC_LASTUPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE IN_LOGISTICS_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/checkCodeUnique   (Query)  — uniqueness pre-check on the NAME
+   params:  name (String), excludeId (Int, default 0), siteId (Int)
+   Checks INV_LOGISTICS_MST.VC_LOGISTICS_NAME (the business key — a NAME, not a
+   code). excludeId = 0 on insert; = recordId on update (rename support, D2). The
+   live IX_INV_LOGISTICS_MST UNIQUE index is the race backstop. NO fixed-length rule.
+   ---------------------------------------------------------------------------- */
+SELECT COUNT(*) AS n
+FROM   INV_LOGISTICS_MST
+WHERE  VC_LOGISTICS_NAME = :name
+  AND  IN_LOGISTICS_ID  <> :excludeId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/refCount   (Query)  — the D3 RESTRICT delete gate (R1-critical)
+   params:  recordId (Int)
+   The live DELETE_LogisticsCode trigger only nullifies INV_SUPPLIER_MST.IN_LOGISTICS_ID
+   (verified body, 2026-06-17) and LEAVES INV_PARTS_STOCK_MST + _HIST DANGLING. Per D3
+   (RESTRICT) this gate counts ALL THREE inbound references and BLOCKs on any non-zero
+   total — never reaching the trigger while references exist. This kills the legacy
+   dangle (parts/_HIST were never cleaned up by the trigger).
+   ---------------------------------------------------------------------------- */
+SELECT
+    (SELECT COUNT(*) FROM INV_SUPPLIER_MST          WHERE IN_LOGISTICS_ID = :recordId)
+  + (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST        WHERE IN_LOGISTICS_ID = :recordId)
+  + (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST   WHERE IN_LOGISTICS_ID = :recordId)
+    AS n;
+
+
+/* ----------------------------------------------------------------------------
+   Logistics/delete   (Update Query)  — only reached AFTER refCount = 0
+   param:  recordId (Int)
+   The live DELETE_LogisticsCode trigger then has nothing to act on (inert by
+   construction). NEVER let a delete reach the trigger while references exist.
+   ---------------------------------------------------------------------------- */
+DELETE FROM INV_LOGISTICS_MST WHERE IN_LOGISTICS_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+/* Logistics is a LEAF master: NO lookups/* queries (no FK combos, no enums). */

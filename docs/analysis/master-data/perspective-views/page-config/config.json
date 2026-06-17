@@ -11,6 +11,10 @@
     "/size": {
       "viewPath": "Master/Size/Size",
       "title": "Size Master"
+    },
+    "/logistics": {
+      "viewPath": "Master/Logistics/Logistics",
+      "title": "Logistics Master"
     }
   },
   "sharedDocks": {}
