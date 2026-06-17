@@ -399,8 +399,12 @@ def check_round_trip(page, rep):
     try:
         set_field("renbangroup-code", TEST_CODE)
         set_field("renbangroup-count", TEST_COUNT_IN)   # "7" -> must persist as "007"
-        set_field("renbangroup-shipdays", "3")
-        set_field("renbangroup-mon", "1")
+        set_field("renbangroup-shipdays", "9")
+        # distinct per-weekday sentinels (1..6) so a Mon..Sat arg-transpose is caught by the
+        # AUTOMATED gate (not just the manual DB check the reviewer ran).
+        for dom, v in (("renbangroup-mon", "1"), ("renbangroup-tue", "2"), ("renbangroup-wed", "3"),
+                       ("renbangroup-thu", "4"), ("renbangroup-fri", "5"), ("renbangroup-sat", "6")):
+            set_field(dom, v)
         off = lib.log_marker()
         save = q(page, "renbangroup-save-btn", text="Save", role="button")
         if save:
@@ -410,6 +414,14 @@ def check_round_trip(page, rep):
             row = sqlq("SELECT VC_RENBAN_GROUP_COUNT, IN_SHIP_DAYS, IN_SHIP_DAYS_MONDAY "
                        "FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % TEST_CODE)
             inserted = ("SQLERR" not in row and TEST_COUNT_OUT in row)
+            # transpose guard: each weekday must land in its OWN column (shipdays=9, Mon..Sat=1..6)
+            wk = sqlq("SELECT CAST(IN_SHIP_DAYS AS varchar)+','+CAST(IN_SHIP_DAYS_MONDAY AS varchar)+','"
+                      "+CAST(IN_SHIP_DAYS_TUESDAY AS varchar)+','+CAST(IN_SHIP_DAYS_WEDNESDAY AS varchar)+','"
+                      "+CAST(IN_SHIP_DAYS_THURSDAY AS varchar)+','+CAST(IN_SHIP_DAYS_FRIDAY AS varchar)+','"
+                      "+CAST(IN_SHIP_DAYS_SATURDAY AS varchar) "
+                      "FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % TEST_CODE).strip()
+            rep.check("Round-trip: 6 weekdays each land in their own column (9,1,2,3,4,5,6 — no transpose)",
+                      wk == "9,1,2,3,4,5,6", "db ship-days=%r (expected 9,1,2,3,4,5,6)" % wk)
             rep.check("Round-trip: INSERT wrote %s to DB" % TEST_CODE,
                       "SQLERR" not in row and row.strip() != "",
                       "db row=%r; SPIKE=%s" %
