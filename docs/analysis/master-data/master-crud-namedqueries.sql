@@ -955,24 +955,18 @@ WHERE  VC_PART_NUMBER = :code
      INV_PART_SHIPPING_INF   by VC_PART_NUMBER   (string key)
      INV_PART_QTY_INF        by VC_PART_NUMBER   (qty-ledger, string key)
      INV_BREAKDOWN_FC_INF    by VC_PART_NUMBER   (string key)
-     INV_PARTS_STOCK_MST_HIST by VC_PART_NUMBER  (audit history, string key)
    Block on any non-zero total; NEVER reach the trigger while references exist.
-   In the spike ALL 47 parts have refs > 0 (verified), so any real part is BLOCKED.
 
-   ⚠️ HIST-SCOPE FINDING — FLAGGED FOR DAVID (do not resolve without his call).
-   Unlike Size/Renban, INV_PARTS_STOCK_MST has an INSERT_PartsStockMST trigger that
-   snapshots EVERY new part into INV_PARTS_STOCK_MST_HIST on insert. Because this gate
-   counts _HIST (per the task's stated reference set), a brand-new part already has >=1
-   HIST row the instant it is inserted -> the gate BLOCKS its delete too. CONSEQUENCE:
-   with _HIST in the gate there is NO truly zero-ref part — every part that has ever
-   existed is permanently undeletable through the gate. The legacy DELETE_PartNumber
-   trigger neither blocks on nor cleans up _HIST. OPTIONS for David: (a) keep _HIST in
-   the gate (no part is ever hard-deletable; retirement via the future archival path
-   only — arguably safest, consistent with D3 archival), or (b) DROP _HIST from the
-   gate (treat append-only audit history as non-blocking; a part with only HIST rows is
-   then deletable, matching the legacy trigger's own scope). Build is left FAITHFUL to
-   the written reference set (option a, _HIST included). Flip to (b) by removing the
-   last summed sub-select here AND in the view's inline delete script.
+   HIST-SCOPE — RESOLVED (David 2026-06-17, option b): _HIST is DROPPED from the gate.
+   INV_PARTS_STOCK_MST has an INSERT_PartsStockMST trigger that snapshots EVERY new part
+   into INV_PARTS_STOCK_MST_HIST on insert, so counting _HIST would make NO part ever
+   hard-deletable (every part has its own snapshot). A part's OWN append-only audit
+   history is NOT an external reference, so it does not block — matching the legacy
+   DELETE_PartNumber trigger's own scope. The gate blocks on the 6 TRANSACTIONAL-child
+   tables only; a part with no orders/rejects/stocktaking/shipping/qty-ledger/forecast
+   rows (e.g. a just-created mistake) is deletable. Any part with real inventory/order
+   history still blocks. (NOTE: Size/Logistics/RenbanGroup KEEP _HIST in their gates —
+   there it is the dangle-kill for parts' FK in _HIST, a different relationship.)
    ---------------------------------------------------------------------------- */
 SELECT
     (SELECT COUNT(*) FROM INV_OPEN_ORDER_INF       WHERE VC_PART_NUMBER = :partNumber)
@@ -981,7 +975,6 @@ SELECT
   + (SELECT COUNT(*) FROM INV_PART_SHIPPING_INF    WHERE VC_PART_NUMBER = :partNumber)
   + (SELECT COUNT(*) FROM INV_PART_QTY_INF         WHERE VC_PART_NUMBER = :partNumber)
   + (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF     WHERE VC_PART_NUMBER = :partNumber)
-  + (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER = :partNumber)
     AS n
 ;
 

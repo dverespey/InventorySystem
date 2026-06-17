@@ -31,7 +31,9 @@ docs/analysis/master-data/master-crud-namedqueries.sql):
   47 parts. First by VC_PART_NUMBER order: 42602YY05000(id69), 42602YY09000(id80),
   426070205000(id55), 426070210000(id56), 426070602000(id29).
   ALL 47 parts have refs>0 (zero deletable) — any real part's delete MUST be blocked.
-  Anchor id 83 = '4261102Q5100' : 883 refs (855 open orders + 25 breakdown + 3 hist),
+  Anchor id 83 = '4261102Q5100' : 880 transactional refs (855 open orders + 25 breakdown;
+  _HIST EXCLUDED from the gate per D-decision b — a part's own audit snapshot is not an
+  external reference; the 3 HIST rows are no longer counted),
   combos supplier=0572B size=16F renban=CMWA type=WHEEL, logistics=NULL (dangling ->
   blank label, LEFT-JOIN parity), line=COROLLA, IN_QTY=28133, BIT_LOT_SIZE_ORDERS=1
   (stored) -> checkbox displays UNCHECKED (inverted).
@@ -64,7 +66,7 @@ SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 EXPECTED_COUNT = 47
 ANCHOR_PARTS = ["42602YY05000", "42602YY09000", "426070205000"]   # code order
 DETAIL_ANCHOR = {
-    "id": 83, "part": "4261102Q5100", "name": "16\" STEEL 177D", "refCount": 883,
+    "id": 83, "part": "4261102Q5100", "name": "16\" STEEL 177D", "refCount": 880,
     "supplier": "0572B", "size": "16F", "renban": "CMWA", "type": "WHEEL",
     "line": "COROLLA", "qty": 28133, "storedBit": 1,   # displayed checkbox = NOT 1 = unchecked
 }
@@ -367,11 +369,11 @@ def check_delete_gate(page, rep):
         "+(SELECT COUNT(*) FROM INV_PART_SHIPPING_INF WHERE VC_PART_NUMBER='%s')"
         "+(SELECT COUNT(*) FROM INV_PART_QTY_INF WHERE VC_PART_NUMBER='%s')"
         "+(SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER='%s')"
-        "+(SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER='%s')"
+        # _HIST EXCLUDED (D-decision b) — mirror the gate's 6 transactional-child tables exactly.
         % (DETAIL_ANCHOR["part"], DETAIL_ANCHOR["id"], DETAIL_ANCHOR["id"],
-           DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"]))
+           DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"]))
     db_ref = next((int(t) for t in out.split() if t.isdigit()), -1)
-    rep.check("Delete-gate pre-state: %s has %d refs in DB (7 child tables, >0)"
+    rep.check("Delete-gate pre-state: %s has %d transactional refs in DB (6 child tables, _HIST excluded, >0)"
               % (DETAIL_ANCHOR["part"], DETAIL_ANCHOR["refCount"]),
               db_ref == DETAIL_ANCHOR["refCount"], "db refCount=%d" % db_ref)
 
@@ -479,40 +481,41 @@ def check_round_trip(page, rep):
     except Exception as e:
         rep.skip("Round-trip insert", "insert interaction failed: %s" % e)
 
-    # ---- delete path: the HIST-scope finding (FLAGGED FOR DAVID) ----
-    # PartsStock differs from Size/Renban: the live INSERT_PartsStockMST trigger
-    # snapshots EVERY new part into INV_PARTS_STOCK_MST_HIST on insert. Since the
-    # refCount gate (per spec) counts _HIST, a brand-new throwaway already has >=1
-    # HIST row, so the gate BLOCKS its delete too. There is therefore NO truly
-    # zero-ref part for PartsStock — including _HIST makes every part undeletable.
-    # This is the ambiguity the build was told to STOP on rather than guess; the
-    # gate is left FAITHFUL to the written reference set (HIST included), and we
-    # assert that boundary behavior here honestly.
+    # ---- delete path: HIST-scope RESOLVED (David 2026-06-17, option b) ----
+    # _HIST is EXCLUDED from the gate. PartsStock's live INSERT_PartsStockMST trigger
+    # snapshots every new part into INV_PARTS_STOCK_MST_HIST on insert, so the throwaway
+    # has HIST rows but ZERO transactional children — under (b) the gate returns 0 and
+    # ALLOWS the delete through the UI (a part's own audit snapshot is not an external
+    # reference). We assert the gate ran, counted 0, and the UI delete removed the part.
     if inserted:
         try:
+            hist_cnt = next((int(t) for t in sqlq(
+                "SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER='%s'"
+                % TEST_CODE).split() if t.isdigit()), -1)
+            rep.check("Round-trip: throwaway has HIST snapshot(s) but ZERO transactional children "
+                      "(INSERT_PartsStockMST auto-snapshot; HIST excluded from gate per b)",
+                      hist_cnt >= 1, "HIST rows for %s = %d" % (TEST_CODE, hist_cnt))
             off = lib.log_marker()
             if click_btn(page, "ps-delete-btn"):
                 time.sleep(2.0)
                 ref_lines = lib.grep_spike_since(off, "PartsStock refCount")
-                blk_lines = lib.grep_spike_since(off, "DELETE BLOCKED")
-                hist_only = next((int(t) for t in sqlq(
-                    "SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER='%s'"
+                gate_n = -1
+                if ref_lines:
+                    try: gate_n = int(ref_lines[-1].split("n=")[1].split()[0])
+                    except Exception: pass
+                gone = next((int(t) for t in sqlq(
+                    "SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'"
                     % TEST_CODE).split() if t.isdigit()), -1)
-                rep.check("Round-trip: fresh part's only refs are INV_PARTS_STOCK_MST_HIST "
-                          "(INSERT_PartsStockMST snapshot) — the HIST-scope finding",
-                          hist_only >= 1, "HIST rows for %s = %d" % (TEST_CODE, hist_only))
-                rep.check("Round-trip: gate runs and BLOCKS the HIST-bearing throwaway "
-                          "(FAITHFUL to spec reference set; HIST-scope FLAGGED for David)",
-                          bool(ref_lines) and bool(blk_lines),
-                          (blk_lines[-1].split("SPIKE")[-1][:70] if blk_lines else "no BLOCKED marker"))
+                rep.check("Round-trip: gate ALLOWS the HIST-only throwaway (transactional refCount=0) "
+                          "and the UI delete removed it",
+                          gate_n == 0 and gone == 0,
+                          "gate n=%d; rows remaining=%d" % (gate_n, gone))
         except Exception as e:
             rep.skip("Round-trip UI delete", "delete interaction failed: %s" % e)
 
-    # ---- prove the DELETE path itself is sound (trigger fires; Activity stub OK) ----
-    # The gate blocks via HIST, so to prove the underlying delete+trigger works we issue
-    # a direct DELETE of the throwaway (its only refs are HIST rows the trigger ignores).
-    # This also confirms the Activity.dbo.InsertAct_Log stub lets DELETE_PartNumber fire
-    # without "Database 'Activity' does not exist". Then DB is restored to baseline.
+    # ---- safety-net restore (no-op if the UI delete above already removed it) ----
+    # Confirms the Activity.dbo.InsertAct_Log stub lets DELETE_PartNumber fire without
+    # "Database 'Activity' does not exist", and guarantees the DB is back to baseline.
     if inserted:
         del_out = sqlq("DELETE FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
         ok = "SQLERR" not in del_out and "does not exist" not in del_out
