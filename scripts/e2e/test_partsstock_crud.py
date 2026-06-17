@@ -1,0 +1,589 @@
+"""E2E QA gate for the Parts Stock Master CRUD build — no human clicks.
+
+The FIFTH and deepest master (the keystone that FKs into the four prior masters).
+Drives a real Perspective session headless against the live spike gateway
+(8.1.52 on :8088): resets the 2h trial if needed, opens /partsstock, and asserts
+on BOTH the DOM and the gateway-log SPIKE markers (grep wrapper.log). Per-check
+PASS/FAIL/SKIP; exit 1 if any FAIL.
+
+  python3 scripts/e2e/test_partsstock_crud.py            # headless gate
+  python3 scripts/e2e/test_partsstock_crud.py --headed   # watch it live
+
+Mirrors test_size_crud.py: reuses lib.py (Report, log markers, SPIKE grep, trial
+reset), the domId-first selector and fill_field (Tabs to commit the bidirectional
+binding). Views/SQL are NOT edited here.
+
+SINGLE COMBINED VIEW: /partsstock opens ONE view Master/PartsStock/PartsStock
+containing the grid (left) AND the detail edit-form (right). Row-select is a
+same-view prop write (custom.recordId) -> custom.recordId onChange loads the row
+into the in-view form. NO List->Detail navigation.
+
+PARTS = the deepest master: 30 columns, 5 FK combos (Supplier/Logistics/Size/
+Renban/PartType, store id display label), a cross-DB Line dropdown (string), a
+READ-ONLY IN_QTY (12 qty-triggers own the on-hand invariant), an INVERTED
+BIT_LOT_SIZE_ORDERS, and a refCount delete-gate over SEVEN transactional/child
+tables (the live DELETE_PartNumber trigger only blanks assy-ratio/forecast string
+codes; D3 RESTRICT blocks on any order/reject/stocktaking/shipping/qty-ledger/
+forecast/history reference).
+
+DB ground truth (verified 2026-06-17 via sqlcmd; source-of-truth
+docs/analysis/master-data/master-crud-namedqueries.sql):
+  47 parts. First by VC_PART_NUMBER order: 42602YY05000(id69), 42602YY09000(id80),
+  426070205000(id55), 426070210000(id56), 426070602000(id29).
+  ALL 47 parts have refs>0 (zero deletable) — any real part's delete MUST be blocked.
+  Anchor id 83 = '4261102Q5100' : 883 refs (855 open orders + 25 breakdown + 3 hist),
+  combos supplier=0572B size=16F renban=CMWA type=WHEEL, logistics=NULL (dangling ->
+  blank label, LEFT-JOIN parity), line=COROLLA, IN_QTY=28133, BIT_LOT_SIZE_ORDERS=1
+  (stored) -> checkbox displays UNCHECKED (inverted).
+  Valid FK ids for the throwaway insert: supplier=2, logistics=1, size=1, renban=7,
+  partType=1.  ZZQATEST001 absent.
+
+HIST-SCOPE FINDING (flagged for David — see check 5): unlike Size/Renban,
+INV_PARTS_STOCK_MST has an INSERT_PartsStockMST trigger that snapshots EVERY new
+part into INV_PARTS_STOCK_MST_HIST on insert. Since the refCount gate counts _HIST
+(per the spec's reference set), a brand-new throwaway already has >=1 HIST row, so
+the gate BLOCKS its delete too -> there is NO truly zero-ref part for PartsStock.
+The gate is left FAITHFUL to the written reference set (HIST included); the harness
+asserts the block honestly and proves the underlying delete+trigger path via a
+direct DELETE (the Activity.dbo.InsertAct_Log stub lets DELETE_PartNumber fire).
+"""
+import os
+import subprocess
+import sys
+import time
+
+from playwright.sync_api import sync_playwright
+
+import lib
+from reset_trial import reset_trial
+
+LIST_URL = lib.BASE + "/data/perspective/client/spike/partsstock"
+DB = "Inventory_Spike"
+SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
+
+EXPECTED_COUNT = 47
+ANCHOR_PARTS = ["42602YY05000", "42602YY09000", "426070205000"]   # code order
+DETAIL_ANCHOR = {
+    "id": 83, "part": "4261102Q5100", "name": "16\" STEEL 177D", "refCount": 883,
+    "supplier": "0572B", "size": "16F", "renban": "CMWA", "type": "WHEEL",
+    "line": "COROLLA", "qty": 28133, "storedBit": 1,   # displayed checkbox = NOT 1 = unchecked
+}
+# Valid FK selections for the throwaway round-trip (smallest id of each master).
+FK = {"supplier": 2, "logistics": 1, "size": 1, "renban": 7, "partType": 1}
+TEST_CODE = "ZZQATEST001"
+EXPECTED_LINES = ["CAMRY", "COROLLA", "HIGHLANDER", "TACOMA", "TUNDRA"]
+
+GRID = "#ps-grid"
+ROW = "div.ia_table__row"
+
+
+# ---- selector helper (domId first, then text/role) -----------------------
+def q(page, domid, text=None, role=None):
+    el = page.query_selector("#" + domid)
+    if el:
+        return page.locator("#" + domid)
+    if text:
+        loc = page.get_by_text(text, exact=False)
+        if loc.count():
+            return loc.first
+    if role:
+        loc = page.get_by_role(role, name=text) if text else page.get_by_role(role)
+        if loc.count():
+            return loc.first
+    return None
+
+
+def fill_field(page, domid, val):
+    """Set a Perspective text/numeric input's bound value headless (same as Size)."""
+    f = page.query_selector("#" + domid)
+    if not f:
+        return False
+    f.click()
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Meta+A")
+    page.keyboard.press("Delete")
+    if val is not None and val != "":
+        f.type(str(val), delay=30)
+    page.keyboard.press("Tab")
+    page.wait_for_timeout(350)
+    return True
+
+
+def click_btn(page, domid):
+    """Click a Perspective button by domId via a Playwright LOCATOR (which auto-
+    targets the actionable inner <button>, not the wrapper div — clicking the
+    wrapper div does NOT fire onActionPerformed). Scrolls into view first."""
+    loc = page.locator("#" + domid)
+    if not loc.count():
+        return False
+    try:
+        loc.scroll_into_view_if_needed()
+    except Exception:
+        pass
+    loc.click()
+    return True
+
+
+def select_combo(page, domid, label_text):
+    """Pick an option by visible label in an ia.input.dropdown, scoped to THAT
+    dropdown's own option list (a.iaDropdownCommon_option) so we never click a
+    grid cell that happens to share the text. Search is enabled, so type to filter."""
+    dd = page.query_selector("#" + domid)
+    if not dd:
+        return False
+    dd.scroll_into_view_if_needed()
+    dd.click()
+    page.wait_for_timeout(400)
+    # search-enabled dropdown: type to filter the option list, then click the exact option
+    try:
+        page.keyboard.type(str(label_text), delay=25)
+        page.wait_for_timeout(400)
+    except Exception:
+        pass
+    opts = page.query_selector_all("a.iaDropdownCommon_option")
+    for o in opts:
+        if (o.inner_text() or "").strip() == str(label_text):
+            o.click()
+            page.wait_for_timeout(300)
+            return True
+    # fallback: first remaining filtered option
+    if opts:
+        opts[0].click()
+        page.wait_for_timeout(300)
+        return True
+    page.keyboard.press("Escape")
+    return False
+
+
+def sqlq(query):
+    cmd = ["docker", "exec", "mssql-spike",
+           "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "localhost",
+           "-U", "sa", "-P", SA_PASS, "-d", "Inventory",
+           "-h", "-1", "-W", "-Q", "SET NOCOUNT ON; " + query]
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=30)
+        return out.decode("utf-8", "replace")
+    except Exception as e:
+        return "SQLERR: %s" % e
+
+
+def db_parts_count():
+    out = sqlq("SELECT COUNT(*) FROM INV_PARTS_STOCK_MST")
+    for tok in out.split():
+        if tok.isdigit():
+            return int(tok)
+    return -1
+
+
+def grid_text(page):
+    g = page.query_selector(GRID)
+    return g.inner_text() if g else ""
+
+
+# ---- check 1: List renders + parity --------------------------------------
+def check_list(page, rep):
+    off_grid = lib.log_marker()
+    page.goto(LIST_URL, wait_until="networkidle", timeout=45000)
+    if "Trial Expired" in page.inner_text("body"):
+        rep.check("List renders", False, "Perspective TRIAL EXPIRED — run reset_trial.py")
+        return False
+    rendered = False
+    try:
+        page.wait_for_selector(GRID, timeout=30000)
+        rendered = True
+    except Exception:
+        pass
+    page.wait_for_timeout(2200)
+    page.screenshot(path=lib.ARTIFACTS + "/partsstock_list.png", full_page=True)
+    rep.check("List grid mounts (%s present)" % GRID, rendered,
+              "screenshot: artifacts/partsstock_list.png")
+    if not rendered:
+        return False
+
+    rows = page.query_selector_all(GRID + " " + ROW)
+    listed = None
+    for l in lib.grep_spike_since(off_grid, "PartsStock/list:"):
+        try:
+            listed = int(l.split("PartsStock/list:")[1].strip().split()[0])
+        except Exception:
+            pass
+    rep.check("PartsStock/list query returned %d rows (== DB count; grid DOM-virtualizes)" % EXPECTED_COUNT,
+              listed == EXPECTED_COUNT, "query reported=%s; rendered DOM window=%d" % (listed, len(rows)))
+    rep.check("List renders a virtualized window of rows (DOM floor > 0)",
+              len(rows) > 0, "rendered rows=%d" % len(rows))
+
+    text = grid_text(page)
+    missing = [c for c in ANCHOR_PARTS if c not in text]
+    rep.check("List anchor part numbers present (%s)" % ", ".join(ANCHOR_PARTS), not missing,
+              "missing: %s" % missing if missing else "all present")
+    pos = [text.find(c) for c in ANCHOR_PARTS]
+    ordered = all(p >= 0 for p in pos) and pos == sorted(pos)
+    rep.check("List order matches PartsStock/list (part-number ascending)",
+              ordered, "text offsets=%s" % pos)
+    return True
+
+
+# ---- check 2: row select -> Detail (5 combos + line + read-only qty) ------
+def open_detail_via_row(page, rep, code):
+    off = lib.log_marker()
+    target = None
+    for r in page.query_selector_all(GRID + " " + ROW):
+        toks = [t.strip() for t in (r.inner_text() or "").split("\n") if t.strip()]
+        if toks and toks[0] == code:
+            target = r
+            break
+    if target is None:
+        rep.check("Row select: row %s clickable" % code, False, "row not found in grid")
+        return False
+    target.scroll_into_view_if_needed()
+    target.click()
+    time.sleep(2.2)
+    click_lines = lib.grep_spike_since(off, "PartsStock list -> open Detail")
+    rep.check("onRowClick set custom.recordId in-view (SPIKE marker, recId=%d)" % DETAIL_ANCHOR["id"],
+              any(("recordId=%d" % DETAIL_ANCHOR["id"]) in l for l in click_lines),
+              click_lines[-1].split("SPIKE")[-1][:70] if click_lines else "no row-click marker")
+
+    load_lines = lib.grep_spike_since(off, "PartsStock Detail loaded")
+    rep.check("recordId onChange loaded the row into the in-view form (SPIKE 'Detail loaded id=%d')" % DETAIL_ANCHOR["id"],
+              any(("id=%d" % DETAIL_ANCHOR["id"]) in l for l in load_lines),
+              load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no Detail-loaded marker")
+
+    combo_lines = lib.grep_spike_since(off, "PartsStock Detail combos")
+    rep.check("All 5 FK combos + Line dropdown populated (SPIKE 'combos sup=.. line=..')",
+              any(("sup=16" in l and "line=5" in l) for l in combo_lines),
+              combo_lines[-1].split("SPIKE")[-1][:90] if combo_lines else "no combos marker")
+
+    page.wait_for_timeout(800)
+    page.screenshot(path=lib.ARTIFACTS + "/partsstock_detail.png", full_page=True)
+    body = page.inner_text("body")
+
+    pf = page.query_selector("#ps-partnumber")
+    pval = pf.get_attribute("value") if pf else None
+    rep.check("Detail part-number field populated == %s" % code, pval == code,
+              "field value=%r" % pval)
+    rep.check("Detail name field shows %s" % DETAIL_ANCHOR["name"],
+              DETAIL_ANCHOR["name"] in body, "name in body=%s" % (DETAIL_ANCHOR["name"] in body))
+
+    # combos show the right labels (the loaded part's FK labels render in the dropdowns)
+    for which, lbl in [("Supplier", DETAIL_ANCHOR["supplier"]), ("Size", DETAIL_ANCHOR["size"]),
+                       ("Renban", DETAIL_ANCHOR["renban"]), ("PartType", DETAIL_ANCHOR["type"]),
+                       ("Line", DETAIL_ANCHOR["line"])]:
+        rep.check("Detail %s combo shows label %s" % (which, lbl), lbl in body,
+                  "%s label in body=%s" % (lbl, lbl in body))
+
+    # IN_QTY is read-only: the inner input is disabled AND the load script logged the qty.
+    # The domId sits on the component wrapper; probe the nested <input> for disabled state.
+    disabled = False
+    try:
+        inner = page.query_selector("#ps-qty input")
+        if inner is not None:
+            disabled = (inner.get_attribute("disabled") is not None) or (not inner.is_editable())
+        else:
+            wrap = page.query_selector("#ps-qty")
+            disabled = bool(wrap and "disabled" in (wrap.get_attribute("class") or "").lower())
+    except Exception:
+        disabled = False
+    qty_logged = any(("qty=%d" % DETAIL_ANCHOR["qty"]) in l for l in load_lines)
+    rep.check("Detail IN_QTY is READ-ONLY (field disabled) and shows %d" % DETAIL_ANCHOR["qty"],
+              disabled and qty_logged,
+              "disabled=%s; qtyLoggedAs%d=%s" % (disabled, DETAIL_ANCHOR["qty"], qty_logged))
+
+    # inverted lot-size flag: stored 1 -> checkbox displayed UNCHECKED -> SPIKE logs lotSizeShown=False
+    inv_ok = any("lotSizeShown=False" in l for l in load_lines)
+    rep.check("Detail BIT_LOT_SIZE_ORDERS shown INVERTED (stored 1 -> checkbox unchecked)",
+              inv_ok, load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no marker")
+    return pval == code
+
+
+# ---- check 3: validation (blank / >12-char / dup) ------------------------
+def check_validation(page, rep):
+    page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
+    page.wait_for_selector(GRID, timeout=20000)
+    nb = q(page, "ps-new-btn", text="New Part", role="button")
+    if not nb:
+        for n in ("Validation: blank part number rejected", "Validation: >12-char rejected",
+                  "Validation: dup part number blocked"):
+            rep.skip(n, "New Part button not found")
+        return
+    nb.click()
+    page.wait_for_timeout(1500)
+
+    # --- blank part number ---
+    off = lib.log_marker()
+    fill_field(page, "ps-partnumber", "")
+    fill_field(page, "ps-partsname", "QA Blank")
+    save = q(page, "ps-save-btn", text="Save", role="button")
+    if save:
+        save.click()
+        time.sleep(1.8)
+        lines = lib.grep_spike_since(off, "save REJECTED: blank part number")
+        status = page.query_selector("#ps-status")
+        stxt = status.inner_text() if status else ""
+        rep.check("Validation: blank part number REJECTED (no insert)",
+                  bool(lines) or ("is required" in stxt),
+                  lines[-1].split("SPIKE")[-1][:60] if lines else ("status=%r" % stxt[:60]))
+
+    # --- >12-char ---
+    off = lib.log_marker()
+    fill_field(page, "ps-partnumber", "ABCDEFGHIJKLM")   # 13 chars
+    fill_field(page, "ps-partsname", "QA Too Long")
+    save = q(page, "ps-save-btn", text="Save", role="button")
+    if save:
+        save.click()
+        time.sleep(1.8)
+        lines = lib.grep_spike_since(off, "save REJECTED: code len")
+        status = page.query_selector("#ps-status")
+        stxt = status.inner_text() if status else ""
+        rep.check("Validation: >12-char part number REJECTED (or field-capped at 12)",
+                  bool(lines) or ("12 characters or fewer" in stxt),
+                  lines[-1].split("SPIKE")[-1][:60] if lines
+                  else ("status=%r (maxLength may cap at 12)" % stxt[:60]))
+
+    # --- dup (existing anchor part) ---
+    off = lib.log_marker()
+    fill_field(page, "ps-partnumber", DETAIL_ANCHOR["part"])
+    fill_field(page, "ps-partsname", "QA Dup")
+    save = q(page, "ps-save-btn", text="Save", role="button")
+    if save:
+        save.click()
+        time.sleep(1.8)
+        lines = lib.grep_spike_since(off, "save REJECTED: dup part")
+        status = page.query_selector("#ps-status")
+        stxt = status.inner_text() if status else ""
+        rep.check("Validation: duplicate part number BLOCKED (checkCodeUnique)",
+                  bool(lines) or ("already exists" in stxt),
+                  lines[-1].split("SPIKE")[-1][:60] if lines else ("status=%r" % stxt[:60]))
+
+    rep.check("Validation left DB clean (still %d parts)" % EXPECTED_COUNT,
+              db_parts_count() == EXPECTED_COUNT, "count=%d" % db_parts_count())
+
+
+# ---- check 4: R1 delete-gate (CRITICAL) ----------------------------------
+def check_delete_gate(page, rep):
+    out = sqlq(
+        "SELECT (SELECT COUNT(*) FROM INV_OPEN_ORDER_INF WHERE VC_PART_NUMBER='%s')"
+        "+(SELECT COUNT(*) FROM INV_REJECT_INF WHERE IN_PART_ID=%d)"
+        "+(SELECT COUNT(*) FROM INV_STOCKTAKING_INF WHERE IN_PART_ID=%d)"
+        "+(SELECT COUNT(*) FROM INV_PART_SHIPPING_INF WHERE VC_PART_NUMBER='%s')"
+        "+(SELECT COUNT(*) FROM INV_PART_QTY_INF WHERE VC_PART_NUMBER='%s')"
+        "+(SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER='%s')"
+        "+(SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER='%s')"
+        % (DETAIL_ANCHOR["part"], DETAIL_ANCHOR["id"], DETAIL_ANCHOR["id"],
+           DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"], DETAIL_ANCHOR["part"]))
+    db_ref = next((int(t) for t in out.split() if t.isdigit()), -1)
+    rep.check("Delete-gate pre-state: %s has %d refs in DB (7 child tables, >0)"
+              % (DETAIL_ANCHOR["part"], DETAIL_ANCHOR["refCount"]),
+              db_ref == DETAIL_ANCHOR["refCount"], "db refCount=%d" % db_ref)
+
+    page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
+    page.wait_for_selector(GRID, timeout=20000)
+    page.wait_for_timeout(1500)
+    target = None
+    for r in page.query_selector_all(GRID + " " + ROW):
+        toks = [t.strip() for t in (r.inner_text() or "").split("\n") if t.strip()]
+        if toks and toks[0] == DETAIL_ANCHOR["part"]:
+            target = r
+            break
+    if target is None:
+        rep.check("Delete-gate: open referenced row %s" % DETAIL_ANCHOR["part"], False, "row not found")
+        return
+    target.scroll_into_view_if_needed()
+    target.click()
+    time.sleep(2.2)
+
+    off = lib.log_marker()
+    if not click_btn(page, "ps-delete-btn"):
+        rep.check("Delete-gate: Delete button present", False, "not found")
+        return
+    time.sleep(2.0)
+
+    ref_lines = lib.grep_spike_since(off, "PartsStock refCount")
+    blk_lines = lib.grep_spike_since(off, "DELETE BLOCKED")
+    status = page.query_selector("#ps-status")
+    stxt = status.inner_text() if status else ""
+    page.screenshot(path=lib.ARTIFACTS + "/partsstock_delete_blocked.png", full_page=True)
+
+    ran_ref = any(("n=%d" % DETAIL_ANCHOR["refCount"]) in l for l in ref_lines)
+    rep.check("Delete-gate: refCount ran and returned %d (SPIKE 'refCount ... n=%d')"
+              % (DETAIL_ANCHOR["refCount"], DETAIL_ANCHOR["refCount"]),
+              ran_ref, ref_lines[-1].split("SPIKE")[-1][:80] if ref_lines else "no refCount marker")
+    rep.check("Delete-gate: DELETE BLOCKED (SPIKE 'DELETE BLOCKED' fired)",
+              bool(blk_lines), blk_lines[-1].split("SPIKE")[-1][:80] if blk_lines else "no BLOCKED marker")
+    rep.check("Delete-gate: status shows the reference message ('still referenced')",
+              "still referenced" in stxt, "status=%r" % stxt[:100])
+
+    still = sqlq("SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE IN_PART_ID=%d" % DETAIL_ANCHOR["id"])
+    still_n = next((int(t) for t in still.split() if t.isdigit()), -1)
+    rep.check("Delete-gate: referenced part %s STILL EXISTS in DB (not deleted)" % DETAIL_ANCHOR["part"],
+              still_n == 1, "rows for id %d = %d" % (DETAIL_ANCHOR["id"], still_n))
+
+
+# ---- check 5: non-destructive insert/update round-trip -------------------
+def check_round_trip(page, rep):
+    """Insert a throwaway ZZQATEST001 part with valid FK selections, verify it
+    landed with IN_QTY=0, assert IN_QTY was NOT writable (stayed 0), then delete
+    it (zero refs -> gate allows) and confirm the DB is back to baseline."""
+    pre = db_parts_count()
+    if pre != EXPECTED_COUNT:
+        rep.skip("Round-trip insert/delete %s" % TEST_CODE,
+                 "DB not at baseline (%d != %d)" % (pre, EXPECTED_COUNT))
+        return
+    if sqlq("SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE).strip().split()[-1] != "0":
+        rep.skip("Round-trip insert/delete %s" % TEST_CODE, "%s already present" % TEST_CODE)
+        return
+
+    page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
+    page.wait_for_selector(GRID, timeout=20000)
+    if not click_btn(page, "ps-new-btn"):
+        rep.skip("Round-trip insert/delete %s" % TEST_CODE, "New Part button not found")
+        return
+    page.wait_for_timeout(1500)
+
+    inserted = False
+    try:
+        fill_field(page, "ps-partnumber", TEST_CODE)
+        fill_field(page, "ps-partsname", "QA ROUND TRIP")
+        # FK combos: pick by visible label (scoped to each dropdown's own option list)
+        select_combo(page, "ps-supplier", DETAIL_ANCHOR["supplier"])   # 0572B (any valid supplier)
+        select_combo(page, "ps-size", "15D")                            # any valid size code
+        select_combo(page, "ps-renban", "PACF")                         # renban id 7
+        select_combo(page, "ps-parttype", "FILM")                       # part type id 3
+        select_combo(page, "ps-line", "TUNDRA")
+        # try to write IN_QTY (must NOT take — read-only); we attempt 999 and assert DB=0
+        fill_field(page, "ps-qty", "999")
+        off = lib.log_marker()
+        if click_btn(page, "ps-save-btn"):
+            time.sleep(2.2)
+            ins_lines = lib.grep_spike_since(off, "PartsStock INSERT ok")
+            row = sqlq("SELECT IN_PART_ID, VC_PARTS_NAME, IN_QTY, BIT_LOT_SIZE_ORDERS "
+                       "FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
+            inserted = ("QA ROUND TRIP" in row)
+            rep.check("Round-trip: INSERT wrote %s to DB (name round-tripped)" % TEST_CODE,
+                      inserted, "db row=%r; SPIKE=%s" %
+                      (row.strip()[:60], ins_lines[-1].split("SPIKE")[-1][:40] if ins_lines else "no marker"))
+            rep.check("Round-trip: DB now has %d parts (+1)" % (EXPECTED_COUNT + 1),
+                      db_parts_count() == EXPECTED_COUNT + 1, "count=%d" % db_parts_count())
+            # IN_QTY must be 0 (read-only — the 999 we typed must NOT have been written)
+            qty_out = sqlq("SELECT IN_QTY FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
+            qty_db = next((int(t) for t in qty_out.split() if t.lstrip("-").isdigit()), None)
+            rep.check("Round-trip: IN_QTY is 0 on insert (NOT writable; typed 999 ignored)",
+                      qty_db == 0, "db IN_QTY=%s (expected 0)" % qty_db)
+            # FK ids actually persisted (D2: stored ids, not labels)
+            fk_out = sqlq("SELECT IN_SUPPLIER_ID, IN_SIZE_ID, IN_RENBAN_ID, IN_PART_TYPE_ID, VC_LINE_NAME "
+                          "FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
+            rep.check("Round-trip: FK combos persisted as IDs (not NULL/labels)",
+                      "NULL" not in fk_out.split("VC_LINE")[0] if "VC_LINE" in fk_out else ("NULL" not in fk_out),
+                      "db FK row=%r" % fk_out.strip()[:70])
+        else:
+            rep.skip("Round-trip insert/delete %s" % TEST_CODE, "Save button not found")
+    except Exception as e:
+        rep.skip("Round-trip insert", "insert interaction failed: %s" % e)
+
+    # ---- delete path: the HIST-scope finding (FLAGGED FOR DAVID) ----
+    # PartsStock differs from Size/Renban: the live INSERT_PartsStockMST trigger
+    # snapshots EVERY new part into INV_PARTS_STOCK_MST_HIST on insert. Since the
+    # refCount gate (per spec) counts _HIST, a brand-new throwaway already has >=1
+    # HIST row, so the gate BLOCKS its delete too. There is therefore NO truly
+    # zero-ref part for PartsStock — including _HIST makes every part undeletable.
+    # This is the ambiguity the build was told to STOP on rather than guess; the
+    # gate is left FAITHFUL to the written reference set (HIST included), and we
+    # assert that boundary behavior here honestly.
+    if inserted:
+        try:
+            off = lib.log_marker()
+            if click_btn(page, "ps-delete-btn"):
+                time.sleep(2.0)
+                ref_lines = lib.grep_spike_since(off, "PartsStock refCount")
+                blk_lines = lib.grep_spike_since(off, "DELETE BLOCKED")
+                hist_only = next((int(t) for t in sqlq(
+                    "SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER='%s'"
+                    % TEST_CODE).split() if t.isdigit()), -1)
+                rep.check("Round-trip: fresh part's only refs are INV_PARTS_STOCK_MST_HIST "
+                          "(INSERT_PartsStockMST snapshot) — the HIST-scope finding",
+                          hist_only >= 1, "HIST rows for %s = %d" % (TEST_CODE, hist_only))
+                rep.check("Round-trip: gate runs and BLOCKS the HIST-bearing throwaway "
+                          "(FAITHFUL to spec reference set; HIST-scope FLAGGED for David)",
+                          bool(ref_lines) and bool(blk_lines),
+                          (blk_lines[-1].split("SPIKE")[-1][:70] if blk_lines else "no BLOCKED marker"))
+        except Exception as e:
+            rep.skip("Round-trip UI delete", "delete interaction failed: %s" % e)
+
+    # ---- prove the DELETE path itself is sound (trigger fires; Activity stub OK) ----
+    # The gate blocks via HIST, so to prove the underlying delete+trigger works we issue
+    # a direct DELETE of the throwaway (its only refs are HIST rows the trigger ignores).
+    # This also confirms the Activity.dbo.InsertAct_Log stub lets DELETE_PartNumber fire
+    # without "Database 'Activity' does not exist". Then DB is restored to baseline.
+    if inserted:
+        del_out = sqlq("DELETE FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
+        ok = "SQLERR" not in del_out and "does not exist" not in del_out
+        rep.check("Round-trip: direct DELETE of throwaway succeeds (DELETE_PartNumber trigger "
+                  "fires; Activity stub present) -> DB restored to %d" % EXPECTED_COUNT,
+                  ok and db_parts_count() == EXPECTED_COUNT,
+                  "delete out=%r; count=%d" % (del_out.strip()[:50], db_parts_count()))
+
+
+def teardown(rep):
+    """Hard fixture sweep: ZZQATEST001 has zero refs so this DELETE is safe and
+    never touches real client rows. Restore to baseline regardless of where we stopped."""
+    stray = sqlq("SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
+    n_stray = next((int(t) for t in stray.split() if t.isdigit()), 0)
+    if n_stray > 0:
+        sqlq("DELETE FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER='%s'" % TEST_CODE)
+    final = db_parts_count()
+    rep.check("Teardown: DB restored to %d parts, no stray %s" % (EXPECTED_COUNT, TEST_CODE),
+              final == EXPECTED_COUNT and n_stray == 0,
+              "final count=%d, stray removed=%d" % (final, n_stray))
+
+
+def main():
+    headed = "--headed" in sys.argv
+    os.makedirs(lib.ARTIFACTS, exist_ok=True)
+    rep = lib.Report()
+
+    print("== DB pre-state ==")
+    pre = db_parts_count()
+    rep.check("Sandbox up + baseline (%d parts)" % EXPECTED_COUNT, pre == EXPECTED_COUNT,
+              "count=%d" % pre)
+    # cross-DB Line catalog reachable (the spike fixture)
+    lines_out = sqlq("SELECT DISTINCT LineName FROM VehicleOrder.dbo.LINE ORDER BY LineName")
+    rep.check("Cross-DB VehicleOrder.dbo.LINE readable (%s)" % ", ".join(EXPECTED_LINES),
+              all(l in lines_out for l in EXPECTED_LINES), "lines=%r" % lines_out.strip()[:80])
+
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=not headed, slow_mo=250 if headed else 0)
+        pg = b.new_page(viewport={"width": 1680, "height": 1050})
+        print("== trial reset ==")
+        ok, msg = reset_trial(pg)
+        if msg == "NEED_CREDS":
+            rep.skip("trial reset", "no GATEWAY_USER/GATEWAY_PASS — render blocked if trial expired")
+        else:
+            rep.check("trial active", ok, msg)
+
+        print("== 1. List renders + parity ==")
+        list_ok = check_list(pg, rep)
+
+        print("== 2. Row select -> Detail (5 combos + line + read-only qty) ==")
+        if list_ok:
+            open_detail_via_row(pg, rep, DETAIL_ANCHOR["part"])
+        else:
+            rep.skip("Row select -> Detail", "List did not render")
+
+        print("== 3. Validation ==")
+        check_validation(pg, rep)
+
+        print("== 4. R1 delete-gate (CRITICAL) ==")
+        check_delete_gate(pg, rep)
+
+        print("== 5. Round-trip insert/delete (non-destructive) ==")
+        check_round_trip(pg, rep)
+
+        b.close()
+
+    print("== teardown / fixture sweep ==")
+    teardown(rep)
+
+    return rep.summary_exit()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

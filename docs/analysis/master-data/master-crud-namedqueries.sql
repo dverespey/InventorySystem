@@ -734,3 +734,297 @@ DELETE FROM INV_RENBAN_GROUP_MST WHERE IN_RENBAN_ID = :recordId
 ;
 
 /* RenbanGroup is a LEAF master: NO lookups/* queries (no FK combos, no enums). */
+
+
+/* ============================================================================
+   PartsStock master  —  INV_PARTS_STOCK_MST  (the FIFTH / keystone master)
+   ----------------------------------------------------------------------------
+   Author:  ignition-developer / 2026-06-17
+   Design:  IGNITION-master-crud-design.md §A (template) + the keystone deltas below.
+   Spec:    docs/analysis/inventory-stock/parts-stock-master.md (read in full).
+
+   Key:  IN_PART_ID  int IDENTITY PK.
+   Business key:  VC_PART_NUMBER varchar(12), UNIQUE via IX_INV_PARTS_STOCK_MST.
+   Audit:  VC_LAST_UPDATE (UNDERSCORE, like Size) on update; VC_ADD on insert.
+           ⚠️ VC_ADD is NOT NULL — the only audit col in the schema that is —
+           so it is ALWAYS written on insert (the 16-char yyyymmddHHMMSSff recipe).
+
+   FIVE FK combos (D2: store the surrogate id, display the label):
+     Supplier     IN_SUPPLIER_ID    label VC_SUPPLIER_CODE
+     Logistics    IN_LOGISTICS_ID   label VC_LOGISTICS_NAME   (blank selection -> NULL)
+     Size         IN_SIZE_ID        label VC_SIZE_CODE
+     RenbanGroup  IN_RENBAN_ID      label VC_RENBAN_GROUP_CODE
+     PartType     IN_PART_TYPE_ID   label VC_PART_TYPE
+   Legacy resolved label->id INSIDE the proc; the rebuild passes the id directly (D2).
+
+   LINE dropdown — cross-DB, NOW FIXTURED. Source:
+     SELECT DISTINCT LineName FROM VehicleOrder.dbo.LINE ORDER BY LineName
+   (spike VehicleOrder.dbo.LINE seeded CAMRY/COROLLA/HIGHLANDER/TACOMA/TUNDRA;
+    the ignition_spike login reads it cross-DB via the 3-part name over the
+    Inventory_Spike connection — verified 2026-06-17). Stored back as the STRING
+    VC_LINE_NAME (NO FK; default 'TUNDRA' if blank).
+    Production reads LINE on the ALC_Connection->VehicleOrder catalog; this
+    3-part-name read is the faithful spike equivalent.
+
+   ⚠️ IN_QTY IS READ-ONLY — the form does NOT own the on-hand invariant.
+     12 qty-triggers (the future stock-ledger) own it. So:
+       - display IN_QTY as a READ-ONLY field;
+       - on INSERT set IN_QTY = 0 (a new part starts at zero on-hand; the ledger moves it);
+       - on UPDATE the SET list OMITS IN_QTY ENTIRELY — never let the CRUD form overwrite
+         the live balance. This is an INTENTIONAL IMPROVEMENT over the legacy
+         `SET IN_QTY=@QTY`-with-loaded-value round-trip: it removes the stale-overwrite
+         race (legacy fed the proc the value loaded into a ReadOnly box, so the written
+         value merely equaled the loaded one; the rebuild simply does not touch the column).
+
+   ⚠️ BIT_LOT_SIZE_ORDERS IS STORED INVERTED (order-renban domain memory: 0 = lot-sized TRUE).
+     Legacy form stores `not checkbox.checked` and displays `not stored`. Reproduced
+     faithfully: checkbox<->stored value is INVERTED on BOTH read and write.
+       read:  checkboxSelected = NOT storedBit
+       write: storedBit        = NOT checkboxSelected   (0 if checked, 1 if unchecked)
+
+   IN_RENBAN_COUNT is int in the table; legacy passed varchar(3). Written as an int
+     (numeric-entry); NO zero-pad here (that pad belongs to the RenbanGroup master's
+     own count column, a different field).
+
+   SITE SEAM (D1):  INV_PARTS_STOCK_MST DOES have a site_id column in the spike
+     (spike-db.sh added it + seeded 15 site-2 rows for a parts-level isolation test).
+     Even so, the `-- IG-SITE:` predicate stays COMMENTED for parallel-run safety and
+     to match the template: the legacy Delphi app shares this table, and the composite
+     unique index migration (R3) is the single point that turns every predicate on. The
+     :siteId param is plumbed view->query but not yet applied to a WHERE.
+   ============================================================================ */
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/list   (Query)  — grid rows for the combined view's grid
+   params:  searchTerm (String, default ''), siteId (Int)
+   LEFT JOIN all five masters so a NULL/dangling FK still returns the part with a
+   blank label (LEFT-JOIN parity with the legacy SELECT_PartsStockInfo). Server-side
+   LIKE search on part number + name replaces the legacy in-memory Filter (P7).
+   View logs:  SPIKE PartsStock/list: N rows
+   ---------------------------------------------------------------------------- */
+SELECT  p.IN_PART_ID            AS RecordID,
+        p.VC_PART_NUMBER        AS PartNumber,
+        p.VC_PARTS_NAME         AS PartsName,
+        sup.VC_SUPPLIER_CODE    AS SupplierCode,
+        lg.VC_LOGISTICS_NAME    AS LogisticsName,
+        sz.VC_SIZE_CODE         AS SizeCode,
+        rb.VC_RENBAN_GROUP_CODE AS RenbanCode,
+        pt.VC_PART_TYPE         AS PartType,
+        p.VC_LINE_NAME          AS LineName,
+        p.IN_QTY                AS Qty
+FROM    INV_PARTS_STOCK_MST p
+        LEFT OUTER JOIN INV_SUPPLIER_MST     sup ON p.IN_SUPPLIER_ID  = sup.IN_SUPPLIER_ID
+        LEFT OUTER JOIN INV_LOGISTICS_MST    lg  ON p.IN_LOGISTICS_ID = lg.IN_LOGISTICS_ID
+        LEFT OUTER JOIN INV_SIZE_MST         sz  ON p.IN_SIZE_ID      = sz.IN_SIZE_ID
+        LEFT OUTER JOIN INV_RENBAN_GROUP_MST rb  ON p.IN_RENBAN_ID    = rb.IN_RENBAN_ID
+        LEFT OUTER JOIN INV_PART_TYPE_MST    pt  ON p.IN_PART_TYPE_ID = pt.IN_PART_TYPE_ID
+WHERE  (:searchTerm = '' OR p.VC_PART_NUMBER LIKE '%' + :searchTerm + '%'
+                        OR p.VC_PARTS_NAME   LIKE '%' + :searchTerm + '%')
+-- IG-SITE:  AND p.site_id = :siteId
+ORDER BY p.VC_PART_NUMBER
+;
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/get   (Query)  — one row by surrogate id (D2). Returns the FK IDS
+   (to bind the combos by id) plus the labels (for display), the inverted lot-size
+   bit AS STORED (the view inverts on load), and IN_QTY (read-only display).
+   params:  recordId (Int), siteId (Int)
+   ---------------------------------------------------------------------------- */
+SELECT  p.IN_PART_ID, p.VC_PART_NUMBER, p.VC_PARTS_NAME,
+        p.IN_SUPPLIER_ID,  sup.VC_SUPPLIER_CODE,
+        p.IN_LOGISTICS_ID, lg.VC_LOGISTICS_NAME,
+        p.IN_SIZE_ID,      sz.VC_SIZE_CODE,
+        p.IN_RENBAN_ID,    rb.VC_RENBAN_GROUP_CODE,
+        p.IN_PART_TYPE_ID, pt.VC_PART_TYPE,
+        p.VC_LINE_NAME, p.VC_KANBAN_NUMBER, p.IN_1LOTQTY,
+        p.BIT_LOT_SIZE_ORDERS,           -- stored INVERTED; view computes selected = NOT stored
+        p.IN_RENBAN_COUNT, p.IN_QTY,     -- IN_QTY read-only
+        p.IN_LEADTIME, p.IN_LEADTIME_MONDAY, p.IN_LEADTIME_TUESDAY, p.IN_LEADTIME_WEDNESDAY,
+        p.IN_LEADTIME_THURSDAY, p.IN_LEADTIME_FRIDAY, p.IN_LEADTIME_SATURDAY,
+        p.IN_SHIP_DAYS, p.IN_SHIP_DAYS_MONDAY, p.IN_SHIP_DAYS_TUESDAY, p.IN_SHIP_DAYS_WEDNESDAY,
+        p.IN_SHIP_DAYS_THURSDAY, p.IN_SHIP_DAYS_FRIDAY, p.IN_SHIP_DAYS_SATURDAY,
+        p.MO_PART_COST, p.VC_COMMENTS
+FROM    INV_PARTS_STOCK_MST p
+        LEFT OUTER JOIN INV_SUPPLIER_MST     sup ON p.IN_SUPPLIER_ID  = sup.IN_SUPPLIER_ID
+        LEFT OUTER JOIN INV_LOGISTICS_MST    lg  ON p.IN_LOGISTICS_ID = lg.IN_LOGISTICS_ID
+        LEFT OUTER JOIN INV_SIZE_MST         sz  ON p.IN_SIZE_ID      = sz.IN_SIZE_ID
+        LEFT OUTER JOIN INV_RENBAN_GROUP_MST rb  ON p.IN_RENBAN_ID    = rb.IN_RENBAN_ID
+        LEFT OUTER JOIN INV_PART_TYPE_MST    pt  ON p.IN_PART_TYPE_ID = pt.IN_PART_TYPE_ID
+WHERE   p.IN_PART_ID = :recordId
+-- IG-SITE:  AND p.site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/insert   (Update Query, returns identity)
+   params (data): code, name, supplierId, logisticsId, sizeId, renbanId, partTypeId,
+                  lineName, kanban, lotQty, lotSizeBit(=NOT checkbox), renbanCount,
+                  leadtime + 6 weekday, shipdays + 6 weekday, partCost, comments  + siteId
+   ⚠️ IN_QTY is set to a LITERAL 0 (new part starts at zero on-hand; the ledger moves it).
+   ⚠️ VC_ADD (NOT NULL) written with the 16-char yyyymmddHHMMSSff recipe.
+   ⚠️ BIT_LOT_SIZE_ORDERS receives the ALREADY-INVERTED value (NOT checkbox.selected).
+   Returns SCOPE_IDENTITY() (legacy never echoed the new id — an improvement).
+   Explicit column list (not positional) — kills the P10 schema-order fragility.
+   ---------------------------------------------------------------------------- */
+INSERT INTO INV_PARTS_STOCK_MST
+    (VC_PART_NUMBER, VC_PARTS_NAME, IN_SUPPLIER_ID, IN_LOGISTICS_ID, IN_SIZE_ID,
+     IN_RENBAN_ID, IN_PART_TYPE_ID, VC_LINE_NAME, VC_KANBAN_NUMBER, IN_1LOTQTY,
+     BIT_LOT_SIZE_ORDERS, IN_RENBAN_COUNT, IN_QTY,
+     IN_LEADTIME, IN_LEADTIME_MONDAY, IN_LEADTIME_TUESDAY, IN_LEADTIME_WEDNESDAY,
+     IN_LEADTIME_THURSDAY, IN_LEADTIME_FRIDAY, IN_LEADTIME_SATURDAY,
+     IN_SHIP_DAYS, IN_SHIP_DAYS_MONDAY, IN_SHIP_DAYS_TUESDAY, IN_SHIP_DAYS_WEDNESDAY,
+     IN_SHIP_DAYS_THURSDAY, IN_SHIP_DAYS_FRIDAY, IN_SHIP_DAYS_SATURDAY,
+     MO_PART_COST, VC_COMMENTS, VC_ADD
+     /* IG-SITE: , site_id */)
+VALUES
+    (:code, :name, :supplierId, :logisticsId, :sizeId,
+     :renbanId, :partTypeId, :lineName, :kanban, :lotQty,
+     :lotSizeBit, :renbanCount, 0,                            -- IN_QTY literal 0 (read-only)
+     :leadtime, :ltMon, :ltTue, :ltWed, :ltThu, :ltFri, :ltSat,
+     :shipdays, :sdMon, :sdTue, :sdWed, :sdThu, :sdFri, :sdSat,
+     :partCost, :comments,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+     /* IG-SITE: , :siteId */);
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+-- IG83-TODO: at the Postgres phase replace the string audit with a real datetime DEFAULT; drop the string form.
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/update   (Update Query)  — keys on the surrogate id (D2); rename-safe.
+   params:  (same data params as insert) + recordId + siteId
+   ⚠️ IN_QTY is DELIBERATELY OMITTED from the SET list — the form never overwrites the
+      trigger-maintained on-hand balance (intentional improvement over legacy SET IN_QTY=@QTY).
+   ⚠️ VC_LAST_UPDATE (UNDERSCORE) set with the 16-char recipe. VC_ADD untouched.
+   ⚠️ BIT_LOT_SIZE_ORDERS receives the ALREADY-INVERTED value.
+   ---------------------------------------------------------------------------- */
+UPDATE INV_PARTS_STOCK_MST SET
+    VC_PART_NUMBER=:code, VC_PARTS_NAME=:name, IN_SUPPLIER_ID=:supplierId,
+    IN_LOGISTICS_ID=:logisticsId, IN_SIZE_ID=:sizeId, IN_RENBAN_ID=:renbanId,
+    IN_PART_TYPE_ID=:partTypeId, VC_LINE_NAME=:lineName, VC_KANBAN_NUMBER=:kanban,
+    IN_1LOTQTY=:lotQty, BIT_LOT_SIZE_ORDERS=:lotSizeBit, IN_RENBAN_COUNT=:renbanCount,
+    /* IN_QTY intentionally NOT in the SET list (read-only invariant; see header) */
+    IN_LEADTIME=:leadtime, IN_LEADTIME_MONDAY=:ltMon, IN_LEADTIME_TUESDAY=:ltTue,
+    IN_LEADTIME_WEDNESDAY=:ltWed, IN_LEADTIME_THURSDAY=:ltThu, IN_LEADTIME_FRIDAY=:ltFri,
+    IN_LEADTIME_SATURDAY=:ltSat, IN_SHIP_DAYS=:shipdays, IN_SHIP_DAYS_MONDAY=:sdMon,
+    IN_SHIP_DAYS_TUESDAY=:sdTue, IN_SHIP_DAYS_WEDNESDAY=:sdWed, IN_SHIP_DAYS_THURSDAY=:sdThu,
+    IN_SHIP_DAYS_FRIDAY=:sdFri, IN_SHIP_DAYS_SATURDAY=:sdSat, MO_PART_COST=:partCost,
+    VC_COMMENTS=:comments,
+    VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE IN_PART_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/checkCodeUnique   (Query)  — per-site uniqueness pre-check on the part
+   number. params:  code (String), excludeId (Int, default 0), siteId (Int)
+   excludeId=0 for insert; excludeId=recordId for update (lets a row keep its own
+   number -> rename support, D2). The live UNIQUE index IX_INV_PARTS_STOCK_MST is the
+   race backstop (the view also catches the unique-violation SQLException).
+   ---------------------------------------------------------------------------- */
+SELECT COUNT(*) AS n
+FROM   INV_PARTS_STOCK_MST
+WHERE  VC_PART_NUMBER = :code
+  AND  IN_PART_ID    <> :excludeId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/refCount   (Query)  — the D3 RESTRICT delete gate (R1-critical).
+   params:  recordId (Int), partNumber (String)
+
+   LIVE DELETE_PartNumber trigger (verified body, 2026-06-17): logs to
+   Activity.dbo.InsertAct_Log 'INVENTORY','TRIGGER', then BLANKS (SET ... = '') the
+   four INV_ASSY_RATIO_MST.VC_*_PART_NUMBER*_CODE columns and the two
+   INV_FORECAST_DETAIL_INF.VC_*_PART_NUMBER_CODE columns whose value matches the
+   deleted VC_PART_NUMBER. It does NOT delete/adjust the HIST table, the qty ledger,
+   IN_QTY, or any transactional child (open orders / rejects / stocktaking /
+   part-shipping) — so deleting a part with history/transactional children ORPHANS
+   those rows. Per D3 (RESTRICT) the rebuild BLOCKS the delete while ANY of the
+   transactional/child references exist (verified each table+column exists, 2026-06-17):
+     INV_OPEN_ORDER_INF      by VC_PART_NUMBER   (string key)
+     INV_REJECT_INF          by IN_PART_ID       (id key)
+     INV_STOCKTAKING_INF     by IN_PART_ID       (id key)
+     INV_PART_SHIPPING_INF   by VC_PART_NUMBER   (string key)
+     INV_PART_QTY_INF        by VC_PART_NUMBER   (qty-ledger, string key)
+     INV_BREAKDOWN_FC_INF    by VC_PART_NUMBER   (string key)
+     INV_PARTS_STOCK_MST_HIST by VC_PART_NUMBER  (audit history, string key)
+   Block on any non-zero total; NEVER reach the trigger while references exist.
+   In the spike ALL 47 parts have refs > 0 (verified), so any real part is BLOCKED.
+
+   ⚠️ HIST-SCOPE FINDING — FLAGGED FOR DAVID (do not resolve without his call).
+   Unlike Size/Renban, INV_PARTS_STOCK_MST has an INSERT_PartsStockMST trigger that
+   snapshots EVERY new part into INV_PARTS_STOCK_MST_HIST on insert. Because this gate
+   counts _HIST (per the task's stated reference set), a brand-new part already has >=1
+   HIST row the instant it is inserted -> the gate BLOCKS its delete too. CONSEQUENCE:
+   with _HIST in the gate there is NO truly zero-ref part — every part that has ever
+   existed is permanently undeletable through the gate. The legacy DELETE_PartNumber
+   trigger neither blocks on nor cleans up _HIST. OPTIONS for David: (a) keep _HIST in
+   the gate (no part is ever hard-deletable; retirement via the future archival path
+   only — arguably safest, consistent with D3 archival), or (b) DROP _HIST from the
+   gate (treat append-only audit history as non-blocking; a part with only HIST rows is
+   then deletable, matching the legacy trigger's own scope). Build is left FAITHFUL to
+   the written reference set (option a, _HIST included). Flip to (b) by removing the
+   last summed sub-select here AND in the view's inline delete script.
+   ---------------------------------------------------------------------------- */
+SELECT
+    (SELECT COUNT(*) FROM INV_OPEN_ORDER_INF       WHERE VC_PART_NUMBER = :partNumber)
+  + (SELECT COUNT(*) FROM INV_REJECT_INF           WHERE IN_PART_ID     = :recordId)
+  + (SELECT COUNT(*) FROM INV_STOCKTAKING_INF      WHERE IN_PART_ID     = :recordId)
+  + (SELECT COUNT(*) FROM INV_PART_SHIPPING_INF    WHERE VC_PART_NUMBER = :partNumber)
+  + (SELECT COUNT(*) FROM INV_PART_QTY_INF         WHERE VC_PART_NUMBER = :partNumber)
+  + (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF     WHERE VC_PART_NUMBER = :partNumber)
+  + (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE VC_PART_NUMBER = :partNumber)
+    AS n
+;
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock/delete   (Update Query)  — only reached AFTER refCount = 0.
+   param:  recordId (Int)
+   The live DELETE_PartNumber trigger then has no matching assy-ratio/forecast-detail
+   string codes to blank (inert by construction, since a zero-ref part is not
+   referenced anywhere). NEVER let a delete reach the trigger while references exist.
+   ---------------------------------------------------------------------------- */
+DELETE FROM INV_PARTS_STOCK_MST WHERE IN_PART_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   PartsStock FK-combo lookups (D2: value = surrogate id, label = code/name).
+   Each is a plain Query; :siteId plumbed (IG-SITE seam commented).
+   The LINE lookup is the cross-DB string source (NO FK).
+   ---------------------------------------------------------------------------- */
+-- lookups/supplier
+SELECT IN_SUPPLIER_ID AS id, VC_SUPPLIER_CODE AS label
+FROM INV_SUPPLIER_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_SUPPLIER_CODE;
+
+-- lookups/logistics   (blank selection -> NULL on save)
+SELECT IN_LOGISTICS_ID AS id, VC_LOGISTICS_NAME AS label
+FROM INV_LOGISTICS_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_LOGISTICS_NAME;
+
+-- lookups/size
+SELECT IN_SIZE_ID AS id, VC_SIZE_CODE AS label
+FROM INV_SIZE_MST  WHERE VC_SIZE_CODE <> ''  /* IG-SITE: AND site_id = :siteId */  ORDER BY VC_SIZE_CODE;
+
+-- lookups/renban
+SELECT IN_RENBAN_ID AS id, VC_RENBAN_GROUP_CODE AS label
+FROM INV_RENBAN_GROUP_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_RENBAN_GROUP_CODE;
+
+-- lookups/partType
+SELECT IN_PART_TYPE_ID AS id, VC_PART_TYPE AS label
+FROM INV_PART_TYPE_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_PART_TYPE;
+
+-- lookups/line  (cross-DB, string-valued; value == label; default 'TUNDRA' if blank)
+--   Production reads LINE on the ALC_Connection->VehicleOrder catalog; this 3-part-name
+--   read over the Inventory_Spike connection is the faithful spike equivalent.
+SELECT DISTINCT LineName AS id, LineName AS label
+FROM VehicleOrder.dbo.LINE  ORDER BY LineName;

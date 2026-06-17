@@ -19,6 +19,10 @@
     "/renbangroup": {
       "viewPath": "Master/RenbanGroup/RenbanGroup",
       "title": "Renban Group Master"
+    },
+    "/partsstock": {
+      "viewPath": "Master/PartsStock/PartsStock",
+      "title": "Parts Stock Master"
     }
   },
   "sharedDocks": {}
