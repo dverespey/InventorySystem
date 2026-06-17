@@ -63,6 +63,7 @@ Thumbs.db
 # Client data exports (real plant data — NEVER commit)
 # ---------------------------------------------------------------------------
 DB Schema/OrderSimulation*.xls
+DB Schema/*.bak
 # Real TEMA EDI traffic (830/810/856/…) — never commit
 EDI/*.EDI
 EDIIn/*.EDI
@@ -73,3 +74,12 @@ EDIIn/Archive/
 # ---------------------------------------------------------------------------
 Archive/
 Copy of CAMEX System/
+
+# E2E harness: never commit gateway creds or render artifacts
+scripts/e2e/.env
+scripts/e2e/artifacts/
+__pycache__/
+*.pyc
+
+# Local dev-sandbox bring-up script — carries the throwaway SQL Server sa cred
+scripts/spike-db.sh

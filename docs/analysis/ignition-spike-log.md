@@ -183,5 +183,50 @@ Scaffolding ready: `sites` (2 rows) + `site_id` on `INV_PARTS_STOCK_MST` (site 1
 type `FILM`). Save proc `UPDATE_PartsStockInfo` takes CODES not ids (30 params, `@PartID` last). Load via
 the id→code join. macOS + 8.1 docs for any Designer guidance (panels by name, not position).
 
+## Order spike (SC2/SC3) — read-only wired PhasedGrid — ✅ loads + wired + verified
+- **Proc:** `docs/analysis/order/spike/SIM_OrderSimulation.sql` gained a `@Section char(1)` param
+  (A/B/C; NULL=all). IG81-COMPAT: Ignition reads only the FIRST result set of a proc, so the view
+  calls the proc ONCE PER SECTION. Each section IF-guarded so it emits exactly one result set
+  (an empty `WHERE` would still emit an empty set and become the "first" set). Default (no @Section)
+  still emits all three → sqlcmd/parity runs unchanged. Re-applied to `mssql-spike` (verified: A→only A,
+  C→only C with no row_kind leak, default→3 sets).
+- **NQ source-of-truth:** `docs/analysis/order/spike/named-queries.sql` — three section queries on
+  connection `Inventory_Spike` (the DB-access-layer artifacts). NOT promoted to on-disk NQ *resources*:
+  the on-disk NQ metadata-JSON schema is undocumented and hand-authoring it blind risks a
+  non-deserializing resource + wasted restart; wired instead via the proven `system.db.runPrepQuery`
+  script-transform pattern (same as `PartsStockMaster/List`). Promotion = mechanical paste into the
+  Designer Named Query workspace. **Follow-up.**
+- **View:** `data/projects/spike/.../views/Order/OrderSpike/{view.json,resource.json}`. SelectOrderBar
+  (read-only Today, Line/PartType/SortBy dropdowns, FillDays, Simulate, Commit DISABLED "later phase")
+  + PhasedGrid (`ia.display.table`, virtualized + pager, frozen-left identity cols, dynamic per-day
+  cols from result set A) + decoding Legend. One `custom.gridModel` script-transform runs A/B/C, pivots
+  C per (part,fill_pos), emits **per-cell `{value, style}`** dual-channel cells (8.0+ Table feature):
+  background = legacy palette (#FF0000/#00FF00/#FFCC99/#FFFF99), font = source (#333399/#008000),
+  below-safety = red bold + ⚠ word; glyph/text prefix ([OT]/[X]/★/[LT]/🚚/📦) is the non-color channel.
+  Exception-first default sort + Faithful (size-group) toggle. SC3 renderer = `ia.display.table`.
+- **Verify:** `gwcmd -r`; `grep "Unable to deserialize"` (new log lines) = **0**; log shows
+  `Setting LastModification to "external" on spike/Order/OrderSpike` + gateway re-signed resource.json
+  → parsed/imported OK. `Inventory_Spike` datasource restarted successfully. Dual-channel proof: WHEEL
+  4261102Q8000 fill_pos 2 = NON_PRODUCTION bg + IN_TRANSIT font simultaneously (hazard-7 06-18 X-day).
+- **Markers:** `IG81-COMPAT` (section-per-call), `IG83-TODO` candidates: native column-freeze if 8.3
+  adds richer grid styling. **Fixture-backed:** calendar OT/X/holiday cells (AD_GetSpecialDate stubbed).
+  **PENDING golden:** byte-for-byte vs live legacy Excel (SC1 — no Delphi/Excel here).
+
+### Update 2026-06-15 — golden received; faithful-layout REBUILD + SC1 parity + E2E automation
+- **Golden in hand:** `DB Schema/OrderSimulationCorolla{Tire,Wheel,Valve,Film}.xls` (real client data,
+  gitignored). Decoded → real layout = **pooled 4-row ledger** (Beg / Receipts-per-supplier / Usage /
+  End). View **REBUILT** to it: numbers+color-only (peach editable + red below-safety), glyphs dropped,
+  order entry locked to each supplier's order-by cell, client-side live End recompute. Fleet:
+  developer → code-reviewer → qa.
+- **Calendar:** retired fictional fixture; encoded REAL calendar from golden (weekends + **7/3** July-4
+  observed + **7/13–7/17** shutdown week). Req#3 resolved: "Lead (P)" = single `IN_LEADTIME`/weekday,
+  order-by = Today + P prod days.
+- **SC1 parity:** `parity_diff.py` vs all 4 golden → **14/20 groups cell-for-cell, order-by 22/22**
+  (`sc1-parity-results.md`). Open: R1 FILM forecast week-number mapping; R3 WHEEL M1 receipt filter.
+- **E2E automation:** Playwright headless harness `scripts/e2e/` — auto-resets trial, asserts UI +
+  `SPIKE` markers + edit, screenshots. **12/12 PASS, zero clicks.** `domId`s added+loaded; gateway
+  restart now permitted (`.claude/settings.json`). Wired into the `ignition-qa` agent. Resolved the
+  code-reviewer's "transform-never-ran" + qualified-value RISKs live. **Resume:** `RESUME-order-spike.md`.
+
 ## Check B — siteScopedQuery() — ⏳ scaffolding ready (sites + site_id seeded)
 ## Check C — EDI re-scope + atomic I/O — ⏳ not started (no DB dependency for the paper re-scope)
