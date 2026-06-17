@@ -1021,3 +1021,190 @@ FROM INV_PART_TYPE_MST  /* IG-SITE: WHERE site_id = :siteId */  ORDER BY VC_PART
 --   read over the Inventory_Spike connection is the faithful spike equivalent.
 SELECT DISTINCT LineName AS id, LineName AS label
 FROM VehicleOrder.dbo.LINE  ORDER BY LineName;
+
+
+/* ============================================================================
+   ASSEMBLY DETAIL master CRUD  —  INV_FORECAST_DETAIL_INF  (the BOM / ratio master)
+   ============================================================================
+   The FORM is titled "Assembly Detail" (renamed post-go-live); the TABLE is
+   INV_FORECAST_DETAIL_INF (D13: the table rename was dropped — this is the live
+   ratio model the forecast/order explosion reads. The separate INV_ASSY_RATIO_MST
+   was DROPPED per D12). One row per assembly (broadcast) part x effective month,
+   holding the component part codes + the ratios ForecastBreakdownF.UpdateForecast
+   uses to split a weekly assembly forecast into per-part counts.
+
+   GROUND TRUTH (verified live 2026-06-17 via sqlcmd against Inventory @ mssql-spike):
+   - 18 columns; 50 rows today.
+   - Key:  ID_FORECAST_DETAIL int IDENTITY  (RecordID).
+   - *** NO declared PK and NO unique index on the live table. ***  The rebuild's
+     RecordID is the surrogate identity; uniqueness is enforced ONLY in the
+     application pre-check (checkCodeUnique below), there is no index backstop.
+   - Natural business identity = COMPOSITE (VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH)
+     — NOT a single code. All 50 live rows are unique on that composite, and
+     VC_EFFECTIVE_MONTH is BLANK ('') for every live row (0 NULL / 50 '' / 50 total).
+     So today the composite collapses to "one row per assy code"; the composite shape
+     is built for future effective-dated overrides (yyyy/mm). Rendered as a plain text
+     field (legacy built a rolling-12-month combo; with all-blank live data a free text
+     field is faithful and simpler — documented divergence).
+
+   *** COMPONENT REFERENCES ARE PART-NUMBER STRINGS, NOT SURROGATE FK ids. ***
+   This is a deliberate divergence from the other masters' D2 by-id FK combos. The 7
+   component columns (VC_TIRE_PART_NUMBER_CODE, VC_WHEEL_PART_NUMBER_CODE,
+   VC_VALVE_PART_NUMBER, VC_FILM_PART_NUMBER, VC_LABEL_PART_NUMBER, VC_MISC1_PART_NUMBER,
+   VC_MISC2_PART_NUMBER — all varchar(12)) STORE the part-number string itself, exactly
+   like VC_LINE_NAME on PartsStock. So their combos source part numbers from
+   INV_PARTS_STOCK_MST (SELECT DISTINCT VC_PART_NUMBER, value == label) and STORE THE
+   STRING, never an id. This is the legacy number-keyed design, NOT a D2 violation
+   (the columns are string codes, not surrogate FKs).
+
+   AUDIT: VC_LAST_UPDATE (WITH underscore, like Size/ManifestCost) + VC_ADD.
+          Insert -> VC_ADD ; Update -> VC_LAST_UPDATE.   16-char yyyymmddHHMMSSff.
+
+   LABEL/MISC columns (D9): the older snapshot omitted them; LIVE has
+   VC_LABEL_PART_NUMBER / VC_MISC1_PART_NUMBER / VC_MISC2_PART_NUMBER and live callers
+   pass them — included here as fields.
+
+   *** TRIGGERS (verified live 2026-06-17 — body differs from the older spec note): ***
+   The table carries THREE triggers, all writing to INV_FORECAST_DETAIL_INF_HIST
+   (18-col HIST mirrors the 18-col base, so SELECT * is F1-safe — base INSERTs need no
+   HIST handling, the triggers do it):
+     - INSERTForecastDetail (AFTER INSERT): INSERT INTO _HIST SELECT * FROM inserted.
+     - UPDATE_ForecastDetailInf (FOR UPDATE): INSERT INTO _HIST SELECT * FROM inserted.
+       (NOTE: the spec called this a "no-op print"; LIVE it is a HIST-archive, not a
+       print. Spec stale — recorded here. Harmless to the rebuild either way.)
+     - DeleteForecastDetail (FOR DELETE) does TWO things:
+         (1) INSERT INTO INV_FORECAST_DETAIL_INF_HIST SELECT * FROM deleted   (archive)
+         (2) DELETE FROM inv_forecast_inf
+             WHERE vc_part_number IN (SELECT vc_assy_part_number_code FROM DELETED)
+       i.e. deleting a BOM row HARD-DELETES the raw forecast rows for that assembly
+       (matches INV_FORECAST_INF.VC_PART_NUMBER, which stores assembly codes
+       pre-explosion). This is the destructive cascade the delete-gate must block.
+
+   D3 (RESTRICT, consistent with the Supplier forecast-cascade precedent): the rebuild
+   BLOCKS the delete while INV_FORECAST_INF still references the row's assembly code, so
+   the cascade in (2) above can never fire silently. P12 forbids editing the live trigger
+   during parallel run, so the gate is the only lever (refCount below mirrors the trigger
+   body). A *blocked* delete issues no DELETE at all, so INV_FORECAST_INF is left intact.
+
+   D1: every NQ takes :siteId; predicate is the commented `-- IG-SITE:` seam (no site_id
+   on this table yet — Postgres phase). D2: RecordID = ID_FORECAST_DETAIL surrogate.
+   IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.
+   IG83-TODO: replace the yyyymmddHHMMSSff audit-string recipe with a real datetime
+   default at the Postgres phase; flip the IG-SITE predicates with a composite index.
+   ---------------------------------------------------------------------------- */
+
+-- AssemblyDetail/list   params: searchTerm (String, ''), siteId (Int4)
+--   Grid load. Server-side LIKE on assy code + broadcast (improves on the legacy
+--   client filter). With searchTerm='' returns all 50 in VC_ASSY_PART_NUMBER_CODE order.
+SELECT  ID_FORECAST_DETAIL        AS "RecordID",
+        VC_ASSY_PART_NUMBER_CODE  AS "AssyCode",
+        VC_EFFECTIVE_MONTH        AS "EffMonth",
+        VC_BROADCAST_CODE         AS "Broadcast",
+        VC_TIRE_PART_NUMBER_CODE  AS "TirePN",
+        VC_WHEEL_PART_NUMBER_CODE AS "WheelPN",
+        IN_TIRE_RATIO             AS "TireRatio",
+        IN_WHEEL_RATIO            AS "WheelRatio",
+        IN_RATIO                  AS "FcRatio",
+        IN_ASSY_QTY               AS "AssyQty"
+FROM    INV_FORECAST_DETAIL_INF
+WHERE  (:searchTerm = '' OR VC_ASSY_PART_NUMBER_CODE LIKE '%' + :searchTerm + '%'
+                        OR VC_BROADCAST_CODE         LIKE '%' + :searchTerm + '%')
+-- IG-SITE:  AND site_id = :siteId
+ORDER BY VC_ASSY_PART_NUMBER_CODE;
+
+-- AssemblyDetail/get   params: recordId (Int4), siteId (Int4)
+--   One row by surrogate id (D2). All component columns are part-number STRINGS, fed
+--   straight into their combos (value == the stored string).
+SELECT  ID_FORECAST_DETAIL, VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH,
+        VC_BROADCAST_CODE, VC_ASSY_KANBAN_NUMBER,
+        VC_TIRE_PART_NUMBER_CODE, VC_WHEEL_PART_NUMBER_CODE,
+        VC_VALVE_PART_NUMBER, VC_FILM_PART_NUMBER,
+        VC_LABEL_PART_NUMBER, VC_MISC1_PART_NUMBER, VC_MISC2_PART_NUMBER,
+        IN_TIRE_RATIO, IN_WHEEL_RATIO, IN_RATIO, IN_ASSY_QTY
+FROM    INV_FORECAST_DETAIL_INF
+WHERE   ID_FORECAST_DETAIL = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+-- AssemblyDetail/insert   (Update Query, returns identity) — all data params + siteId
+--   Explicit column list (kills the legacy positional-INSERT fragility). VC_ADD audit.
+--   Component columns store the part-number strings directly. The INSERTForecastDetail
+--   trigger mirrors the new row into _HIST automatically (F1-safe; do not touch _HIST).
+INSERT INTO INV_FORECAST_DETAIL_INF
+    (VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH, VC_BROADCAST_CODE, VC_ASSY_KANBAN_NUMBER,
+     VC_TIRE_PART_NUMBER_CODE, VC_WHEEL_PART_NUMBER_CODE, VC_VALVE_PART_NUMBER, VC_FILM_PART_NUMBER,
+     VC_LABEL_PART_NUMBER, VC_MISC1_PART_NUMBER, VC_MISC2_PART_NUMBER,
+     IN_TIRE_RATIO, IN_WHEEL_RATIO, IN_RATIO, IN_ASSY_QTY, VC_ADD
+     /* IG-SITE: , site_id */)
+VALUES
+    (:assyCode, :effMonth, :broadcast, :kanban,
+     :tirePN, :wheelPN, :valvePN, :filmPN,
+     :labelPN, :misc1PN, :misc2PN,
+     :tireRatio, :wheelRatio, :fcRatio, :assyQty,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+     /* IG-SITE: , :siteId */);
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+
+-- AssemblyDetail/update   (Update Query) — data params + recordId + siteId
+--   Keys on surrogate id (D2). VC_LAST_UPDATE (underscore) audit; VC_ADD untouched.
+UPDATE INV_FORECAST_DETAIL_INF SET
+    VC_ASSY_PART_NUMBER_CODE=:assyCode, VC_EFFECTIVE_MONTH=:effMonth,
+    VC_BROADCAST_CODE=:broadcast, VC_ASSY_KANBAN_NUMBER=:kanban,
+    VC_TIRE_PART_NUMBER_CODE=:tirePN, VC_WHEEL_PART_NUMBER_CODE=:wheelPN,
+    VC_VALVE_PART_NUMBER=:valvePN, VC_FILM_PART_NUMBER=:filmPN,
+    VC_LABEL_PART_NUMBER=:labelPN, VC_MISC1_PART_NUMBER=:misc1PN, VC_MISC2_PART_NUMBER=:misc2PN,
+    IN_TIRE_RATIO=:tireRatio, IN_WHEEL_RATIO=:wheelRatio, IN_RATIO=:fcRatio, IN_ASSY_QTY=:assyQty,
+    VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE ID_FORECAST_DETAIL = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+-- AssemblyDetail/checkCodeUnique   params: assyCode (String), effMonth (String),
+--                                          excludeId (Int4, default 0), siteId (Int4)
+--   *** COMPOSITE uniqueness pre-check: (VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH). ***
+--   NOT a single-code check (the natural identity is the pair). There is NO unique index
+--   on the live table, so this app pre-check is the ONLY uniqueness enforcement — there is
+--   no DB backstop (unlike the other masters). excludeId lets an UPDATE keep its own pair
+--   (rename support, D2).
+SELECT COUNT(*) AS n
+FROM   INV_FORECAST_DETAIL_INF
+WHERE  VC_ASSY_PART_NUMBER_CODE = :assyCode
+  AND  VC_EFFECTIVE_MONTH       = :effMonth
+  AND  ID_FORECAST_DETAIL      <> :excludeId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+-- AssemblyDetail/refCount   params: assyCode (String)  — the D3 RESTRICT delete-gate
+--   Mirrors the live DeleteForecastDetail trigger's destructive branch: it would
+--   DELETE FROM inv_forecast_inf WHERE vc_part_number IN (the deleted assy code). So the
+--   gate counts INV_FORECAST_INF rows whose VC_PART_NUMBER = this row's assy code and
+--   BLOCKS the delete if > 0 (R1: never let the cascade fire silently). The assy code is
+--   sourced from the already-loaded form, never a client-supplied code for another row.
+--   (The _HIST archive branch is non-destructive and not gated.)
+SELECT COUNT(*) AS n
+FROM   INV_FORECAST_INF
+WHERE  VC_PART_NUMBER = :assyCode;
+
+-- AssemblyDetail/delete   param: recordId (Int4)
+--   Only reached after refCount = 0 (A.5). The DeleteForecastDetail trigger then archives
+--   the row to _HIST and finds no matching INV_FORECAST_INF rows to cascade (inert by
+--   construction).
+DELETE FROM INV_FORECAST_DETAIL_INF WHERE ID_FORECAST_DETAIL = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+/* ----------------------------------------------------------------------------
+   AssemblyDetail part-number combo lookup (NUMBER-STRING, not a surrogate FK).
+   All 7 component combos (tire/wheel/valve/film/label/misc1/misc2) share this one
+   source: distinct part numbers from INV_PARTS_STOCK_MST, value == label == the
+   varchar(12) part-number STRING that the BOM columns store. 47 distinct numbers today.
+   ---------------------------------------------------------------------------- */
+-- lookups/partNumber   (value == label == VC_PART_NUMBER string; :siteId plumbed)
+SELECT DISTINCT VC_PART_NUMBER AS id, VC_PART_NUMBER AS label
+FROM   INV_PARTS_STOCK_MST
+WHERE  VC_PART_NUMBER <> ''  /* IG-SITE: AND site_id = :siteId */
+ORDER BY VC_PART_NUMBER;

@@ -1,0 +1,915 @@
+{
+ "custom": {
+  "form_assyCode": "",
+  "form_effMonth": "",
+  "form_broadcast": "",
+  "form_kanban": "",
+  "form_tirePN": "",
+  "form_wheelPN": "",
+  "form_valvePN": "",
+  "form_filmPN": "",
+  "form_labelPN": "",
+  "form_misc1PN": "",
+  "form_misc2PN": "",
+  "form_tireRatio": 0,
+  "form_wheelRatio": 0,
+  "form_fcRatio": 0,
+  "form_assyQty": 0,
+  "partOptions": [],
+  "recordId": 0,
+  "runNonce": 0,
+  "searchTerm": "",
+  "siteId": 1,
+  "statusMsg": ""
+ },
+ "params": {},
+ "propConfig": {
+  "custom.partOptions": {
+   "binding": {
+    "config": {
+     "expression": "{view.custom.siteId}"
+    },
+    "transforms": [
+     {
+      "code": "\t# ---- AssemblyDetail: part-number combo option source (lookups/partNumber) ----\n\t# NUMBER-STRING combos (NOT surrogate-FK): value == label == VC_PART_NUMBER string.\n\t# All 7 component combos (tire/wheel/valve/film/label/misc1/misc2) share this one\n\t# option list. Stores the string, never an id (legacy number-keyed design).\n\t# IG81-COMPAT: plain runPrepQuery; identical on 8.1.52 and 8.3.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tsql = (\"SELECT DISTINCT VC_PART_NUMBER AS id, VC_PART_NUMBER AS label \"\n\t       \"FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER <> '' \"\n\t       \"-- IG-SITE: AND site_id = ? \"\n\t       \"ORDER BY VC_PART_NUMBER\")\n\tds = system.db.runPrepQuery(sql, [], DB)\n\topts = [{\"value\": \"\", \"label\": \"\"}]\n\tfor r in xrange(ds.rowCount):\n\t\tpn = ds.getValueAt(r, \"id\")\n\t\topts.append({\"value\": pn, \"label\": pn})\n\tlog.info(\"SPIKE AssemblyDetail/partNumber lookup: %d part numbers\" % ds.rowCount)\n\treturn opts\n",
+      "type": "script"
+     }
+    ],
+    "type": "expr"
+   }
+  },
+  "custom.gridModel": {
+   "binding": {
+    "config": {
+     "expression": "{view.custom.searchTerm} + '|' + {view.custom.siteId} + '|' + {view.custom.runNonce}"
+    },
+    "transforms": [
+     {
+      "code": "\t# ---- Master/AssemblyDetail combined grid builder — inline runPrepQuery (Order-spike pattern) ----\n\t# Executes the canonical AssemblyDetail/list SQL from master-crud-namedqueries.sql.\n\t# IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tparts = unicode(value).split(\"|\")\n\tsearchTerm = parts[0]\n\tsiteId = int(float(parts[1]))   # IG-SITE: plumbed view->query; predicate commented (D1)\n\n\tsql = (\"SELECT  ID_FORECAST_DETAIL        AS RecordID, \"\n\t       \"        VC_ASSY_PART_NUMBER_CODE  AS AssyCode, \"\n\t       \"        VC_EFFECTIVE_MONTH        AS EffMonth, \"\n\t       \"        VC_BROADCAST_CODE         AS Broadcast, \"\n\t       \"        VC_TIRE_PART_NUMBER_CODE  AS TirePN, \"\n\t       \"        VC_WHEEL_PART_NUMBER_CODE AS WheelPN, \"\n\t       \"        IN_TIRE_RATIO             AS TireRatio, \"\n\t       \"        IN_WHEEL_RATIO            AS WheelRatio, \"\n\t       \"        IN_RATIO                  AS FcRatio, \"\n\t       \"        IN_ASSY_QTY               AS AssyQty \"\n\t       \"FROM    INV_FORECAST_DETAIL_INF \"\n\t       \"WHERE  (? = '' OR VC_ASSY_PART_NUMBER_CODE LIKE '%' + ? + '%' OR VC_BROADCAST_CODE LIKE '%' + ? + '%') \"\n\t       \"-- IG-SITE:  AND site_id = ? \"\n\t       \"ORDER BY VC_ASSY_PART_NUMBER_CODE\")\n\tds = system.db.runPrepQuery(sql, [searchTerm, searchTerm, searchTerm], DB)\n\tlog.info(\"SPIKE AssemblyDetail/list: %d rows (search='%s' site=%d)\" % (ds.rowCount, searchTerm, siteId))\n\n\tcolumns = [\n\t\t{\"field\": \"AssyCode\",   \"header\": {\"title\": \"Assy Part #\"}, \"strictWidth\": 130, \"sort\": \"ascending\"},\n\t\t{\"field\": \"EffMonth\",   \"header\": {\"title\": \"Eff Month\"}, \"strictWidth\": 90},\n\t\t{\"field\": \"Broadcast\",  \"header\": {\"title\": \"Broadcast\"}, \"strictWidth\": 110},\n\t\t{\"field\": \"TirePN\",     \"header\": {\"title\": \"Tire PN\"}},\n\t\t{\"field\": \"WheelPN\",    \"header\": {\"title\": \"Wheel PN\"}},\n\t\t{\"field\": \"TireRatio\",  \"header\": {\"title\": \"TireR\"}, \"strictWidth\": 70},\n\t\t{\"field\": \"WheelRatio\", \"header\": {\"title\": \"WhlR\"}, \"strictWidth\": 70},\n\t\t{\"field\": \"FcRatio\",    \"header\": {\"title\": \"FcR\"}, \"strictWidth\": 60},\n\t\t{\"field\": \"AssyQty\",    \"header\": {\"title\": \"Qty\"}, \"strictWidth\": 60},\n\t\t{\"field\": \"RecordID\",   \"header\": {\"title\": \"id\"}, \"visible\": False}\n\t]\n\trows = []\n\tfor r in xrange(ds.rowCount):\n\t\trows.append({\n\t\t\t\"RecordID\":   ds.getValueAt(r, \"RecordID\"),\n\t\t\t\"AssyCode\":   ds.getValueAt(r, \"AssyCode\"),\n\t\t\t\"EffMonth\":   ds.getValueAt(r, \"EffMonth\"),\n\t\t\t\"Broadcast\":  ds.getValueAt(r, \"Broadcast\"),\n\t\t\t\"TirePN\":     ds.getValueAt(r, \"TirePN\"),\n\t\t\t\"WheelPN\":    ds.getValueAt(r, \"WheelPN\"),\n\t\t\t\"TireRatio\":  ds.getValueAt(r, \"TireRatio\"),\n\t\t\t\"WheelRatio\": ds.getValueAt(r, \"WheelRatio\"),\n\t\t\t\"FcRatio\":    ds.getValueAt(r, \"FcRatio\"),\n\t\t\t\"AssyQty\":    ds.getValueAt(r, \"AssyQty\")\n\t\t})\n\treturn {\"data\": rows, \"columns\": columns}\n",
+      "type": "script"
+     }
+    ],
+    "type": "expr"
+   }
+  },
+  "custom.recordId": {
+   "onChange": {
+    "enabled": null,
+    "script": "\t# ---- AssemblyDetail combined view: recordId change -> load detail ----\n\t# Grid onRowClick sets self.view.custom.recordId = row[\"RecordID\"] (same-view prop\n\t# write, NO navigation). This onChange fires and populates the in-view form.\n\t# recordId==0 -> insert mode. D2: RecordID is ID_FORECAST_DETAIL, never the code.\n\t# IG81-COMPAT: plain change script + T-SQL.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tv = self.view if hasattr(self, \"view\") else self\n\tDB = \"Inventory_Spike\"\n\tc = v.custom\n\tcv = getattr(currentValue, \"value\", currentValue)\n\trecId = int(cv or 0)\n\tlog.info(\"SPIKE AssemblyDetail Detail recordId onChange fired: recId=%s origin=%s\" % (recId, origin))\n\n\tif recId <= 0:\n\t\tc.statusMsg = \"New assembly detail — enter details and Save.\"\n\t\tlog.info(\"SPIKE AssemblyDetail Detail: insert mode (recordId=0)\")\n\t\treturn\n\n\tgetSql = (\"SELECT ID_FORECAST_DETAIL, VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH, \"\n\t          \"VC_BROADCAST_CODE, VC_ASSY_KANBAN_NUMBER, \"\n\t          \"VC_TIRE_PART_NUMBER_CODE, VC_WHEEL_PART_NUMBER_CODE, \"\n\t          \"VC_VALVE_PART_NUMBER, VC_FILM_PART_NUMBER, \"\n\t          \"VC_LABEL_PART_NUMBER, VC_MISC1_PART_NUMBER, VC_MISC2_PART_NUMBER, \"\n\t          \"IN_TIRE_RATIO, IN_WHEEL_RATIO, IN_RATIO, IN_ASSY_QTY \"\n\t          \"FROM INV_FORECAST_DETAIL_INF WHERE ID_FORECAST_DETAIL = ? -- IG-SITE: AND site_id = ?\")\n\tds = system.db.runPrepQuery(getSql, [recId], DB)\n\tif ds.rowCount == 0:\n\t\tc.statusMsg = \"Assembly detail id %d not found.\" % recId\n\t\tlog.warn(\"SPIKE AssemblyDetail Detail: id %d not found\" % recId); return\n\tdef gs(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn val if val is not None else \"\"\n\tdef gi(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else 0\n\tc.form_assyCode  = gs(\"VC_ASSY_PART_NUMBER_CODE\")\n\tc.form_effMonth  = gs(\"VC_EFFECTIVE_MONTH\")\n\tc.form_broadcast = gs(\"VC_BROADCAST_CODE\")\n\tc.form_kanban    = gs(\"VC_ASSY_KANBAN_NUMBER\")\n\tc.form_tirePN    = gs(\"VC_TIRE_PART_NUMBER_CODE\")\n\tc.form_wheelPN   = gs(\"VC_WHEEL_PART_NUMBER_CODE\")\n\tc.form_valvePN   = gs(\"VC_VALVE_PART_NUMBER\")\n\tc.form_filmPN    = gs(\"VC_FILM_PART_NUMBER\")\n\tc.form_labelPN   = gs(\"VC_LABEL_PART_NUMBER\")\n\tc.form_misc1PN   = gs(\"VC_MISC1_PART_NUMBER\")\n\tc.form_misc2PN   = gs(\"VC_MISC2_PART_NUMBER\")\n\tc.form_tireRatio  = gi(\"IN_TIRE_RATIO\")\n\tc.form_wheelRatio = gi(\"IN_WHEEL_RATIO\")\n\tc.form_fcRatio    = gi(\"IN_RATIO\")\n\tc.form_assyQty    = gi(\"IN_ASSY_QTY\")\n\tc.statusMsg = \"Editing assembly %s (id %d).\" % (c.form_assyCode, recId)\n\tlog.info(\"SPIKE AssemblyDetail Detail loaded id=%d assy=%s eff='%s' tire=%s wheel=%s fcR=%s\" % (recId, c.form_assyCode, c.form_effMonth, c.form_tirePN, c.form_wheelPN, c.form_fcRatio))\n"
+   }
+  }
+ },
+ "props": {
+  "defaultSize": {
+   "height": 820,
+   "width": 1480
+  }
+ },
+ "root": {
+  "children": [
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "Title"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Assembly Detail — List + Detail  ·  INV_FORECAST_DETAIL_INF (Inventory_Spike)"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "SearchCap"
+          },
+          "props": {
+           "style": {
+            "color": "#666666",
+            "fontSize": "11px"
+           },
+           "text": "Search (assy part # or broadcast)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "assy-search",
+           "name": "SearchField"
+          },
+          "position": {
+           "basis": "240px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.searchTerm"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "SearchWrap"
+        },
+        "props": {
+         "direction": "column",
+         "style": {
+          "gap": "2px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# Re-run AssemblyDetail/list by bumping runNonce.\n\tself.view.custom.runNonce = (self.view.custom.runNonce or 0) + 1\n\tsystem.util.getLogger(\"SPIKE\").info(\"AssemblyDetail search -> runNonce=\" + str(self.view.custom.runNonce))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "assy-search-btn",
+         "name": "SearchButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Search"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# New record: same-view prop write (NO navigation). recordId=0 -> insert-mode.\n\tc = self.view.custom\n\tc.form_assyCode = \"\"; c.form_effMonth = \"\"; c.form_broadcast = \"\"; c.form_kanban = \"\"\n\tc.form_tirePN = \"\"; c.form_wheelPN = \"\"; c.form_valvePN = \"\"; c.form_filmPN = \"\"\n\tc.form_labelPN = \"\"; c.form_misc1PN = \"\"; c.form_misc2PN = \"\"\n\tc.form_tireRatio = 0; c.form_wheelRatio = 0; c.form_fcRatio = 0; c.form_assyQty = 0\n\tc.recordId = 0\n\tc.statusMsg = \"New assembly detail — enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE AssemblyDetail New -> recordId=0 (insert mode)\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "assy-new-btn",
+         "name": "NewButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#388E3C",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "New"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "FilterBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "flex-end",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "12px",
+        "padding": "10px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "events": {
+       "component": {
+        "onRowClick": {
+         "config": {
+          "script": "\t# Row select -> SAME-VIEW prop write (single-view; NO navigation).\n\t# event.value is the row data in IA 8.1. Set custom.recordId, which fires the\n\t# custom.recordId onChange load script. D2: RecordID is ID_FORECAST_DETAIL.\n\tlog = system.util.getLogger(\"SPIKE\")\n\ttry:\n\t\trecId = event.value[\"RecordID\"]\n\texcept Exception:\n\t\trecId = event.value[\"RecordID\"] if hasattr(event, \"value\") else None\n\tif recId is None:\n\t\tlog.warn(\"SPIKE AssemblyDetail list row click: no RecordID in event\")\n\t\treturn\n\tlog.info(\"SPIKE AssemblyDetail list -> open Detail recordId=%s\" % recId)\n\tself.view.custom.recordId = int(recId)\n"
+         },
+         "scope": "G",
+         "type": "script"
+        }
+       }
+      },
+      "meta": {
+       "domId": "assy-grid",
+       "name": "AssyGrid"
+      },
+      "position": {
+       "basis": "500px",
+       "grow": 1
+      },
+      "propConfig": {
+       "props.columns": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.columns"
+         },
+         "type": "property"
+        }
+       },
+       "props.data": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.data"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "filtering": {
+        "enabled": false
+       },
+       "pager": {
+        "activeOption": 1000,
+        "bottom": false,
+        "options": [
+         1000
+        ],
+        "top": false
+       },
+       "selection": {
+        "enabled": true
+       },
+       "sortOrder": [
+        "0:AssyCode"
+       ]
+      },
+      "type": "ia.display.table"
+     },
+     {
+      "meta": {
+       "name": "FooterNote"
+      },
+      "props": {
+       "style": {
+        "color": "#37474F",
+        "fontSize": "11px",
+        "fontStyle": "italic"
+       },
+       "text": "Click a row to edit at right. Component part #s are stored as STRINGS (not FK ids) — combos source distinct VC_PART_NUMBER from INV_PARTS_STOCK_MST. Composite identity = (assy code, effective month). Single combined view; row-select is an in-view prop write, no navigation."
+      },
+      "type": "ia.display.label"
+     }
+    ],
+    "meta": {
+     "name": "LeftPane"
+    },
+    "position": {
+     "basis": "700px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "10px"
+     }
+    },
+    "type": "ia.container.flex"
+   },
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "DetailTitle"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Detail"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "meta": {
+       "domId": "assy-status",
+       "name": "StatusMsg"
+      },
+      "propConfig": {
+       "props.text": {
+        "binding": {
+         "config": {
+          "path": "view.custom.statusMsg"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "style": {
+        "color": "#B71C1C",
+        "fontSize": "13px",
+        "fontWeight": "bold",
+        "padding": "6px 8px"
+       }
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {"name": "lblAssy"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Assy Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-code", "name": "fldAssy"},
+          "position": {"basis": "260px"},
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_assyCode"},
+             "type": "property"
+            }
+           }
+          },
+          "props": {"maxLength": 12},
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {"name": "rowAssy"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblEff"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Effective Month"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-effmonth", "name": "fldEff"},
+          "position": {"basis": "160px"},
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_effMonth"},
+             "type": "property"
+            }
+           }
+          },
+          "props": {"maxLength": 8, "placeholder": "yyyy/mm or blank"},
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {"name": "rowEff"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblBroadcast"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Broadcast Code"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-broadcast", "name": "fldBroadcast"},
+          "position": {"basis": "260px"},
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_broadcast"},
+             "type": "property"
+            }
+           }
+          },
+          "props": {"maxLength": 20},
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {"name": "rowBroadcast"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblKanban"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Assy Kanban #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-kanban", "name": "fldKanban"},
+          "position": {"basis": "120px"},
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_kanban"},
+             "type": "property"
+            }
+           }
+          },
+          "props": {"maxLength": 4},
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {"name": "rowKanban"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblTire"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Tire Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-tirepn", "name": "fldTire"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_tirePN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowTire"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblWheel"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Wheel Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-wheelpn", "name": "fldWheel"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_wheelPN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowWheel"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblValve"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Valve Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-valvepn", "name": "fldValve"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_valvePN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowValve"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblFilm"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Film Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-filmpn", "name": "fldFilm"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_filmPN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowFilm"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblLabel"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Label Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-labelpn", "name": "fldLabel"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_labelPN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowLabel"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblMisc1"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Misc1 Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-misc1pn", "name": "fldMisc1"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_misc1PN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowMisc1"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblMisc2"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Misc2 Part #"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-misc2pn", "name": "fldMisc2"},
+          "position": {"basis": "240px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_misc2PN"},
+             "type": "property"
+            }
+           },
+           "props.options": {
+            "binding": {
+             "config": {"path": "view.custom.partOptions"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {"name": "rowMisc2"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblTireR"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Tire Ratio"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-tireratio", "name": "fldTireR"},
+          "position": {"basis": "150px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_tireRatio"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {"name": "rowTireR"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblWheelR"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Wheel Ratio"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-wheelratio", "name": "fldWheelR"},
+          "position": {"basis": "150px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_wheelRatio"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {"name": "rowWheelR"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblFcR"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Forecast Ratio"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-fcratio", "name": "fldFcR"},
+          "position": {"basis": "150px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_fcRatio"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {"name": "rowFcR"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {"name": "lblQty"},
+          "position": {"basis": "150px"},
+          "props": {"style": {"fontSize": "12px"}, "text": "Assy Qty"},
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {"domId": "assy-qty", "name": "fldQty"},
+          "position": {"basis": "150px"},
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {"bidirectional": true, "path": "view.custom.form_assyQty"},
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {"name": "rowQty"},
+        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        "type": "ia.container.flex"
+       }
+      ],
+      "meta": {
+       "name": "Form"
+      },
+      "props": {
+       "direction": "column",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "6px",
+        "padding": "12px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "children": [
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- AssemblyDetail Save (insert-or-update) ----\n\t# recordId==0 -> insert; >0 -> update. Composite uniqueness pre-check on\n\t# (assy code, effective month) — there is NO unique index on the live table, so\n\t# this app pre-check is the ONLY uniqueness enforcement.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\tassy = (c.form_assyCode or \"\").strip()\n\teff  = (c.form_effMonth or \"\").strip()\n\n\t# ---- validation (presence on assy code + composite-dup; ratios optional) ----\n\tif assy == \"\":\n\t\tc.statusMsg = \"Assembly part number is required.\"\n\t\tlog.info(\"SPIKE AssemblyDetail save REJECTED: blank assy code\"); return\n\tif len(assy) > 12:\n\t\tc.statusMsg = \"Assembly part number must be 12 characters or fewer.\"\n\t\tlog.info(\"SPIKE AssemblyDetail save REJECTED: assy len=%d\" % len(assy)); return\n\n\tdef sv(x):\n\t\treturn (x or \"\").strip()\n\tdef toInt(v):\n\t\ttry:\n\t\t\treturn int(v) if v not in (None, \"\") else 0\n\t\texcept Exception:\n\t\t\treturn 0\n\n\texcludeId = recId if recId > 0 else 0\n\t# COMPOSITE dup-check: (assy code, effective month). NOT single-code.\n\tchkSql = (\"SELECT COUNT(*) AS n FROM INV_FORECAST_DETAIL_INF \"\n\t          \"WHERE VC_ASSY_PART_NUMBER_CODE = ? AND VC_EFFECTIVE_MONTH = ? \"\n\t          \"AND ID_FORECAST_DETAIL <> ? -- IG-SITE: AND site_id = ?\")\n\tdup = system.db.runPrepQuery(chkSql, [assy, eff, excludeId], DB)\n\tif dup.rowCount > 0 and int(dup.getValueAt(0, 0)) > 0:\n\t\tc.statusMsg = \"Assembly + effective month already exists (%s / '%s').\" % (assy, eff)\n\t\tlog.info(\"SPIKE AssemblyDetail save REJECTED: dup composite assy=%s eff='%s'\" % (assy, eff)); return\n\n\taudit = (\"CONVERT(char(8),GETDATE(),112) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)\")\n\n\tdata = [assy, eff, sv(c.form_broadcast), sv(c.form_kanban),\n\t        sv(c.form_tirePN), sv(c.form_wheelPN), sv(c.form_valvePN), sv(c.form_filmPN),\n\t        sv(c.form_labelPN), sv(c.form_misc1PN), sv(c.form_misc2PN),\n\t        toInt(c.form_tireRatio), toInt(c.form_wheelRatio), toInt(c.form_fcRatio), toInt(c.form_assyQty)]\n\n\ttry:\n\t\tif recId == 0:\n\t\t\tinsSql = (\"INSERT INTO INV_FORECAST_DETAIL_INF \"\n\t\t\t          \"(VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH, VC_BROADCAST_CODE, VC_ASSY_KANBAN_NUMBER, \"\n\t\t\t          \" VC_TIRE_PART_NUMBER_CODE, VC_WHEEL_PART_NUMBER_CODE, VC_VALVE_PART_NUMBER, VC_FILM_PART_NUMBER, \"\n\t\t\t          \" VC_LABEL_PART_NUMBER, VC_MISC1_PART_NUMBER, VC_MISC2_PART_NUMBER, \"\n\t\t\t          \" IN_TIRE_RATIO, IN_WHEEL_RATIO, IN_RATIO, IN_ASSY_QTY, VC_ADD) \"\n\t\t\t          \"VALUES (?,?,?,?, ?,?,?,?, ?,?,?, ?,?,?,?, \" + audit + \"); \"\n\t\t\t          \"SELECT CAST(SCOPE_IDENTITY() AS int) AS newId\")\n\t\t\trs = system.db.runPrepQuery(insSql, data, DB)\n\t\t\tnewId = int(rs.getValueAt(0, 0))\n\t\t\tc.statusMsg = \"Inserted assembly %s (id %d).\" % (assy, newId)\n\t\t\tlog.info(\"SPIKE AssemblyDetail INSERT ok: assy=%s eff='%s' newId=%d\" % (assy, eff, newId))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1\n\t\t\tc.recordId = newId\n\t\telse:\n\t\t\tupdSql = (\"UPDATE INV_FORECAST_DETAIL_INF SET \"\n\t\t\t          \"VC_ASSY_PART_NUMBER_CODE=?, VC_EFFECTIVE_MONTH=?, VC_BROADCAST_CODE=?, VC_ASSY_KANBAN_NUMBER=?, \"\n\t\t\t          \"VC_TIRE_PART_NUMBER_CODE=?, VC_WHEEL_PART_NUMBER_CODE=?, VC_VALVE_PART_NUMBER=?, VC_FILM_PART_NUMBER=?, \"\n\t\t\t          \"VC_LABEL_PART_NUMBER=?, VC_MISC1_PART_NUMBER=?, VC_MISC2_PART_NUMBER=?, \"\n\t\t\t          \"IN_TIRE_RATIO=?, IN_WHEEL_RATIO=?, IN_RATIO=?, IN_ASSY_QTY=?, \"\n\t\t\t          \"VC_LAST_UPDATE = \" + audit + \" \"\n\t\t\t          \"WHERE ID_FORECAST_DETAIL = ? -- IG-SITE: AND site_id = ?\")\n\t\t\tn = system.db.runPrepUpdate(updSql, data + [recId], DB)\n\t\t\tc.statusMsg = \"Updated assembly %s (%d row).\" % (assy, n)\n\t\t\tlog.info(\"SPIKE AssemblyDetail UPDATE ok: id=%d assy=%s rows=%d\" % (recId, assy, n))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1\n\texcept Exception, e:\n\t\tc.statusMsg = \"Save failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE AssemblyDetail save FAILED: %s\" % unicode(e))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "assy-save-btn",
+         "name": "SaveButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Save"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- AssemblyDetail Delete — D3 RESTRICT gate (R1-critical) ----\n\t# The live DeleteForecastDetail trigger HARD-DELETEs INV_FORECAST_INF rows whose\n\t# VC_PART_NUMBER = this row's assy code. refCount counts those rows and BLOCKS the\n\t# delete if > 0, so the destructive cascade can never fire silently. P12 forbids\n\t# touching the live trigger; the gate is the only lever and mirrors the trigger body.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tassy = (c.form_assyCode or \"\").strip()\n\tif recId == 0:\n\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n\t\treturn\n\trefSql = \"SELECT COUNT(*) AS n FROM INV_FORECAST_INF WHERE VC_PART_NUMBER = ?\"\n\trs = system.db.runPrepQuery(refSql, [assy], DB)\n\tn = int(rs.getValueAt(0, 0))\n\tlog.info(\"SPIKE AssemblyDetail refCount: id=%d assy=%s n=%d\" % (recId, assy, n))\n\tif n > 0:\n\t\tc.statusMsg = (\"Cannot delete assembly %s — still referenced by %d forecast row(s). \"\n\t\t               \"Deleting would cascade-delete those forecasts. Remove or archive them first.\") % (assy, n)\n\t\tlog.info(\"SPIKE AssemblyDetail DELETE BLOCKED: id=%d assy=%s refs=%d\" % (recId, assy, n)); return\n\ttry:\n\t\tdelN = system.db.runPrepUpdate(\"DELETE FROM INV_FORECAST_DETAIL_INF WHERE ID_FORECAST_DETAIL = ? -- IG-SITE: AND site_id = ?\", [recId], DB)\n\t\tlog.info(\"SPIKE AssemblyDetail DELETE ok: id=%d assy=%s rows=%d\" % (recId, assy, delN))\n\t\tc.statusMsg = \"Deleted assembly %s.\" % assy\n\t\tc.form_assyCode = \"\"; c.form_effMonth = \"\"; c.form_broadcast = \"\"; c.form_kanban = \"\"\n\t\tc.form_tirePN = \"\"; c.form_wheelPN = \"\"; c.form_valvePN = \"\"; c.form_filmPN = \"\"\n\t\tc.form_labelPN = \"\"; c.form_misc1PN = \"\"; c.form_misc2PN = \"\"\n\t\tc.form_tireRatio = 0; c.form_wheelRatio = 0; c.form_fcRatio = 0; c.form_assyQty = 0\n\t\tc.runNonce = (c.runNonce or 0) + 1\n\t\tc.recordId = 0\n\texcept Exception, e:\n\t\tc.statusMsg = \"Delete failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE AssemblyDetail DELETE FAILED: %s\" % unicode(e))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "assy-delete-btn",
+         "name": "DeleteButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#C62828",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Delete"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# Clear -> reset to a blank insert-mode form (recordId=0). Same-view, no navigation.\n\tc = self.view.custom\n\tc.form_assyCode = \"\"; c.form_effMonth = \"\"; c.form_broadcast = \"\"; c.form_kanban = \"\"\n\tc.form_tirePN = \"\"; c.form_wheelPN = \"\"; c.form_valvePN = \"\"; c.form_filmPN = \"\"\n\tc.form_labelPN = \"\"; c.form_misc1PN = \"\"; c.form_misc2PN = \"\"\n\tc.form_tireRatio = 0; c.form_wheelRatio = 0; c.form_fcRatio = 0; c.form_assyQty = 0\n\tc.recordId = 0\n\tc.statusMsg = \"Cleared — ready for a new assembly detail.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE AssemblyDetail form cleared\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "assy-clear-btn",
+         "name": "ClearButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#607D8B",
+          "color": "#FFFFFF"
+         },
+         "text": "Clear"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "ActionBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "center",
+       "style": {
+        "gap": "12px",
+        "padding": "8px 0"
+       }
+      },
+      "type": "ia.container.flex"
+     }
+    ],
+    "meta": {
+     "name": "RightPane"
+    },
+    "position": {
+     "basis": "620px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "8px"
+     }
+    },
+    "type": "ia.container.flex"
+   }
+  ],
+  "meta": {
+   "name": "root"
+  },
+  "props": {
+   "style": {
+    "backgroundColor": "#F5F6F8",
+    "gap": "12px",
+    "padding": "12px"
+   }
+  },
+  "type": "ia.container.flex"
+ }
+}

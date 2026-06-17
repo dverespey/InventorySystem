@@ -23,6 +23,10 @@
     "/partsstock": {
       "viewPath": "Master/PartsStock/PartsStock",
       "title": "Parts Stock Master"
+    },
+    "/assemblydetail": {
+      "viewPath": "Master/AssemblyDetail/AssemblyDetail",
+      "title": "Assembly Detail"
     }
   },
   "sharedDocks": {}
