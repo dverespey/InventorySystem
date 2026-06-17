@@ -130,7 +130,15 @@ InsertManifestCostInfo / UpdateManifestCostInfo / DeleteManifestCostInfo`, plus 
 > double-billing the customer. The date window is *only* honored when someone calls
 > `SELECT_ManifestCost` with `@ProdDate` — and the invoice procs never do. This is the
 > single most important rule for the rebuild (§4, §8). The combination of a billing-critical
-> table with **no PK/unique/FK/trigger and no app dup check** is **pattern P11**.
+> table with **no PK/FK/trigger and no app dup check** is **pattern P11**.
+>
+> ⚠️ **CORRECTION (2026-06-16, verified vs the live D9 dump):** the table is NOT fully constraint-free —
+> the live DB has **`IX_INV_MANIFEST_COST_MST` UNIQUE on `VC_ASSY_MANIFEST_NUMBER`** (the 2-char manifest
+> id). So manifest *number* is globally unique, but the **assy code is not** (multiple windows per assy
+> code are allowed — which D6 needs). This live index actually *conflicts* with D6's "multiple windows per
+> assy code" the moment a 2nd window is added for one code under the same manifest number — see
+> `IGNITION-master-crud-design.md` §C (R2) for the reconciliation + the open question to David (is global
+> manifest-number uniqueness intended, or a legacy quirk?). *(The original spec said "no unique index.")*
 
 ### Call mechanism (legacy)
 `DataModule.pas` methods (declarations 555–558; bodies 1620–1813) drive the shared ADO

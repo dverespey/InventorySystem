@@ -1,0 +1,1452 @@
+{
+ "custom": {
+  "form_address": "",
+  "form_city": "",
+  "form_code": "",
+  "form_country": "",
+  "form_createOrderSheet": "",
+  "form_directory": "",
+  "form_email": "",
+  "form_fax": "",
+  "form_invAddPoint": "S",
+  "form_logisticsId": null,
+  "form_name": "",
+  "form_orderFileTimestamp": false,
+  "form_outputFile": "T",
+  "form_person": "",
+  "form_siteNumberInOrder": false,
+  "form_state": "",
+  "form_tel": "",
+  "form_zip": "",
+  "logisticsOptions": [],
+  "partTypeOptions": [],
+  "recordId": 0,
+  "runNonce": 0,
+  "searchTerm": "",
+  "siteId": 1,
+  "statusMsg": ""
+ },
+ "params": {},
+ "propConfig": {
+  "custom.gridModel": {
+   "binding": {
+    "config": {
+     "expression": "{view.custom.searchTerm} + '|' + {view.custom.siteId} + '|' + {view.custom.runNonce}"
+    },
+    "transforms": [
+     {
+      "code": "\t# ---- Master/Supplier combined grid builder \u2014 inline runPrepQuery (Order-spike pattern) ----\n\t# Reused verbatim from the List view's gridModel transform. Executes the canonical\n\t# Supplier/list SQL from master-crud-namedqueries.sql via system.db.runPrepQuery.\n\t# IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tparts = unicode(value).split(\"|\")\n\tsearchTerm = parts[0]\n\tsiteId = int(float(parts[1]))   # IG-SITE: plumbed through view->query; predicate still commented (D1)\n\n\tsql = (\"SELECT  s.IN_SUPPLIER_ID        AS RecordID, \"\n\t       \"        s.VC_SUPPLIER_CODE      AS SupplierCode, \"\n\t       \"        s.VC_SUPPLIER_NAME      AS SupplierName, \"\n\t       \"        s.VC_CITY               AS City, \"\n\t       \"        s.VC_STATE              AS State, \"\n\t       \"        l.VC_LOGISTICS_NAME     AS Logistics, \"\n\t       \"        CASE s.VC_OUTPUT_FILE WHEN 'T' THEN 'TEXT' WHEN 'E' THEN 'EXCEL' WHEN 'B' THEN 'BOTH' END AS OutputFileType, \"\n\t       \"        CASE s.VC_INVENTORY_ADD_POINT WHEN 'S' THEN 'SHIPPED' WHEN 'A' THEN 'ARRIVED' END AS InventoryAddPoint \"\n\t       \"FROM    INV_SUPPLIER_MST s \"\n\t       \"        LEFT OUTER JOIN INV_LOGISTICS_MST l ON s.IN_LOGISTICS_ID = l.IN_LOGISTICS_ID \"\n\t       \"WHERE  (? = '' OR s.VC_SUPPLIER_CODE LIKE '%' + ? + '%' OR s.VC_SUPPLIER_NAME LIKE '%' + ? + '%') \"\n\t       \"-- IG-SITE:  AND s.site_id = ? \"\n\t       \"ORDER BY s.VC_SUPPLIER_CODE\")\n\tds = system.db.runPrepQuery(sql, [searchTerm, searchTerm, searchTerm], DB)\n\tlog.info(\"SPIKE Supplier/list: %d rows (search='%s' site=%d)\" % (ds.rowCount, searchTerm, siteId))\n\n\tcolumns = [\n\t\t{\"field\": \"SupplierCode\",      \"header\": {\"title\": \"Supplier Code\"},       \"strictWidth\": 120},\n\t\t{\"field\": \"SupplierName\",      \"header\": {\"title\": \"Supplier Name\"}},\n\t\t{\"field\": \"City\",              \"header\": {\"title\": \"City\"}},\n\t\t{\"field\": \"State\",             \"header\": {\"title\": \"State\"}},\n\t\t{\"field\": \"Logistics\",         \"header\": {\"title\": \"Logistics\"}},\n\t\t{\"field\": \"OutputFileType\",    \"header\": {\"title\": \"Output File Type\"}, \"strictWidth\": 130},\n\t\t{\"field\": \"InventoryAddPoint\", \"header\": {\"title\": \"Inventory Add Point\"}, \"strictWidth\": 150},\n\t\t{\"field\": \"RecordID\",          \"header\": {\"title\": \"id\"}, \"visible\": False}\n\t]\n\trows = []\n\tfor r in xrange(ds.rowCount):\n\t\trows.append({\n\t\t\t\"RecordID\":          ds.getValueAt(r, \"RecordID\"),\n\t\t\t\"SupplierCode\":      ds.getValueAt(r, \"SupplierCode\"),\n\t\t\t\"SupplierName\":      ds.getValueAt(r, \"SupplierName\"),\n\t\t\t\"City\":              ds.getValueAt(r, \"City\"),\n\t\t\t\"State\":             ds.getValueAt(r, \"State\"),\n\t\t\t\"Logistics\":         ds.getValueAt(r, \"Logistics\"),\n\t\t\t\"OutputFileType\":    ds.getValueAt(r, \"OutputFileType\"),\n\t\t\t\"InventoryAddPoint\": ds.getValueAt(r, \"InventoryAddPoint\")\n\t\t})\n\treturn {\"data\": rows, \"columns\": columns}\n",
+      "type": "script"
+     }
+    ],
+    "type": "expr"
+   }
+  },
+  "custom.recordId": {
+   "onChange": {
+    "enabled": null,
+    "script": "\t# ---- Supplier combined view: recordId change -> load detail (reused from Detail view) ----\n\t# David's single-view decision: the grid onRowClick sets self.view.custom.recordId =\n\t# event.value[\"RecordID\"] (a same-view prop write, NO navigation). This onChange fires\n\t# on that write and populates the in-view form. recordId==0 -> insert mode.\n\t# IG81-COMPAT: plain change script + T-SQL, identical on 8.1.52 and 8.3.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tv = self.view if hasattr(self, \"view\") else self\n\tDB = \"Inventory_Spike\"\n\tc = v.custom\n\tcv = getattr(currentValue, \"value\", currentValue)\n\trecId = int(cv or 0)\n\tlog.info(\"SPIKE Supplier Detail recordId onChange fired: recId=%s origin=%s\" % (recId, origin))\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\t# ---- FK combo options (lookups/logistics, lookups/partType) ----\n\tlogDs = system.db.runPrepQuery(\"SELECT IN_LOGISTICS_ID AS id, VC_LOGISTICS_NAME AS label FROM INV_LOGISTICS_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_LOGISTICS_NAME\", [], DB)\n\tc.logisticsOptions = [{\"value\": logDs.getValueAt(i, \"id\"), \"label\": logDs.getValueAt(i, \"label\")} for i in xrange(logDs.rowCount)]\n\tptDs = system.db.runPrepQuery(\"SELECT VC_PART_TYPE AS id, VC_PART_TYPE AS label FROM INV_PART_TYPE_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_PART_TYPE\", [], DB)\n\tc.partTypeOptions = [{\"value\": ptDs.getValueAt(i, \"id\"), \"label\": ptDs.getValueAt(i, \"label\")} for i in xrange(ptDs.rowCount)]\n\tlog.info(\"SPIKE Supplier Detail combos: logistics=%d partType=%d\" % (logDs.rowCount, ptDs.rowCount))\n\n\tif recId <= 0:\n\t\tc.statusMsg = \"New supplier \u2014 enter details and Save.\"\n\t\tlog.info(\"SPIKE Supplier Detail: insert mode (recordId=0)\")\n\t\treturn\n\n\t# ---- edit mode: Supplier/get ----\n\tgetSql = (\"SELECT s.VC_SUPPLIER_CODE, s.VC_SUPPLIER_NAME, s.VC_ADDRESS, s.VC_CITY, s.VC_STATE, \"\n\t          \"s.VC_ZIP, s.VC_COUNTRY, s.VC_TEL, s.VC_FAX, s.VC_PERSON, s.VC_EMAIL_ADDRESS, \"\n\t          \"s.VC_BREAKDOWN_ORDER_DIRECTORY, s.IN_LOGISTICS_ID, l.VC_LOGISTICS_NAME, \"\n\t          \"s.VC_OUTPUT_FILE, s.BIT_ORDER_FILE_TIMESTAMP, s.BIT_SITE_NUMBER_IN_ORDER, \"\n\t          \"s.VC_CREATE_ORDER_SHEET, s.VC_INVENTORY_ADD_POINT \"\n\t          \"FROM INV_SUPPLIER_MST s LEFT OUTER JOIN INV_LOGISTICS_MST l ON s.IN_LOGISTICS_ID = l.IN_LOGISTICS_ID \"\n\t          \"WHERE s.IN_SUPPLIER_ID = ? -- IG-SITE: AND s.site_id = ?\")\n\tds = system.db.runPrepQuery(getSql, [recId], DB)\n\tif ds.rowCount == 0:\n\t\tc.statusMsg = \"Supplier id %d not found.\" % recId\n\t\tlog.warn(\"SPIKE Supplier Detail: id %d not found\" % recId); return\n\tdef g(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn val if val is not None else \"\"\n\tc.form_code = g(\"VC_SUPPLIER_CODE\"); c.form_name = g(\"VC_SUPPLIER_NAME\")\n\tc.form_address = g(\"VC_ADDRESS\"); c.form_city = g(\"VC_CITY\"); c.form_state = g(\"VC_STATE\")\n\tc.form_zip = g(\"VC_ZIP\"); c.form_country = g(\"VC_COUNTRY\"); c.form_tel = g(\"VC_TEL\")\n\tc.form_fax = g(\"VC_FAX\"); c.form_person = g(\"VC_PERSON\"); c.form_email = g(\"VC_EMAIL_ADDRESS\")\n\tc.form_directory = g(\"VC_BREAKDOWN_ORDER_DIRECTORY\")\n\tlid = ds.getValueAt(0, \"IN_LOGISTICS_ID\")\n\tc.form_logisticsId = int(lid) if lid is not None else None\n\tc.form_outputFile = g(\"VC_OUTPUT_FILE\") or \"T\"\n\tc.form_orderFileTimestamp = bool(ds.getValueAt(0, \"BIT_ORDER_FILE_TIMESTAMP\"))\n\tc.form_siteNumberInOrder = bool(ds.getValueAt(0, \"BIT_SITE_NUMBER_IN_ORDER\"))\n\tc.form_createOrderSheet = g(\"VC_CREATE_ORDER_SHEET\")\n\tc.form_invAddPoint = g(\"VC_INVENTORY_ADD_POINT\") or \"S\"\n\tc.statusMsg = \"Editing supplier %s (id %d).\" % (c.form_code, recId)\n\tlog.info(\"SPIKE Supplier Detail loaded id=%d code=%s logId=%s\" % (recId, c.form_code, c.form_logisticsId))\n"
+   }
+  }
+ },
+ "props": {
+  "defaultSize": {
+   "height": 980,
+   "width": 1480
+  }
+ },
+ "root": {
+  "children": [
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "Title"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Supplier Master \u2014 List + Detail  \u00b7  INV_SUPPLIER_MST (Inventory_Spike)"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "SearchCap"
+          },
+          "props": {
+           "style": {
+            "color": "#666666",
+            "fontSize": "11px"
+           },
+           "text": "Search (code or name)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-search",
+           "name": "SearchField"
+          },
+          "position": {
+           "basis": "220px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.searchTerm"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "SearchWrap"
+        },
+        "props": {
+         "direction": "column",
+         "style": {
+          "gap": "2px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# Re-run Supplier/list. Bumping runNonce changes the gridModel expression input.\n\tself.view.custom.runNonce = (self.view.custom.runNonce or 0) + 1\n\tsystem.util.getLogger(\"SPIKE\").info(\"Supplier search -> runNonce=\" + str(self.view.custom.runNonce))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "supplier-search-btn",
+         "name": "SearchButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Search"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# New record: same-view prop write (NO navigation). Setting recordId=0 fires the\n\t# custom.recordId onChange -> insert-mode (combos load, form left at seed). If it was\n\t# already 0 we still clear the form so a stale edit doesn't linger.\n\tc = self.view.custom\n\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\tc.recordId = 0\n\tc.statusMsg = \"New supplier \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Supplier New -> recordId=0 (insert mode)\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "supplier-new-btn",
+         "name": "NewButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#388E3C",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "New Supplier"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "FilterBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "flex-end",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "12px",
+        "padding": "10px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "events": {
+       "component": {
+        "onRowClick": {
+         "config": {
+          "script": "\t# Row select -> SAME-VIEW prop write (David's single-view decision; NO navigation).\n\t# event.value is the row data in IA 8.1. Set custom.recordId, which fires the\n\t# custom.recordId onChange load script that populates the in-view form (D2:\n\t# RecordID is IN_SUPPLIER_ID, never the business code).\n\tlog = system.util.getLogger(\"SPIKE\")\n\ttry:\n\t\trecId = event.value[\"RecordID\"]\n\texcept Exception:\n\t\trecId = event.value[\"RecordID\"] if hasattr(event, \"value\") else None\n\tif recId is None:\n\t\tlog.warn(\"SPIKE Supplier list row click: no RecordID in event\")\n\t\treturn\n\tlog.info(\"SPIKE Supplier list -> open Detail recordId=%s\" % recId)\n\tself.view.custom.recordId = int(recId)\n"
+         },
+         "scope": "G",
+         "type": "script"
+        }
+       }
+      },
+      "meta": {
+       "domId": "supplier-grid",
+       "name": "SupplierGrid"
+      },
+      "position": {
+       "basis": "600px",
+       "grow": 1
+      },
+      "propConfig": {
+       "props.columns": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.columns"
+         },
+         "type": "property"
+        }
+       },
+       "props.data": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.data"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "filtering": {
+        "enabled": false
+       },
+       "pager": {
+        "enabled": true,
+        "options": [
+         25,
+         50,
+         100,
+         50,
+         100
+        ],
+        "rowsPerPage": 50
+       },
+       "selection": {
+        "enabled": true
+       }
+      },
+      "type": "ia.display.table"
+     },
+     {
+      "meta": {
+       "name": "FooterNote"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "style": {
+        "color": "#37474F",
+        "fontSize": "11px",
+        "fontStyle": "italic"
+       },
+       "text": "Click a row to edit in the panel at right. Server-side LIKE search on code+name. Single combined view \u2014 row-select is an in-view prop write, no navigation. Site param plumbed; IG-SITE predicate commented until the Postgres phase."
+      },
+      "type": "ia.display.label"
+     }
+    ],
+    "meta": {
+     "name": "LeftPane"
+    },
+    "position": {
+     "basis": "720px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "10px"
+     }
+    },
+    "type": "ia.container.flex"
+   },
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "DetailTitle"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Detail"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "meta": {
+       "domId": "supplier-status",
+       "name": "StatusMsg"
+      },
+      "propConfig": {
+       "props.text": {
+        "binding": {
+         "config": {
+          "path": "view.custom.statusMsg"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "style": {
+        "color": "#B71C1C",
+        "fontSize": "13px",
+        "fontWeight": "bold",
+        "padding": "6px 8px"
+       }
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblCode"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Supplier Code"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-code",
+           "name": "fldCode"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_code",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 5
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowCode"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblName"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Supplier Name"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-name",
+           "name": "fldName"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_name",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 25
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowName"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblAddress"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Address"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-address",
+           "name": "fldAddress"
+          },
+          "position": {
+           "basis": "450px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_address",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowAddress"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblCity"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "City"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-city",
+           "name": "fldCity"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_city",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowCity"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblState"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "State"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-state",
+           "name": "fldState"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_state",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowState"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblZip"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Zip"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-zip",
+           "name": "fldZip"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_zip",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowZip"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblCountry"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Country"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-country",
+           "name": "fldCountry"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_country",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowCountry"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblTel"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Telephone"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-tel",
+           "name": "fldTel"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_tel",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowTel"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblFax"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Fax"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-fax",
+           "name": "fldFax"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_fax",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowFax"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblPerson"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Person"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-person",
+           "name": "fldPerson"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_person",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowPerson"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblEmail"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Email"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-email",
+           "name": "fldEmail"
+          },
+          "position": {
+           "basis": "450px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_email",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 255
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowEmail"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblDirectory"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Breakdown Order Directory"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-directory",
+           "name": "fldDirectory"
+          },
+          "position": {
+           "basis": "450px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_directory",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 512
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowDirectory"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblLogistics"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Logistics"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-logistics",
+           "name": "fldLogistics"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.logisticsOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_logisticsId",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowLogistics"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblOutputFile"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Output File Type"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-outputfile",
+           "name": "fldOutputFile"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_outputFile",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "options": [
+            {
+             "label": "TEXT",
+             "value": "T"
+            },
+            {
+             "label": "EXCEL",
+             "value": "E"
+            },
+            {
+             "label": "BOTH",
+             "value": "B"
+            }
+           ]
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowOutputFile"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblOrderFileTimestamp"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Order File Timestamp"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-orderfile-ts",
+           "name": "fldOrderFileTimestamp"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_orderFileTimestamp",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "rowOrderFileTimestamp"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblSiteNumberInOrder"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Site Number in Order"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-sitenum",
+           "name": "fldSiteNumberInOrder"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_siteNumberInOrder",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "rowSiteNumberInOrder"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblCreateOrderSheet"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Create Order Sheet"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-createordersheet",
+           "name": "fldCreateOrderSheet"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.partTypeOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_createOrderSheet",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowCreateOrderSheet"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lblInvAddPoint"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Inventory Add Point (required)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "supplier-invaddpoint",
+           "name": "fldInvAddPoint"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_invAddPoint",
+              "bidirectional": true
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "options": [
+            {
+             "label": "SHIPPED",
+             "value": "S"
+            },
+            {
+             "label": "ARRIVED",
+             "value": "A"
+            }
+           ]
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowInvAddPoint"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       }
+      ],
+      "meta": {
+       "name": "Form"
+      },
+      "props": {
+       "direction": "column",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "6px",
+        "padding": "12px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "children": [
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- Supplier Save (insert-or-update) \u2014 \u00a7B.3/B.4 (reused from Detail view) ----\n\t# recordId==0 -> insert; >0 -> update. On success: flip recordId to the saved id\n\t# (edit mode) and refresh the grid by bumping runNonce (same-view, no navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\tcode = (c.form_code or \"\").strip()\n\tname = (c.form_name or \"\").strip()\n\tinvAdd = (c.form_invAddPoint or \"\").strip()\n\n\t# ---- B.4 validation (client-side fast-fail; DB unique index is the backstop) ----\n\tif len(code) != 5:\n\t\tc.statusMsg = \"Supplier code must be exactly 5 characters.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: code len=%d\" % len(code)); return\n\tif name == \"\":\n\t\tc.statusMsg = \"Supplier name is required.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: blank name\"); return\n\tif invAdd not in (\"S\", \"A\"):\n\t\tc.statusMsg = \"Inventory Add Point is required (S or A).\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: invAddPoint=%r\" % invAdd); return\n\n\texcludeId = recId if recId > 0 else 0\n\tchkSql = (\"SELECT COUNT(*) AS n FROM INV_SUPPLIER_MST \"\n\t          \"WHERE VC_SUPPLIER_CODE = ? AND IN_SUPPLIER_ID <> ? \"\n\t          \"-- IG-SITE: AND site_id = ?\")\n\tdup = system.db.runPrepQuery(chkSql, [code, excludeId], DB)\n\tif dup.rowCount > 0 and int(dup.getValueAt(0, 0)) > 0:\n\t\tc.statusMsg = \"Supplier code already exists.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: dup code=%s\" % code); return\n\n\tdef s(v):\n\t\treturn (v if v is not None else \"\")\n\tlogId = c.form_logisticsId\n\tif logId in (None, \"\", 0):\n\t\tlogId = None   # blank Logistics -> NULL (legacy behavior, \u00a7A.6)\n\telse:\n\t\tlogId = int(logId)\n\tbitTs = 1 if c.form_orderFileTimestamp else 0\n\tbitSn = 1 if c.form_siteNumberInOrder else 0\n\taudit = (\"CONVERT(char(8),GETDATE(),112) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)\")\n\n\tdataArgs = [code, name, s(c.form_address), s(c.form_city), s(c.form_state), s(c.form_zip),\n\t            s(c.form_country), s(c.form_tel), s(c.form_fax), s(c.form_person), s(c.form_email),\n\t            s(c.form_directory), logId, s(c.form_outputFile), bitTs, bitSn,\n\t            s(c.form_createOrderSheet), invAdd]\n\n\ttry:\n\t\tif recId == 0:\n\t\t\tinsSql = (\"INSERT INTO INV_SUPPLIER_MST \"\n\t\t\t          \"(VC_SUPPLIER_CODE, VC_SUPPLIER_NAME, VC_ADDRESS, VC_CITY, VC_STATE, VC_ZIP, VC_COUNTRY, \"\n\t\t\t          \" VC_TEL, VC_FAX, VC_PERSON, VC_EMAIL_ADDRESS, VC_BREAKDOWN_ORDER_DIRECTORY, \"\n\t\t\t          \" IN_LOGISTICS_ID, VC_OUTPUT_FILE, BIT_ORDER_FILE_TIMESTAMP, BIT_SITE_NUMBER_IN_ORDER, \"\n\t\t\t          \" VC_CREATE_ORDER_SHEET, VC_INVENTORY_ADD_POINT, VC_ADD) \"\n\t\t\t          \"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, \" + audit + \"); \"\n\t\t\t          \"SELECT CAST(SCOPE_IDENTITY() AS int) AS newId\")\n\t\t\trs = system.db.runPrepQuery(insSql, dataArgs, DB)\n\t\t\tnewId = int(rs.getValueAt(0, 0))\n\t\t\tc.statusMsg = \"Inserted supplier %s (id %d).\" % (code, newId)\n\t\t\tlog.info(\"SPIKE Supplier INSERT ok: code=%s newId=%d\" % (code, newId))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\t\t\tc.recordId = newId                    # flip to edit mode -> fires onChange reload\n\t\telse:\n\t\t\tupdSql = (\"UPDATE INV_SUPPLIER_MST SET \"\n\t\t\t          \"VC_SUPPLIER_CODE=?, VC_SUPPLIER_NAME=?, VC_ADDRESS=?, VC_CITY=?, VC_STATE=?, VC_ZIP=?, \"\n\t\t\t          \"VC_COUNTRY=?, VC_TEL=?, VC_FAX=?, VC_PERSON=?, VC_EMAIL_ADDRESS=?, \"\n\t\t\t          \"VC_BREAKDOWN_ORDER_DIRECTORY=?, IN_LOGISTICS_ID=?, VC_OUTPUT_FILE=?, \"\n\t\t\t          \"BIT_ORDER_FILE_TIMESTAMP=?, BIT_SITE_NUMBER_IN_ORDER=?, VC_CREATE_ORDER_SHEET=?, \"\n\t\t\t          \"VC_INVENTORY_ADD_POINT=?, VC_LASTUPDATE = \" + audit + \" \"\n\t\t\t          \"WHERE IN_SUPPLIER_ID = ? \"\n\t\t\t          \"-- IG-SITE: AND site_id = ?\")\n\t\t\tn = system.db.runPrepUpdate(updSql, dataArgs + [recId], DB)\n\t\t\tc.statusMsg = \"Updated supplier %s (%d row).\" % (code, n)\n\t\t\tlog.info(\"SPIKE Supplier UPDATE ok: id=%d code=%s rows=%d\" % (recId, code, n))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\texcept Exception, e:\n\t\tmsg = unicode(e)\n\t\tif \"IX_INV_SUPPLIER_MST\" in msg or \"duplicate key\" in msg.lower() or \"UNIQUE\" in msg.upper():\n\t\t\tc.statusMsg = \"Supplier code already exists.\"\n\t\t\tlog.info(\"SPIKE Supplier save: unique-index backstop fired for code=%s\" % code)\n\t\telse:\n\t\t\tc.statusMsg = \"Save failed: %s\" % msg\n\t\t\tlog.warn(\"SPIKE Supplier save FAILED: %s\" % msg)\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "supplier-save-btn",
+         "name": "SaveButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Save"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- Supplier Delete \u2014 D3 RESTRICT gate (R1-critical), \u00a7B.5 (reused from Detail view) ----\n\t# refCount counts ALL THREE tables the live DELETE_SupplierCode trigger touches:\n\t#   parts (by IN_SUPPLIER_ID) + INV_BREAKDOWN_FC_INF + INV_FORECAST_INF (both by code).\n\t# Block on any non-zero total; NEVER let a delete reach the trigger while refs exist.\n\t# On success: reset to insert mode + refresh grid (same-view, no navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tcode = (c.form_code or \"\").strip()\n\tif recId == 0:\n\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n\t\treturn\n\trefSql = (\"SELECT \"\n\t          \"  (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST  WHERE IN_SUPPLIER_ID   = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_SUPPLIER_CODE = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_FORECAST_INF     WHERE VC_SUPPLIER_CODE = ?) AS n\")\n\trs = system.db.runPrepQuery(refSql, [recId, code, code], DB)\n\tn = int(rs.getValueAt(0, 0))\n\tlog.info(\"SPIKE Supplier refCount: id=%d code=%s n=%d\" % (recId, code, n))\n\tif n > 0:\n\t\tc.statusMsg = (\"Cannot delete supplier %s \u2014 still referenced by %d part(s) / forecast row(s). \"\n\t\t               \"Reassign or archive those rows first.\") % (code, n)\n\t\tlog.info(\"SPIKE Supplier DELETE BLOCKED: id=%d code=%s refs=%d\" % (recId, code, n)); return\n\ttry:\n\t\tdelN = system.db.runPrepUpdate(\"DELETE FROM INV_SUPPLIER_MST WHERE IN_SUPPLIER_ID = ? -- IG-SITE: AND site_id = ?\", [recId], DB)\n\t\tlog.info(\"SPIKE Supplier DELETE ok: id=%d code=%s rows=%d\" % (recId, code, delN))\n\t\tc.statusMsg = \"Deleted supplier %s.\" % code\n\t\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\t\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\t\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\t\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\t\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\t\tc.recordId = 0                        # back to insert mode\n\texcept Exception, e:\n\t\tc.statusMsg = \"Delete failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE Supplier DELETE FAILED: %s\" % unicode(e))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "supplier-delete-btn",
+         "name": "DeleteButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#C62828",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Delete"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# Clear -> reset to a blank insert-mode form (recordId=0). Same-view, no navigation.\n\tc = self.view.custom\n\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\tc.recordId = 0\n\tc.statusMsg = \"Cleared \u2014 ready for a new supplier.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Supplier form cleared\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "supplier-clear-btn",
+         "name": "ClearButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#607D8B",
+          "color": "#FFFFFF"
+         },
+         "text": "Clear"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "ActionBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "center",
+       "style": {
+        "gap": "12px",
+        "padding": "8px 0"
+       }
+      },
+      "type": "ia.container.flex"
+     }
+    ],
+    "meta": {
+     "name": "RightPane"
+    },
+    "position": {
+     "basis": "700px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "8px"
+     }
+    },
+    "type": "ia.container.flex"
+   }
+  ],
+  "meta": {
+   "name": "root"
+  },
+  "props": {
+   "style": {
+    "backgroundColor": "#F5F6F8",
+    "gap": "12px",
+    "padding": "12px"
+   }
+  },
+  "type": "ia.container.flex"
+ }
+}
