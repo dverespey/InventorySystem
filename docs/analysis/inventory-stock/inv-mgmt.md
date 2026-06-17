@@ -276,10 +276,12 @@ screen displays). These are the core inventory invariant the rebuild must re-hom
   `INV_PARTS_STOCK_MST_HIST`; `UPDATE_PartNumber` also appends to the `INV_PART_QTY_INF` qty ledger
   on any `IN_QTY` change. The qty ledger (`IN_QTY_CHANGE`, `VC_STATUS='U'`) is effectively an audit
   trail of stock movements — a natural source for a "stock movements" view in the rebuild.
-- **Purge guard:** `DELETE_RecConfStatPartsStockMstQTY` only adjusts stock when `Purge.PurgeMode=0`
-  — i.e. the data-retention purge (`DELETE_AutoPurge`, `[DATAPURGE]`) deletes open-order history
-  **without** moving stock. The rebuild's purge job must replicate this "don't touch the balance"
-  flag, or it will silently corrupt on-hand quantities.
+- **Purge safety:** ⚠️ CORRECTED (D9, 2026-06-17) — there is **NO `Purge.PurgeMode` flag** (stale-snapshot
+  artifact; no `Purge` table in the live DB). The data-retention purge (`DELETE_AutoPurge`, `[DATAPURGE]`)
+  deletes open-order history **without** draining stock because it **pre-stamps `VC_TERMINATED`** on aged
+  rows first, and `DELETE_RecConfStatPartsStockMstQTY`'s qty-reversal is gated `VC_TERMINATED=''` — so the
+  terminated rows are already excluded. The rebuild's purge must keep this terminate-then-delete ordering
+  (and the stock-ledger is append-only — purge reverses no real movement), or it will corrupt on-hand.
 
 ## 5. UI / UX notes
 - **Layout:** header label; a "Searching Key" group box with 4 combos (Supplier = a 2-column

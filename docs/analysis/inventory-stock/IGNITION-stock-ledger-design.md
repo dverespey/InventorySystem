@@ -3,11 +3,23 @@
 **Area:** Inventory / Stock (cross-cutting service)  **Status:** 🟡 design — for adversarial review, then build
 **Target:** Ignition 8.3 semantics, runnable on 8.1.52 dev box  **Author:** Ignition architect / 2026-06-17
 
+> **CORRECTION (2026-06-17, D9):** This design was revised after an adversarial review against the **live**
+> `DB Schema/CreateInventory.sql`. The earlier draft cited a `Purge.PurgeMode` trigger bypass that **does not
+> exist in the live DB** — it was an artifact of the stale `Create Inventory.superseded-2026-06-01.sql`
+> (superseded lines 9665-9669). The real purge is `DELETE_AutoPurge` (§3.1). **Verify every trigger/purge claim
+> against the live `CreateInventory.sql`, never the spaced superseded file.** Fixes applied: F1 (purge rationale
+> re-derived from `DELETE_AutoPurge` + the `VC_TERMINATED=''` DELETE-trigger gate), F2 (D11#9 dropped from the
+> divergence set — unreachable), F3 (new 5th divergence class: legacy multi-row-trigger under-count), F4
+> (`rebuildBalance` locking), F5 (part-number-changing UPDATE → two-post derivation). The core architecture
+> (additive ledger-as-truth, materialized `IN_QTY += delta`, all trigger signs, D8(3)/D12#3 divergences,
+> materialized-vs-computed) is CONFIRMED SOUND and unchanged.
+
 > **The service that OWNS the `INV_PARTS_STOCK_MST.IN_QTY` on-hand invariant.** Today twelve
 > qty-adjusting triggers — owned by Receiving, Reject, Stocktaking, Shipping — each *directly* mutate
 > the on-hand balance, with inconsistent keying (string `VC_PART_NUMBER` vs int `IN_PART_ID`),
-> inconsistent gates, one dead branch (D8(3)), one missing purge bypass (D11#9), and no single audit
-> truth. This design re-homes all twelve into **ONE additive-delta ledger** where the **ledger of
+> inconsistent gates, one dead branch (D8(3)), and a multi-row-trigger under-count hazard (the
+> `FROM PS, inserted i` / `JOIN inserted` shape applies one arbitrary row per part, not the sum), and no
+> single audit truth. This design re-homes all twelve into **ONE additive-delta ledger** where the **ledger of
 > movements is the source of truth** and on-hand becomes a **derived/materialized balance**.
 >
 > This is the foundation the receiving/shipping/reject/stocktaking SCREENS will later call. It is a
@@ -15,7 +27,9 @@
 > drive it). Source behavior is fixed against the live trigger bodies in
 > [`parts-stock-master.md` §2](parts-stock-master.md), [`recconfstat.md`](../receiving/recconfstat.md),
 > [`recreject.md`](../receiving/recreject.md), [`shipping.md`](../shipping/shipping.md),
-> [`stocktaking.md`](stocktaking.md), with decisions D1/D5/D7/D8(3)/D11#9/D12#3 baked in.
+> [`stocktaking.md`](stocktaking.md), with decisions D1/D5/D7/D8(3)/D12#3 baked in. (The source specs
+> `parts-stock-master.md` / `recconfstat.md` still cite the non-existent `PurgeMode`; those corrections are
+> tracked separately — this design uses the **live** `DELETE_AutoPurge` mechanism, §3.1.)
 
 ---
 
@@ -105,48 +119,65 @@ event_key, reason)` calls. The **gate** (when to post / what sign) is evaluated 
 |---|----------------|--------------|------------------|--------------|------------------------------|------------------|
 | 1 | `INSERT_RecConfStatPartsStockMstQTY` `'S'` leg | OPEN_ORDER | `RECEIVING_SHIP` | `+IN_QTY` | supplier add-point `'S'` AND `VC_STATUS_SUPPLIER_SHIPPING<>''` | Add at supplier-shipping. |
 | 2 | `INSERT_…` `'A'` leg | OPEN_ORDER | `RECEIVING_ARRIVAL` | `+IN_QTY` | add-point `'A'` AND (arrival **or** plant-yard **or** assembler-yard **or** warehouse set) | **D7**: arrival-add lives in receiving-confirmation. **D12#3**: plant-yard & assembler-yard count as arrival. |
-| 3 | `UPDATE_…` legs 1–2 (qty change, shipped/arrived) | OPEN_ORDER | `RECEIVING_SHIP` / `RECEIVING_ARRIVAL` | `+(i.IN_QTY − d.IN_QTY)` | qty changed AND still shipped(`'S'`)/arrived(`'A'`) | Post the **net delta** (reverse-old + post-new collapse to one signed delta, §4 UPDATE contract). |
+| 3 | `UPDATE_…` legs 1–2 (qty change, shipped/arrived) | OPEN_ORDER | `RECEIVING_SHIP` / `RECEIVING_ARRIVAL` | `+(i.IN_QTY − d.IN_QTY)` *(same part)*; **two posts if part changed (F5)** | qty changed AND still shipped(`'S'`)/arrived(`'A'`) | Post the **net delta** when the part is unchanged. **If `VC_PART_NUMBER` changed** (live legs join `i`/`d`/`PS` on `VC_PART_NUMBER`), `i`/`d` are different part ids → emit `−oldEffect` on old part + `+newEffect` on new part (§4.3 F5). Legacy silently no-ops a part change here. |
 | 4 | `UPDATE_…` leg 3 (ship-status set) | OPEN_ORDER | `RECEIVING_SHIP` | `+IN_QTY` | `'S'`, ship-status blank→set | Mirror of #1 on edit. |
 | 5 | `UPDATE_…` leg 4 (ship-status cleared) | OPEN_ORDER | `RECEIVING_SHIP` | `−IN_QTY` | `'S'`, ship-status set→blank | Reverse of #1. |
 | 6 | `UPDATE_…` leg 5 (arrival set) | OPEN_ORDER | `RECEIVING_ARRIVAL` | `+IN_QTY` | `'A'`, arrival blank→set (**D12#3**: also plant-yard/assembler-yard blank→set) | **D7** add. The only path counting `'A'` stock today. |
 | 7 | `UPDATE_…` leg 6 (arrival cleared) | OPEN_ORDER | `RECEIVING_REVERSAL` | `−IN_QTY` | `'A'`, arrival set→blank (**D12#3**: plant-yard/assembler-yard set→blank) | ⚠️ **D8(3): DEAD in legacy** (`i.VC_ARRIVAL='' AND i.VC_ARRIVAL<>''`). **IMPLEMENT the reversal.** **Intentional divergence — "ledger correct, legacy buggy."** |
-| 8 | `DELETE_RecConfStatPartsStockMstQTY` `'S'`/`'A'` legs | OPEN_ORDER | `RECEIVING_SHIP`/`_ARRIVAL` | `−d.IN_QTY` | counted (shipped/arrived) AND `VC_TERMINATED=''` AND `VC_STATUS_EMPTY_TRAILER=''` AND add-point S/A. **Skipped when `Purge.PurgeMode=1`.** | Remove on delete of a still-active order. **Purge bypass preserved — but as a NON-post (see §3.1).** |
+| 8 | `DELETE_RecConfStatPartsStockMstQTY` `'S'`/`'A'` legs | OPEN_ORDER | `RECEIVING_SHIP`/`_ARRIVAL` | `−d.IN_QTY` | counted (shipped/arrived) AND **`VC_TERMINATED=''`** AND `VC_STATUS_EMPTY_TRAILER=''` AND add-point S/A | Remove on delete of a still-active (non-terminated) order. **No `PurgeMode` exists in the live trigger (D9)** — the live gate is just `@numrows>0` + these status filters. The purge job (`DELETE_AutoPurge`) pre-stamps `VC_TERMINATED`, so purged rows already fail the `VC_TERMINATED=''` gate and never drain on-hand (§3.1). The service posts the `−d.IN_QTY` reversal ONLY for a genuine user delete of a non-terminated order. |
 | 9 | `INSERT_RejectParts` | REJECT | `REJECT` | `−i.IN_QTY` | (none) | Every reject subtracts. |
 | 10 | `UPDATE_RejectParts` | REJECT | `REJECT` | `+(d.IN_QTY − i.IN_QTY)` net | (none); part is immutable on edit | Re-balance by delta. |
-| 11 | `DELETE_RejectParts` | REJECT | `REJECT` | `+d.IN_QTY` | (none) — but **NOT during purge** | ⚠️ **D11#9**: legacy has NO purge bypass → purging a reject inflates on-hand. **Rebuild: a reject delete during purge is NOT a stock movement.** **Intentional divergence.** |
+| 11 | `DELETE_RejectParts` | REJECT | `REJECT` | `+d.IN_QTY` | (none) | **D11#9 RETRACTED (F2):** the only reject delete is `DELETE_RecProdRejInfo` (single-row user delete by `@RejectID`). `DELETE_AutoPurge` deletes ONLY open-orders + HIST — it **never** touches `INV_REJECT_INF`. So "purge inflates on-hand via reject delete" is **UNREACHABLE**. A reject delete is always a genuine user un-reject → **always restores on-hand** (faithful legacy behavior). No purge branch here. |
 | 12 | `INSERT_Stocktaking` | STOCKTAKING | `STOCKTAKING` | `+i.IN_QTY` (delta may be `−`) | (none) | **D5**: `IN_QTY` is a **signed adjustment delta**, not absolute. Post it verbatim. |
 | 13 | `UPDATE_Stocktaking` | STOCKTAKING | `STOCKTAKING` | `+(i.IN_QTY − d.IN_QTY)` net | (none); part immutable | Re-balance by change in the delta. Fix the D8/Bug2 NULL-timestamp by writing a real `TS_POSTED`. |
 | 14 | `DELETE_Stocktaking` | STOCKTAKING | `STOCKTAKING` | `−d.IN_QTY` | (none) | Reverse the adjustment. Insert+delete is qty-neutral. |
 | 15 | `InsertPartShipping` | PART_SHIPPING | `SHIPPING` | `−i.IN_QTY` | (none) — always subtract, **no add-point** | Stock-OUT at production. `IN_QTY = round(built×ratio/100)`. |
 | 16 | `UpdatePartShipping` | PART_SHIPPING | `SHIPPING` | `−(i.IN_QTY − d.IN_QTY)` net | (none) | Detail edit re-balance. |
-| 17 | `DeletePartShipping` (and the `DeleteShipDate` cascade) | PART_SHIPPING | `SHIPPING` | `+d.IN_QTY` | (none) — but **scope the header-delete restore to (site, line, production_date)**, fixing the line-blind cascade | Restore on line/shipment delete. Shipping has no purge bypass; treat purge identically to §3.1. |
+| 17 | `DeletePartShipping` (and the `DeleteShipDate` cascade) | PART_SHIPPING | `SHIPPING` | `+d.IN_QTY` | (none) — but **scope the header-delete restore to (site, line, production_date)**, fixing the line-blind cascade | Restore on line/shipment delete. `DELETE_AutoPurge` never deletes `INV_PART_SHIPPING_INF` (F2), so a shipping delete is always a genuine user delete → always restores. **Multi-row caution (F3):** the live `InsertPartShipping` trigger uses `FROM PS, inserted i WHERE PS.VC_PART_NUMBER=i.VC_PART_NUMBER` — a header delete spanning >1 same-part row under-counted in legacy; the rebuild restores each row (§6 class 5). |
 
 > The "12 triggers" expand to 17 posting operations because several triggers contain multiple legs.
 > The 12 *triggers* are: 3 RecConfStat + 3 Reject + 3 Stocktaking + 3 PartShipping = 12 (the
 > `DeleteShipDate` header cascade is a 13th trigger that fires `DeletePartShipping`, folded into #17).
 
-### 3.1 Purge vs an append-only ledger — **the key architectural call**
+### 3.1 Purge vs an append-only ledger — **the key architectural call** (re-derived from the LIVE purge, F1/D9)
 
-The legacy purge bypass (`DELETE_RecConfStatPartsStockMstQTY` skips when `Purge.PurgeMode=1`) exists so
-that **bulk-deleting old source rows during data purge does NOT drain on-hand** — the historical movement
-already happened; deleting the *record of the order* must not un-happen the receipt.
+**There is NO `PurgeMode` flag in the live DB.** The earlier draft cited a `Purge.PurgeMode` bypass inside
+`DELETE_RecConfStatPartsStockMstQTY`; that belonged to the stale `Create Inventory.superseded-2026-06-01.sql`
+(lines 9665-9669) and **does not exist** in the authoritative `CreateInventory.sql`. The live DELETE trigger's
+qty-removal is gated only by `@numrows>0` plus the status filters — crucially **`AND VC_TERMINATED=''`** (verified
+live, both the `'S'` and `'A'` legs). There is no `Purge` table.
 
-In an append-only ledger this becomes clean and uniform (fixing the legacy inconsistency where RecConfStat
-had the bypass but Reject (D11#9) and Shipping did NOT):
+**The real purge is `DELETE_AutoPurge(@DataRetention)`** (verified live). It does two things, in order:
 
-- **A purge deletes source rows; it does NOT post a reversal.** The ledger is append-only history of
-  *real stock movements*. Purging an `INV_OPEN_ORDER_INF` / `INV_REJECT_INF` / `INV_PART_SHIPPING_INF`
-  row is administrative cleanup of the *source*, not a stock event → **no ledger post, no `IN_QTY` change.**
-- This is exactly the RecConfStat bypass behavior, now applied **uniformly** to reject (D11#9 fix) and
-  shipping (which lacked it). The signal is the operation context (`purge=True`), not a `PurgeMode` DB flag.
-- **The ledger rows for purged source rows are RETAINED** (append-only — we never delete a movement).
-  So even after the source order is purged, on-hand stays correct *and* the movement remains auditable.
-  This is strictly better than legacy (where purging lost the audit and risked the balance).
-- A *genuine* user-initiated delete/reversal (not purge) DOES post the compensating delta (#8, #11, #14, #17).
+1. **Pre-stamp termination:** `UPDATE INV_OPEN_ORDER_INF SET VC_TERMINATED = <future date> WHERE VC_ADD <= <cutoff> AND VC_TERMINATED=''` — every aged, still-active order is *marked terminated* first.
+2. **Delete aged rows:** `DELETE FROM INV_OPEN_ORDER_INF`, `INV_OPEN_ORDER_INF_HIST`, and `INV_PARTS_STOCK_MST_HIST` for `VC_ADD <= <cutoff>`. **It deletes ONLY open-orders + HIST tables — never `INV_REJECT_INF`, never `INV_PART_SHIPPING_INF`.**
+
+**So legacy purge avoids draining on-hand NOT via a flag, but as an emergent property of the gate:** the step-1
+pre-stamp sets `VC_TERMINATED <> ''`, so when step-2's `DELETE` fires `DELETE_RecConfStatPartsStockMstQTY`, every
+deleted row **fails the trigger's `VC_TERMINATED=''` gate** and contributes no `−IN_QTY`. Termination, not a
+PurgeMode, is what spares on-hand.
+
+This re-grounds — but does not change — the append-only design:
+
+- **The append-only ledger never reverses a real movement on a housekeeping delete.** A purge deletes source
+  rows; it posts nothing. The historical receipt/shipment already happened; deleting the *record* must not
+  un-happen it. The ledger keeps the movement row forever (append-only), so on-hand stays correct AND auditable
+  even after the source order is purged — strictly better than legacy, which lost the audit at purge.
+- **The rebuild signals this with the context flag `purge=True` on the posting call** (the service-level analog
+  of "this DELETE came from `DELETE_AutoPurge`, not a user un-doing an event"). It is **not** a DB column; it
+  mirrors the live behavior that purge-driven deletes do not move stock.
+- **The faithful equivalent of the live `VC_TERMINATED=''` gate:** a user-deleted order that is **already
+  terminated** (`VC_TERMINATED<>''`) also posts no reversal (the live trigger skips it too). The service applies
+  the same gate (table row #8), so terminated-then-deleted orders match legacy with `purge=False` as well.
+- A *genuine* user-initiated delete/reversal of a **non-terminated** order DOES post the compensating delta
+  (#8). Reject delete (#11) and shipping delete (#17) are **always** genuine user deletes — `DELETE_AutoPurge`
+  never touches those tables (F2), so there is no purge case to special-case for them.
 
 > **The distinction the service must honor:** *reverse-because-the-event-was-undone* (post a compensating
-> delta) vs *delete-the-record-for-housekeeping* (post nothing). Legacy conflated these via the
-> `PurgeMode` flag; the rebuild makes it an explicit `purge` flag on the posting call.
+> delta, for a non-terminated user delete) vs *delete-the-record-for-housekeeping or already-terminated*
+> (post nothing). Legacy expressed "post nothing" via the live `VC_TERMINATED=''` gate + the `DELETE_AutoPurge`
+> pre-stamp; the rebuild expresses it via the `VC_TERMINATED<>''` check and the `purge=True` flag. Same effect,
+> no fictional `PurgeMode`.
 
 ---
 
@@ -173,12 +204,25 @@ on the same part). The ledger must be safe under replay and concurrency.
    → the second insert is **rejected/no-op**, and crucially the `IN_QTY += delta` does NOT run again.
    **No double-post.** This replaces the legacy's fragile reliance on trigger-once semantics.
 
-3. **UPDATE = reverse-old + post-new, expressed as one net delta.** A source-row edit (order qty change,
-   stocktaking delta change, shipping detail qty change) posts a SINGLE row with
-   `delta = (newEffect − oldEffect)` and a fresh `VC_SOURCE_EVENT` (`…:upd:v=N`). We do NOT post two rows
-   (a `−old` and a `+new`); one net-delta row keeps the ledger compact and the idempotency key clean.
+3. **UPDATE = reverse-old + post-new, expressed as one net delta — *unless the part identity changed*.**
+   A source-row edit *that keeps the same part* (order qty change, stocktaking delta change, shipping detail
+   qty change) posts a SINGLE row with `delta = (newEffect − oldEffect)` and a fresh `VC_SOURCE_EVENT`
+   (`…:upd:v=N`). One net-delta row keeps the ledger compact and the idempotency key clean.
    *(The legacy triggers used two SQL statements for this; the net effect is identical and we capture it
    as one delta — confirmed equal in §6 parity.)*
+
+   **F5 — part-number-changing UPDATE → TWO posts (two part ids).** `UPDATE_RecConfStatInfo` can re-point an
+   order's `VC_PART_NUMBER`. The live `UPDATE_RecConfStatPartsStockMstQTY` qty legs join
+   `inserted i ON i.VC_PART_NUMBER = d.VC_PART_NUMBER` and `PS ON PS.VC_PART_NUMBER = d.VC_PART_NUMBER`
+   (verified live) — so when the part number changes, `i` and `d` resolve to **different** `IN_PART_ID`s and the
+   single-net-delta assumption breaks. The service MUST **detect a part-id change** (`oldPartId != newPartId`)
+   and emit the genuine pair: **`post(oldPartId, −oldEffect, …:upd:del-old)`** AND
+   **`post(newPartId, +newEffect, …:upd:add-new)`** — two ledger rows, two part ids. (Note: the live trigger's
+   own self-join silently does *nothing* on a part-number change, since `i.VC_PART_NUMBER<>d.VC_PART_NUMBER`
+   yields no matching row — another legacy gap; the rebuild's two-post is the *correct* behavior and will
+   surface as an EXPECTED-DIVERGENT pair, §6.) The `(IN_PART_ID, VC_SOURCE_EVENT)` idempotency key already
+   includes the part id, so the two posts carry distinct keys cleanly. Under **D2** (keying moves to
+   `IN_PART_ID`) this case mostly evaporates, but **parallel-run legacy keys on the string** — handle it.
 
 4. **DELETE = post the reversal** (compensating `−original`/`+original`), UNLESS `purge=True` (§3.1).
 
@@ -191,9 +235,25 @@ on the same part). The ledger must be safe under replay and concurrency.
    (we never read `IN_QTY`, compute, and write back — we issue a relative `+= delta`).
    `# IG81-COMPAT`: works identically on 8.1.52 (it's a DB-level guarantee, not an Ignition feature).
 
-> **Why not SERIALIZABLE:** the additive `IN_QTY += delta` needs no snapshot isolation — it never reads
-> the prior value into the app. The only thing needing protection is double-posting, handled by the
-> UNIQUE event key. This is simpler and faster than the legacy and removes a whole race class.
+> **Why not SERIALIZABLE (for `post()`):** the additive `IN_QTY += delta` needs no snapshot isolation — it
+> never reads the prior value into the app. The only thing needing protection is double-posting, handled by
+> the UNIQUE event key. This is simpler and faster than the legacy and removes a whole race class. **This
+> no-SERIALIZABLE claim is scoped to `post()` only.**
+
+6. **F4 — `rebuildBalance` is the ONE read-then-write; it MUST be serialized against `post()`.** The healing
+   command `stockLedger.rebuildBalance(partId)` (§7) re-SUMs the ledger and re-stamps
+   `IN_QTY = <absolute SUM>`. That **is** a cross-statement read-then-write: a `post()` delta that commits
+   between the SUM and the absolute re-stamp would be **silently clobbered (lost update)**. Invariant:
+   `rebuildBalance` must run under one of —
+   - **(a)** an explicit row lock taken in the same transaction:
+     `SELECT IN_QTY FROM INV_PARTS_STOCK_MST WITH (UPDLOCK, HOLDLOCK) WHERE IN_PART_ID=@id` **before** the
+     SUM, holding it through the re-stamp (serializes any concurrent `post()` on that part at the row lock); or
+   - **(b)** a `SERIALIZABLE` transaction wrapping `SUM(qty_delta) → SET IN_QTY = @sum`; or
+   - **(c)** a quiesced maintenance window where no `post()` runs.
+
+   `post()` itself remains READ COMMITTED + additive (no change). Only `rebuildBalance` carries this stronger
+   guarantee, because only it does absolute (read-then-write) arithmetic. This is the single exception to the
+   "we never read-compute-write `IN_QTY`" rule, and it is explicitly fenced.
 
 ---
 
@@ -237,7 +297,9 @@ system.db.execSProcCall(call)   # proc no-ops on duplicate eventKey; otherwise i
 ```
 
 `POST_StockMovement` body (sketch, lives in the rebuild DB, NOT the legacy DB during parallel run):
-1. `IF @purge = 1 RETURN` (purge deletes source rows; never posts — §3.1).
+1. `IF @purge = 1 RETURN` (purge deletes source rows; never posts — §3.1; mirrors the live `DELETE_AutoPurge`
+   pre-stamp + `VC_TERMINATED=''` gate, NOT a `PurgeMode` flag). The caller also passes `purge=False` but the
+   service skips the post for an already-terminated order delete (the `VC_TERMINATED<>''` faithful gate, §3.1).
 2. `IF EXISTS(SELECT 1 FROM INV_STOCK_LEDGER WHERE IN_PART_ID=@partId AND VC_SOURCE_EVENT=@eventKey) RETURN`
    (idempotency; also backstopped by the UNIQUE index).
 3. `BEGIN TRAN` → compute `@ts` (16-char string, P2) → `INSERT INV_STOCK_LEDGER(...)` →
@@ -274,15 +336,39 @@ For a snapshot of the live source tables (`INV_OPEN_ORDER_INF`, `INV_REJECT_INF`
      - **D8(3) arrival-reversal:** parts with an `'A'` order whose arrival was *set then cleared*. Legacy
        left on-hand **overstated** (dead branch); rebuild posts the `−qty` reversal. Predicted
        `derived < legacy` by exactly the cleared arrival qty. **Tag: "ledger correct, legacy buggy (D8(3))."**
-     - **D11#9 reject-delete-during-purge:** parts whose reject rows were purged. Legacy *added qty back*
-       (no bypass → on-hand **inflated**); rebuild posts nothing on purge. Predicted `derived < legacy`.
-       **Tag: "ledger correct, legacy buggy (D11#9)."**
      - **D12#3 plant/assembler-yard arrival on edit:** `'A'` orders where arrival-equivalence was stamped
        via plant-yard/assembler-yard *on an edit* (legacy UPDATE leg fired only on `VC_ARRIVAL`, so it
        **under-counted**); rebuild counts them. Predicted `derived > legacy`. **Tag: "ledger correct,
        legacy buggy (D12#3)."**
+     - **F3 — legacy multi-row-trigger UNDER-COUNT (NEW 5th class, the most important harness fix):** SQL
+       Server's `UPDATE PS … FROM PS, inserted i` / `FROM PS JOIN inserted i ON PS.VC_PART_NUMBER=i.VC_PART_NUMBER`
+       shape (verified live in `INSERT_RejectParts`, `InsertPartShipping`, and the RecConfStat legs) does **not
+       sum all matching `i` rows** — it applies **ONE arbitrary matching row per PS row**. So when a legacy
+       qty-trigger fired on a batch containing **multiple same-part rows in one statement** (a renban batch, a
+       multi-line shipment, a multi-row header-delete cascade), the legacy **under-counted** (it moved one row's
+       qty, not the sum). The rebuild harness replays *every* source row and SUMs all of them → it will diverge,
+       with **`derived > legacy`** for those parts. **This is the ledger being MORE correct than the buggy
+       legacy** (frame like the Order spike's proc-fidelity gaps). The harness MUST **predict** this class, not
+       treat it as a mystery EXPECTED-ZERO miss — otherwise a real rebuild bug could be excused as "ledger
+       correct" (the fixture-fidelity failure mode, `feedback-parity-fixture-fidelity`). **Tag: "ledger correct,
+       legacy buggy (F3 multi-row under-count)."** **Detection query (run on the snapshot to enumerate
+       candidates):** find parts where a single trigger-firing statement plausibly carried >1 same-part row —
+       e.g. `SELECT IN_SHIPPING_ID, VC_PART_NUMBER, COUNT(*) FROM INV_PART_SHIPPING_INF GROUP BY IN_SHIPPING_ID,
+       VC_PART_NUMBER HAVING COUNT(*)>1` (confirmed live: **1** such shipment exists), and the analogous
+       group-by on reject (`IN_PART_ID`) and open-order (`VC_PART_NUMBER`, **21** multipart groups live). Only
+       batches where those same-part rows were inserted/updated/deleted **in one statement** under-counted; the
+       harness predicts the magnitude per affected part from the dropped rows.
+     - **F5 — part-number-changing UPDATE:** orders whose `VC_PART_NUMBER` was re-pointed by `UPDATE_RecConfStatInfo`.
+       Legacy's `i`/`d` self-join on `VC_PART_NUMBER` finds no match → **no qty move at all** (silent no-op);
+       the rebuild emits the `−oldPart` + `+newPart` pair (§4.3). Predicted: old part `derived < legacy`, new
+       part `derived > legacy`, by exactly the order's effect. **Tag: "ledger correct, legacy buggy (F5 part-change)."**
      - **D8/Bug2 stocktaking NULL-timestamp:** affects `VC_LAST_UPDATE` only, **not the qty** — so it
        must NOT appear as a qty diff. Assert qty parity holds for these parts (timestamp is checked separately).
+     - **Reject-delete restore is EXPECTED-ZERO (F2), not divergent.** `DELETE_RecProdRejInfo` is a single-row
+       user un-reject that restores on-hand; the rebuild's `+d.IN_QTY` post matches it exactly. The old D11#9
+       "reject-delete-during-purge inflates on-hand" class is **REMOVED** — `DELETE_AutoPurge` never deletes
+       reject (or shipping) rows, so it is unreachable. Leaving it in the tag set would let the harness
+       mis-attribute a genuine reject-delete bug to "ledger correct." Reject/shipping deletes must diff **0**.
 
 **Pass criterion:** every EXPECTED-ZERO part diffs by 0; every EXPECTED-DIVERGENT part diffs by exactly
 the predicted amount and is tagged. Any other non-zero diff is a rebuild bug. This is the *exact* discipline
@@ -306,7 +392,9 @@ The reviewer can eyeball that the only non-zero rows carry a divergence tag.
 3. The §3 source→post mapping encoded as the *derivation* used by the harness (one function, reused by
    both the live service and the parity check).
 4. **The reconciliation-vs-`IN_QTY` parity harness (§6)** against the restored `Inventory.bak`, with the
-   four divergence tags asserted. **This is the spike's GO/NO-GO.**
+   **four** EXPECTED-DIVERGENT classes asserted — **D8(3)** arrival-reversal, **D12#3** plant/assembler-yard,
+   **F3** multi-row under-count, **F5** part-change — plus reject/shipping deletes asserted EXPECTED-ZERO (F2).
+   (D11#9 is retired; D8/Bug2 is timestamp-only, not a qty class.) **This is the spike's GO/NO-GO.**
 
 **Deferred (later, per-module jobs that CALL this service):**
 - Wiring the actual **RecConfStat / Shipping / Reject / Stocktaking screens** to post through
@@ -316,7 +404,10 @@ The reviewer can eyeball that the only non-zero rows carry a divergence tag.
   land in the **Postgres phase** (`# IG83-TODO`), tracked in the D13 DB-conversion script.
 - The **computed-view projection** alternative to the materialized `IN_QTY` (§1 open question) — Postgres phase.
 - A **compute-on-read fallback / rebuild command** (`stockLedger.rebuildBalance(partId)` = re-SUM the
-  ledger and re-stamp `IN_QTY`) for healing a drift the harness finds — cheap to add, build alongside #4.
+  ledger and re-stamp `IN_QTY = <absolute>`) for healing a drift the harness finds — cheap to add, build
+  alongside #4. **F4 invariant:** unlike `post()`, this is a read-then-write absolute stamp and MUST take an
+  exclusive/serializable lock on the part row (`UPDLOCK, HOLDLOCK` before the SUM) or run only in a quiesced
+  window — otherwise a concurrent in-flight `post()` delta is lost (§4 point 6). State this in the proc body.
 
 ---
 
@@ -325,11 +416,13 @@ The reviewer can eyeball that the only non-zero rows carry a divergence tag.
 - **(Q1 — materialized vs computed on-hand)** Recommend materialized `IN_QTY` now (legacy readers need
   the column; additive op = legacy-faithful), computed-view projection deferred to Postgres. §1. **Genuine
   fork — confirm.**
-- **(Q2 — purge as non-post)** Assumed: purge deletes source rows and posts NOTHING, retaining ledger
-  history (§3.1). This *fixes* D11#9 and unifies the RecConfStat-only bypass across all modules. Depends on
-  the unverified assumption that the data-purge job deletes reject/shipping rows the same way it deletes
-  open orders — **confirm with delphi-architect** whether purge touches `INV_REJECT_INF`/`INV_PART_SHIPPING_INF`
-  (recreject §8.2 left this open). If purge never deletes rejects, D11#9 is moot but the design is still safe.
+- **(Q2 — purge scope) ✅ RESOLVED (F2, verified live).** The recreject §8.2 open questions (Q2/Q4) — *does
+  purge delete reject/shipping rows?* — are now **answered NO** against the live DB. `DELETE_AutoPurge`
+  deletes **only** `INV_OPEN_ORDER_INF` + `INV_OPEN_ORDER_INF_HIST` + `INV_PARTS_STOCK_MST_HIST`; it never
+  touches `INV_REJECT_INF` or `INV_PART_SHIPPING_INF`. Consequently: purge avoids draining on-hand via the
+  `VC_TERMINATED=''` pre-stamp (not a `PurgeMode` flag — which doesn't exist, D9), and the old D11#9
+  "reject-delete-during-purge" concern is **unreachable** and retired (§3.1, §6). Reject/shipping deletes are
+  always genuine user deletes that restore on-hand.
 - **(Q3 — UPDATE as one net-delta row vs two)** Chose one net-delta row per edit (§4.3). Equivalent in
   on-hand effect to the legacy two-statement triggers; differs in *ledger row count* vs a literal
   `INV_PART_QTY_INF` replay. If parity must match the legacy audit row-for-row (not just the balance),
@@ -342,8 +435,10 @@ The reviewer can eyeball that the only non-zero rows carry a divergence tag.
 - **(Q5 — `VC_SOURCE_EVENT` grain for RENBAN batch)** The RecConfStat RENBAN batch update mutates *every*
   order in a renban group in one shot (recconfstat §4), potentially a multi-row qty re-balance. The service
   must post **one movement per affected (part, order)** with distinct event keys — confirm the batch driver
-  iterates rows (it should, given per-row idempotency). Multi-row-safety is explicit here (fixes the legacy
-  "trigger not multi-row-safe" hazard in shipping §2 / `InsertPartShipping`).
+  iterates rows (it should, given per-row idempotency). Multi-row-safety is explicit here and is the *exact*
+  hazard the rebuild fixes: the legacy `FROM PS, inserted i` / `JOIN inserted` triggers under-counted on
+  multi-same-part batches (F3, §6 class 5 — verified live in `InsertPartShipping`, `INSERT_RejectParts`, and
+  the RecConfStat legs). The per-row post makes the rebuild count all rows; the harness predicts the divergence.
 - **(Assumption)** `INV_PART_QTY_INF`'s 7546 historical rows are treated as legacy audit only, NOT
   migrated as truth; the rebuild ledger truth is reconstructed by replaying live source tables (§2/§6).
 
@@ -360,7 +455,8 @@ The reviewer can eyeball that the only non-zero rows carry a divergence tag.
 - **Backfill:** at cutover, seed the ledger by deriving one movement per live source row (the §6
   derivation, run for-real once) so the ledger's `SUM` equals the cutover `IN_QTY` exactly — then flip
   reads to the ledger. The harness IS the backfill validator.
-- **Bug fixes that intentionally change on-hand at cutover** (D8(3), D11#9, D12#3): the backfill will
-  produce the *corrected* on-hand. Reconcile the delta explicitly in the cutover runbook (these are the
-  "ledger correct, legacy buggy" parts from §6) so the corrected balances are reviewed, not silent.
+- **Bug fixes that intentionally change on-hand at cutover** (D8(3) arrival-reversal, D12#3 plant/assembler-yard,
+  **F3 multi-row under-count, F5 part-change** — D11#9 is retired): the backfill will produce the *corrected*
+  on-hand. Reconcile the delta explicitly in the cutover runbook (these are the "ledger correct, legacy buggy"
+  parts from §6) so the corrected balances are reviewed, not silent.
 ```

@@ -115,10 +115,12 @@ module fires `UPDATE` on the table, the **`UPDATE_` trigger is on its live path 
 - **`INSERT_RecConfStatPartsStockMstQTY`** (FOR INSERT, ~9717): `INSERT … SELECT * from inserted` into
   `_HIST`, then `IN_QTY += i.IN_QTY` for newly-shipped (`S`) or newly-arrived (`A`) rows. **Not on this
   module's path** (this module only UPDATEs), but documented because it shares the table and the same math.
-- **`DELETE_RecConfStatPartsStockMstQTY`** (FOR DELETE, ~9660): gated by `Purge.PurgeMode = 0`; reverses qty
-  (`IN_QTY −= d.IN_QTY`) for shipping (`S`, status non-blank, not terminated/empty) and arrival (`A`) rows.
-  **Not on this module's path.**
-  > Note: the `UPDATE`/`INSERT` triggers do **not** check `Purge.PurgeMode`; only the `DELETE` trigger does.
+- **`DELETE_RecConfStatPartsStockMstQTY`** (FOR DELETE, ~9660): ⚠️ CORRECTED (D9, 2026-06-17): NO
+  `Purge.PurgeMode` gate (stale-snapshot artifact; no `Purge` table in the live DB). It reverses qty
+  (`IN_QTY −= d.IN_QTY`) unconditionally for shipping (`S`, status non-blank, **not terminated**/empty) and
+  arrival (`A`) rows — the `VC_TERMINATED=''` gate is the real purge safety (`DELETE_AutoPurge` pre-stamps
+  termination before deleting). **Not on this module's path.**
+  > Note (corrected): no trigger checks `PurgeMode` (it doesn't exist); the `VC_TERMINATED` gate on DELETE is the mechanism.
   > These three are also where the obsolete `docs/triggers.sql` and the live schema agree on table but the
   > stale file keys on dropped string columns — **trust the schema** (see
   > [`../cross-cutting/trigger-source-reconciliation.md`](../cross-cutting/trigger-source-reconciliation.md)).

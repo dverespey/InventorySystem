@@ -119,9 +119,12 @@ never moves** for that part (edge case; ties to D4).
      cleared), homed in the receiving-confirmation action.
   **Invariant: editing an open order re-balances on-hand by qty-delta and by status-flip, gated on
   the supplier's add-point — EXCEPT clearing an arrival, which today leaves on-hand overstated.**
-- **`DELETE_RecConfStatPartsStockMstQTY`** (FOR DELETE, schema:9660): **skipped entirely when
-  `Purge.PurgeMode = 1`** (purge bypass — so bulk-purge of open orders doesn't drain on-hand).
-  Otherwise: **`'S'` leg** `IN_QTY −= d.IN_QTY` when `d.VC_STATUS_SUPPLIER_SHIPPING <> ''` AND
+- **`DELETE_RecConfStatPartsStockMstQTY`** (FOR DELETE, schema:9660): ⚠️ **CORRECTED 2026-06-17 vs live
+  (D9): there is NO `Purge.PurgeMode` bypass** (that was a stale 2026-06-01-snapshot artifact; the live DB
+  has no `Purge` table). The trigger subtracts **unconditionally** when its status gates match — including
+  the `VC_TERMINATED = ''` gate, which is the REAL purge-safety mechanism: `DELETE_AutoPurge` pre-stamps
+  `VC_TERMINATED <> ''` on aged rows BEFORE deleting them, so those rows are already excluded from the
+  qty-subtraction (no flag needed). The legs: **`'S'` leg** `IN_QTY −= d.IN_QTY` when `d.VC_STATUS_SUPPLIER_SHIPPING <> ''` AND
   `VC_STATUS_EMPTY_TRAILER = ''` AND `VC_TERMINATED = ''` AND add-point `'S'`; **`'A'` leg**
   `IN_QTY −= d.IN_QTY` when (arrival/plant-yard/assembler-yard/warehouse set) AND empty-trailer
   `= ''` AND terminated `= ''` AND add-point `'A'`. ⚠️ Does **NOT** rewrite `VC_LAST_UPDATE` and does
