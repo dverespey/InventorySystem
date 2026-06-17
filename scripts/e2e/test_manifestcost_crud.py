@@ -60,6 +60,10 @@ ANCHOR_CODES = ["42600F261100", "42600F281100"]   # in VC_ASSY_PART_NUMBER_CODE 
 
 # Overlap-REJECT: same assy code, a window that falls INSIDE the anchor window.
 OVERLAP = {"code": ANCHOR["code"], "manifest": "29", "start": "20260101", "end": "20260601"}
+# TOUCH-BOUNDARY: a candidate ENDING exactly on the anchor's START day (20250818). Closed-interval
+# billing semantics => touching windows OVERLAP and must be REJECTED. Locks the boundary so a future
+# predicate edit ('<' -> '<=') can't silently flip billing (reviewer follow-up, billing-critical).
+TOUCH = {"code": ANCHOR["code"], "manifest": "29", "start": "20240101", "end": ANCHOR["start"]}
 
 # D6-VALID-ALLOW (headline) + round-trip throwaway: same assy code, NON-overlapping
 # window, REUSING the anchor's manifest number 29 (the dropped index would reject this).
@@ -335,6 +339,19 @@ def check_validation(page, rep):
         stxt = status.inner_text() if status else ""
         ok = bool(lines) or ("overlaps an existing price window" in stxt)
         rep.check("Validation HEADLINE: OVERLAPPING window (same assy code) REJECTED (checkWindowOverlap)",
+                  ok, (lines[-1].split("SPIKE")[-1][:80] if lines else ("status=%r" % stxt[:80])))
+
+    # --- TOUCH BOUNDARY: candidate ends exactly on the anchor's start day -> REJECTED (closed interval) ---
+    if not _new_form(page):
+        rep.skip("Validation: touching-boundary window rejected", "New button not found")
+    else:
+        off = _fill_and_save(page, TOUCH)
+        lines = lib.grep_spike_since(off, "save REJECTED: window overlap")
+        status = page.query_selector("#mc-status")
+        stxt = status.inner_text() if status else ""
+        ok = bool(lines) or ("overlaps an existing price window" in stxt)
+        rep.check("Validation: TOUCHING-boundary window (cand end == anchor start) REJECTED "
+                  "(closed-interval billing — locks the boundary semantics)",
                   ok, (lines[-1].split("SPIKE")[-1][:80] if lines else ("status=%r" % stxt[:80])))
 
     rep.check("Validation left DB clean (still %d rows)" % EXPECTED_COUNT,
