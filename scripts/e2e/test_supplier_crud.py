@@ -11,14 +11,23 @@ opens /supplier, and asserts on BOTH the DOM and the gateway-log SPIKE markers
 Mirrors test_order_spike.py: reuses lib.py (Report, log markers, SPIKE grep,
 trial reset) and the domId-first selector. Views/SQL are NOT edited here.
 
+SINGLE COMBINED VIEW (David's decision): /supplier opens ONE view
+Master/Supplier/Supplier containing the grid (left) AND the detail edit-form
+(right). Row-select is a SAME-VIEW prop write (custom.recordId), NOT a
+navigation — onRowClick sets self.view.custom.recordId = event.value.RecordID
+and the custom.recordId onChange load script populates the in-view form. There
+is no List->Detail page navigation anywhere; every check runs against the one
+view without leaving it.
+
 Scope (parity-vs-spec, NOT testing the Ignition platform):
   1 List renders          — #supplier-grid shows the 16 real INV_SUPPLIER_MST
                             rows in code order; anchor 0501B/0572B/07100 present;
                             enum LABELS (BOTH/SHIPPED) render, not raw codes.
                             Parity oracle: legacy SELECT_SupplierInfo '' = same
                             16 codes, same order (verified via sqlcmd).
-  2 Row select -> Detail   — onRowClick routes event.value.RecordID -> Detail;
-                            the selected supplier's code/name load and the
+  2 Row select -> form     — onRowClick sets custom.recordId (in-view prop
+                            write); the recordId onChange loads the selected
+                            supplier's code/name into the same-view form and the
                             Logistics combo shows a NAME (TLD LOGISTICS SERVICES).
   3 Validation             — <5-char code rejected; dup code blocked
                             (checkCodeUnique). Asserted via #supplier-status text
@@ -82,6 +91,28 @@ def q(page, domid, text=None, role=None):
         if loc.count():
             return loc.first
     return None
+
+
+def fill_field(page, domid, val):
+    """Robustly set a Perspective text-field's bound value headless.
+
+    Perspective inputs are React-controlled: a bare .fill() sets the DOM value
+    but does NOT always fire the onInput/onChange that commits the bidirectional
+    binding into view.custom.form_*. Real keystrokes (press_sequentially) do.
+    Sequence: focus -> select-all + delete (clear) -> type -> blur (Tab) so the
+    binding write-back fires before the next action."""
+    f = page.query_selector("#" + domid)
+    if not f:
+        return False
+    f.click()
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Meta+A")   # macOS select-all (dev box is a Mac)
+    page.keyboard.press("Delete")
+    if val:
+        f.type(val, delay=30)       # ElementHandle.type = real per-key events
+    page.keyboard.press("Tab")      # blur -> commit the bidirectional text binding
+    page.wait_for_timeout(350)
+    return True
 
 
 def sqlq(query):
@@ -157,9 +188,9 @@ def check_list(page, rep):
 
 # ---- check 2: row select -> Detail ---------------------------------------
 def open_detail_via_row(page, rep, code):
-    """Click the grid row whose first cell == `code`; assert nav to Detail and
-    the onRowClick SPIKE marker fired with the right recordId. Returns True if
-    Detail loaded."""
+    """Click the grid row whose first cell == `code`; assert the in-view prop
+    write (custom.recordId) fired and the recordId onChange loaded the row into
+    the same-view form. NO navigation. Returns True if the form populated."""
     off = lib.log_marker()
     # find the row containing the code and click it (single-click selects + fires onRowClick).
     target = None
@@ -173,15 +204,15 @@ def open_detail_via_row(page, rep, code):
         return False
     target.scroll_into_view_if_needed()
     target.click()
-    time.sleep(2.0)   # WS round-trip + navigate + Detail onStartup
+    time.sleep(2.0)   # WS round-trip: prop write -> recordId onChange load
     click_lines = lib.grep_spike_since(off, "Supplier list -> open Detail")
-    rep.check("onRowClick routed RecordID -> Detail (SPIKE marker, recId=%d)" % DETAIL_ANCHOR["id"],
+    rep.check("onRowClick set custom.recordId in-view (SPIKE marker, recId=%d)" % DETAIL_ANCHOR["id"],
               any(("recordId=%d" % DETAIL_ANCHOR["id"]) in l for l in click_lines),
-              click_lines[-1].split("SPIKE")[-1][:70] if click_lines else "no nav marker in wrapper.log")
+              click_lines[-1].split("SPIKE")[-1][:70] if click_lines else "no row-click marker in wrapper.log")
 
-    # Detail loaded marker (onStartup edit-mode).
+    # recordId onChange load marker (edit-mode, same view).
     load_lines = lib.grep_spike_since(off, "Supplier Detail loaded")
-    rep.check("Detail onStartup loaded the row (SPIKE 'Detail loaded id=%d')" % DETAIL_ANCHOR["id"],
+    rep.check("recordId onChange loaded the row into the in-view form (SPIKE 'Detail loaded id=%d')" % DETAIL_ANCHOR["id"],
               any(("id=%d" % DETAIL_ANCHOR["id"]) in l for l in load_lines),
               load_lines[-1].split("SPIKE")[-1][:70] if load_lines else "no Detail-loaded marker")
 
@@ -218,14 +249,7 @@ def check_validation(page, rep):
     page.wait_for_timeout(1500)
 
     def set_field(domid, val):
-        f = page.query_selector("#" + domid)
-        if not f:
-            return False
-        f.click()
-        f.fill(val)
-        page.keyboard.press("Tab")   # commit the bidirectional text binding
-        page.wait_for_timeout(300)
-        return True
+        return fill_field(page, domid, val)
 
     # --- short code (<5 chars) ---
     off = lib.log_marker()
@@ -282,9 +306,8 @@ def check_delete_gate(page, rep):
     rep.check("Delete-gate pre-state: %s has %d refs in DB (>0)" % (REFERENCED["code"], REFERENCED["refCount"]),
               db_ref == REFERENCED["refCount"], "db refCount=%d" % db_ref)
 
-    page.goto(lib.BASE + "/data/perspective/client/spike/supplier?recordId=%d" % REFERENCED["id"],
-              wait_until="networkidle", timeout=30000)
-    # the spike route opens the List; reach Detail by clicking the referenced row.
+    # single combined view: open /supplier and click the referenced row to load
+    # it into the in-view detail form (same-view prop write, no navigation).
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
     page.wait_for_timeout(1500)
@@ -357,11 +380,7 @@ def check_round_trip(page, rep):
     page.wait_for_timeout(1500)
 
     def set_field(domid, val):
-        f = page.query_selector("#" + domid)
-        if not f:
-            return False
-        f.click(); f.fill(val); page.keyboard.press("Tab"); page.wait_for_timeout(250)
-        return True
+        return fill_field(page, domid, val)
 
     inserted = False
     new_id = None
