@@ -12,16 +12,20 @@
      author on-disk NQ resources (the gateway parses a NQ's data.bin as Ignition
      XML serialization; a hand-authored file fails with
      "SAXParseException: Content is not allowed in prolog" — proven on this gateway).
-     Instead this file is the CANONICAL SQL, executed at runtime via inline
+     Instead, each Perspective view INLINES its own copy of this SQL and runs it via
        system.db.runPrepQuery(sql, args, "Inventory_Spike")
-     inside the Perspective views' binding/script transforms (the pattern PROVEN by
-     the Order spike: …/views/Order/OrderSpike/view.json).
+     in its binding/script transforms (the pattern PROVEN by the Order spike:
+     …/views/Order/OrderSpike/view.json).
 
-     Ignition NQ param syntax (:paramName) is shown below for the canonical/Designer
-     form. The runtime views use positional "?" placeholders with an ordered args
-     list (runPrepQuery), in the same column order documented per query. When this
-     project is later opened in the Designer these can be promoted to true NQ
-     resources for the single-point-edit benefit (a Designer task, not headless).
+     ⚠️ AUTHORITATIVE-AT-RUNTIME = THE VIEW's inline SQL, NOT this file. This file is
+     NOT loaded or executed — it is the HUMAN-READABLE AUTHORING SPEC that each view's
+     inline SQL is hand-copied from, and the two MUST be kept in sync by hand (the view
+     uses positional "?" placeholders + an ordered args list; this spec shows the
+     equivalent :paramName form for readability/the future Designer promotion). They CAN
+     drift — when editing a query, change BOTH the view and this spec. (Single-point-of-edit
+     via real on-disk Named Queries is blocked headless — see the MECHANISM note above; it
+     becomes possible only when the project is opened in the Designer and these are promoted
+     to true NQ resources, a Designer task. Until then: view = truth, this = synced spec.)
 
    ----------------------------------------------------------------------------
    SITE SEAM (D1):  every read/write of a master table carries a :siteId param,
