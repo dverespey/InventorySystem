@@ -24,8 +24,32 @@ update the phase checklist as modules are completed.
 - **Reporting:** the 29 `REPORT_*` procs → call directly at first, render HTML/PDF
   (replaces QuickReport). Migrate proc logic into the app later.
 
-> Open question for the user: confirm Rails-as-primary vs Python-as-primary. The plan
-> below is stack-shaped but the *sequence* and *findings* are stack-neutral.
+> **⚠️ Target stack under reconsideration (2026-06).** Inductive Automation **Ignition + Perspective**
+> is being evaluated against the Rails plan above, to consolidate with the sibling **GALC→Ignition**
+> migration (one platform/skillset/license for the shop). Multi-agent review verdict: **LEAN-GO**,
+> gated on a vertical-slice spike (see "Target-platform validation gate" below). Full analysis:
+> [`docs/analysis/ignition-feasibility.md`](../../../docs/analysis/ignition-feasibility.md).
+> **The plan below is stack-shaped, but the *sequence* and *findings* are stack-neutral** — only each
+> module spec's §6 "Target design" section is platform-specific.
+
+## Domain decisions log
+Domain-expert answers to the §8 "open questions" are recorded as `D#` entries in
+[`docs/analysis/decisions.md`](../../../docs/analysis/decisions.md) and propagated into the affected
+specs. **Read the log before designing any module.** Workflow: collect & dedupe §8 questions → verify
+the answer against proc/trigger source → record `D#` (verbatim intent + "what this means") → mark each
+spec's §8 item **✅ RESOLVED (D#)** and update its §2/§6/§7 → commit. Decisions are **platform-neutral**
+(they survive a stack change). Recorded so far: **D1** multi-site isolation · **D2** surrogate-id keys ·
+**D3** block-delete (+ future archival) · **D4** supplier-level add-point · **D5** stocktaking is a delta ·
+**D6** time-bounded manifest pricing (legacy billing is window-blind/buggy) · **D7** RecConfStat is the
+arrival-add path · **D8** three confirmed bug fixes.
+
+## Target-platform validation gate (before Phase 0)
+If the target stack is Ignition (or any high-uncertainty choice), run the **vertical-slice spike**
+first — a time-boxed GO/STAY decision, not the build. Plan + exit criteria:
+[`docs/analysis/ignition-spike-plan.md`](../../../docs/analysis/ignition-spike-plan.md). Three checks on
+the worst-case screen (`PartsStockMaster`): **(A)** Perspective UI velocity (the one veto), **(B)** a
+structural `siteScopedQuery()` multi-site guard, **(C)** EDI shared-dir file I/O re-scope + single-owner
+/ atomic handling. **Do not rewrite any §6 spec section until the spike passes.**
 
 ## The central pattern: procs are the spec
 Because business logic lives in 179 procs + 24 triggers (not the Delphi UI), migration
@@ -50,8 +74,10 @@ transactions** — capture each trigger's exact rule in the module spec before t
 ## Phase checklist
 
 ### Phase 0 — Foundations
-- [ ] Confirm stack (Rails primary?) and hosting (on-prem vs cloud).
-- [ ] Rails app skeleton + connect to SQL Server (read-only) via `tiny_tds`.
+- [ ] **Resolve the target stack** via the validation gate above (Ignition spike → GO/STAY) before
+      committing — then hosting (on-prem vs cloud).
+- [ ] App skeleton + connect to SQL Server (read-only) — Rails via `tiny_tds`, **or** an Ignition
+      gateway with a JDBC connection + named queries / `system.db.createSProcCall` if GO on Ignition.
 - [ ] `db:schema:dump` the 41 tables; generate baseline models.
 - [ ] Auth: port `INV_USERS` / Logon (note legacy password scheme — audit it).
 - [ ] Sanitized config (no plaintext DB passwords; use Rails credentials/ENV).

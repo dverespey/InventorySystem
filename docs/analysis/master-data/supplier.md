@@ -4,7 +4,8 @@
 
 > First fully-analyzed module — also validates the migration methodology end to end.
 > "Supplier" here = the **vendors the site orders parts from** (not the site's own
-> identity, which lives in `InventorySystem.INI [SITE]`).
+> identity, which lives in `InventorySystem.INI [SITE]` today; per decision D1 that site
+> identity moves out of the INI into the `sites` table).
 
 ## 1. Legacy surface
 - **Form:** `SupplierMaster.pas` (12.7 KB) + `SupplierMaster.dfm`. Author: Aaron Huge, 2002.
@@ -27,7 +28,7 @@
 | Column | Type | Meaning / notes |
 |--------|------|-----------------|
 | `IN_SUPPLIER_ID` | int IDENTITY PK | Surrogate key (`RecordID` in UI) |
-| `VC_SUPPLIER_CODE` | varchar(5) NOT NULL | **Business key — exactly 5 chars, unique** |
+| `VC_SUPPLIER_CODE` | varchar(5) NOT NULL | **Business key — exactly 5 chars; DB-unique via `IX_INV_SUPPLIER_MST`** |
 | `VC_SUPPLIER_NAME` | varchar(25) | |
 | `VC_ADDRESS`,`VC_CITY`,`VC_STATE`,`VC_ZIP`,`VC_COUNTRY` | varchar | Address (COUNTRY unused by form) |
 | `VC_TEL`,`VC_FAX` | varchar(10) | |
@@ -37,10 +38,10 @@
 | `IN_LOGISTICS_ID` | int FK | → `INV_LOGISTICS_MST` |
 | `VC_OUTPUT_FILE` | varchar(1) | `T`=TEXT, `E`=EXCEL, `B`=BOTH |
 | `BIT_ORDER_FILE_TIMESTAMP` | bit | Append timestamp to order file? |
-| `BIT_SITE_NUMBER_IN_ORDER` | bit | **Include site number in order file** — latent multi-site hook |
+| `BIT_SITE_NUMBER_IN_ORDER` | bit | **Include site number in order file** — latent multi-site hook; per D1 the site is now first-class (`site_id` FK), so this flag's site number resolves from the row's `sites` record |
 | `VC_CREATE_ORDER_SHEET` | varchar(5) | Part type that triggers order-sheet creation |
 | `VC_INVENTORY_ADD_POINT` | varchar(1) | `S`=SHIPPED, `A`=ARRIVED (when stock is counted as on-hand) |
-| `VC_ADD`,`VC_LASTUPDATE` | varchar(16) | **Timestamps stored as `yyyymmddHHMMSS` strings**, not datetime ⚠️ |
+| `VC_ADD`,`VC_LASTUPDATE` | varchar(16) | **Timestamps stored as `yyyymmddHHMMSSff` strings** (16 chars: `CONVERT(…,112)` date + 4×`SUBSTRING(…,114)` = HH+MM+SS+`ff`), not datetime ⚠️ |
 
 **Triggers on these tables:**
 - `DELETE_SupplierCode` (on `INV_SUPPLIER_MST` FOR DELETE): sets
@@ -66,17 +67,22 @@ DeleteSupplierInfo` use a single ADO `Inv_StoredProc`, setting `ProcedureName :=
 ## 4. Business rules & edge cases
 - **Supplier code = exactly 5 chars** (form `Validate`: `length < 5` rejected; field is
   varchar(5) so >5 truncates).
-- **Code must be unique** — enforced by app-side dup check, *not* a DB constraint.
-  → In the rebuild, make this a real unique index + model validation.
+- **Code must be unique** — enforced **both** by the app-side dup check (the two-step Insert) **and**
+  by a real DB UNIQUE index `IX_INV_SUPPLIER_MST` on `VC_SUPPLIER_CODE` (verified in the schema). The
+  app check is redundant with the index; the index is the true backstop against a rename collision.
+  → In the rebuild, a model `uniqueness` validation backed by that index replaces the app check. Per
+  decision D1 (multi-site, fully isolated) the uniqueness is **per-site**: the index becomes composite
+  `(site_id, VC_SUPPLIER_CODE)` and the validation is scoped `uniqueness: {scope: :site_id}`.
 - **Logistics is referenced by name** in the UI but stored as id; an empty/blank combo
   saves `IN_LOGISTICS_ID = NULL` (explicit "empty string bug" workaround in `HoldDetails`).
-- **Timestamps are `yyyymmddHHMMSS` strings** (`VC_ADD` on insert, `VC_LASTUPDATE` on
+- **Timestamps are `yyyymmddHHMMSSff` strings** (16 chars; `VC_ADD` on insert, `VC_LASTUPDATE` on
   update). Preserve format if the legacy app keeps reading the same rows during parallel
   run; normalize to real timestamps only at the Postgres phase.
 - **Delete is soft on parts** (unlink via trigger), hard on the supplier row.
 - Coded single-char enums: OutputFile `T/E/B`, AddPoint `S/A`.
 - `VC_BREAKDOWN_ORDER_DIRECTORY` is a Windows path chosen via a directory picker —
-  meaningless in a web/multi-site context (see §8).
+  meaningless in a web/multi-site context (see §8). Per D1, with sites fully isolated this output
+  target is per-site config (the `[DIRECTORIES]`/output paths move from the INI into the `sites` table).
 
 ## 5. UI / UX notes
 - Grid + detail-panel pattern; selection syncs panel. Search is **client-side** over the
@@ -89,8 +95,11 @@ DeleteSupplierInfo` use a single ADO `Inv_StoredProc`, setting `ProcedureName :=
 ## 6. Target design  *(Rails primary)*
 - **Model:** `Supplier` → table `INV_SUPPLIER_MST` (`self.table_name`, custom PK
   `IN_SUPPLIER_ID`). `belongs_to :logistics, optional: true` (FK `IN_LOGISTICS_ID`).
+  `belongs_to :site` (FK `site_id`) with enforced current-site scoping (per D1 — e.g.
+  `acts_as_tenant`/`default_scope`; auth binds the user to a site).
   `has_many :parts_stocks` with `dependent: :nullify` (mirrors the trigger).
-  - Validations: `supplier_code` presence, `length: {is: 5}`, `uniqueness` (+ DB unique index).
+  - Validations: `supplier_code` presence, `length: {is: 5}`, `uniqueness: {scope: :site_id}`
+    (backed by a composite DB unique index `(site_id, VC_SUPPLIER_CODE)` — per-site, per D1).
   - Enums: `output_file {T,E,B}`, `inventory_add_point {S,A}`.
   - Callback/columns: set `vc_add`/`vc_lastupdate` — keep string format during parallel run.
 - **Controller/routes:** RESTful `resources :suppliers`.
@@ -106,18 +115,30 @@ DeleteSupplierInfo` use a single ADO `Inv_StoredProc`, setting `ProcedureName :=
 - [ ] Stage 2 — writes via wrapped procs (keeps app-side dup check + trigger behavior).
 - [ ] Stage 3 — reimplement: ActiveRecord validations replace the dup check; a
       `dependent: :nullify` association replaces `DELETE_SupplierCode`; real timestamps;
-      add the unique index. Postgres-ready.
+      carry the **existing** `IX_INV_SUPPLIER_MST` unique index across. Postgres-ready.
+- [ ] Postgres phase (per D1) — add the `site_id` (NOT NULL) FK → `sites`, and replace the
+      single-column unique index with a **per-site** composite unique index
+      `(site_id, VC_SUPPLIER_CODE)`. (Legacy single-site DB untouched during the parallel run;
+      the new app filters to its one site until then.)
 
 ## 8. Open questions for the user (domain expert)
-1. **Multi-site & suppliers:** when the app goes multi-site, is the supplier/vendor list
-   **shared across all sites** or **per-site**? This decides whether `INV_SUPPLIER_MST`
-   gets a `site_id` scope. (Today it has none; `VC_SUPPLIER_CODE` is globally unique.)
+1. **Multi-site & suppliers:** ✅ RESOLVED (D1): per-site — sites run fully isolated, so the
+   supplier/vendor list is **per-site, not shared**. `INV_SUPPLIER_MST` gains a `site_id`
+   (NOT NULL) FK → `sites`, every query is scoped to the current site, and `VC_SUPPLIER_CODE`
+   becomes unique **per-site** (composite `(site_id, VC_SUPPLIER_CODE)`), not globally.
+   See decision D1 (docs/analysis/decisions.md). *(Original context: today it has no site
+   column and `VC_SUPPLIER_CODE` is globally unique.)*
 2. **`VC_BREAKDOWN_ORDER_DIRECTORY`** is a local Windows path for writing order files.
    In a web/multi-site world, what should replace it — a per-site configured output
    target (network share / SFTP / object storage), or is file output going away in favor
    of in-app delivery? `BIT_SITE_NUMBER_IN_ORDER` suggests order files already encode a
    site number — worth understanding that convention.
-3. Is editing `VC_SUPPLIER_CODE` after creation actually used/desired? (UPDATE allows it.)
+3. ✅ **RESOLVED (D2): yes — `VC_SUPPLIER_CODE` is an editable, non-key attribute.** Per decision
+   D2 (docs/analysis/decisions.md), the surrogate `IN_SUPPLIER_ID` is the sole key; all FKs/joins/
+   lookups resolve on it, so editing the supplier code is **allowed** (though an extremely rare
+   event) and **safe with no cascade** because nothing references the string. The code remains a
+   unique attribute **per-site** (composite `(site_id, VC_SUPPLIER_CODE)`, per D1). Any legacy
+   supplier-save path that resolved by string must be reworked to resolve by id.
 4. Is `VC_COUNTRY` intentionally unused by the form?
 
 ## 9. Test cases / parity checks

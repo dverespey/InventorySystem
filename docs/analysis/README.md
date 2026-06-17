@@ -33,9 +33,9 @@ Admin/auth/shell.
 ## Progress
 | Area | Spec | Rebuilt |
 |------|:----:|:-------:|
-| Master data | 🟨 [Supplier ✅](master-data/supplier.md) | ⬜ |
+| Master data | ✅ [Supplier](master-data/supplier.md) · [Logistics](master-data/logistics.md) · [Size](master-data/size.md) · [Manifest cost](master-data/manifest-cost.md) · [Master-maint hub](master-data/master-maint.md) | ⬜ |
 | Production calendar | ⬜ | ⬜ |
-| Inventory / Stock | ⬜ | ⬜ |
+| Inventory / Stock | ✅ [Parts-stock master](inventory-stock/parts-stock-master.md) · [Stocktaking](inventory-stock/stocktaking.md) · [Inv-mgmt](inventory-stock/inv-mgmt.md) · [Logistics breakdown](inventory-stock/logistics-breakdown.md) | ⬜ |
 | Receiving | ⬜ | ⬜ |
 | Shipping | ⬜ | ⬜ |
 | Ordering & Renban | ⬜ | ⬜ |
@@ -44,3 +44,24 @@ Admin/auth/shell.
 | Assembly | ⬜ | ⬜ |
 | Reporting | ⬜ | ⬜ |
 | Admin / auth | ⬜ | ⬜ |
+
+## Cross-cutting findings
+Findings that span modules (live legacy defects, recurring hazards) live in `cross-cutting/`:
+- [`datamodule-retry-target-bugs.md`](cross-cutting/datamodule-retry-target-bugs.md) — **29 confirmed
+  wrong-target retry-recursion bugs in `DataModule.pas`** (8 CRITICAL, incl. 4 `Delete*` methods that
+  can silently delete an unrelated supplier on a transient error). Legacy-hotfix candidates +
+  rebuild fix. See pattern **P12** in the skill's `cross-cutting-patterns.md`.
+- [`trigger-source-reconciliation.md`](cross-cutting/trigger-source-reconciliation.md) — the **24 live
+  triggers** (`DB Schema/Create Inventory.sql` is authoritative); **`docs/triggers.sql` is an obsolete
+  pre-int-FK-refactor snapshot** (keys on dropped string columns, missing 5 triggers). Don't port from it.
+
+## Target-stack reconsideration
+- [`ignition-feasibility.md`](ignition-feasibility.md) — multi-agent go/no-go on switching the rebuild
+  target from **Rails + Python** to **Ignition + Perspective** (to consolidate with the GALC migration).
+  Verdict: **LEAN-GO**, gated on a ~1–2 week vertical-slice spike on `PartsStockMaster`. The D1–D8
+  decisions and spec §1–§5/§7–§9 are platform-neutral and carry over; only the §6 "Target design
+  (Rails primary)" sections would be redone. **Not final** — Rails remains the fallback.
+- [`ignition-spike-plan.md`](ignition-spike-plan.md) — the **gating vertical-slice spike** (~1–2 weeks)
+  that converts the LEAN-GO into a hard **GO/STAY**: three checks on `PartsStockMaster` — (A) Perspective
+  UI velocity, (B) a structural `siteScopedQuery()` multi-site guard, (C) EDI shared-dir file I/O
+  re-scope + single-owner/atomic handling. Don't redo any §6 section until it passes.

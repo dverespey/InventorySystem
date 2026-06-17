@@ -60,7 +60,22 @@ Thumbs.db
 *.log
 
 # ---------------------------------------------------------------------------
+# Client data exports (real plant data — NEVER commit)
+# ---------------------------------------------------------------------------
+DB Schema/OrderSimulation*.xls
+DB Schema/*.bak
+
+# ---------------------------------------------------------------------------
 # Stray copies / archives that should not be versioned
 # ---------------------------------------------------------------------------
 Archive/
 Copy of CAMEX System/
+
+# E2E harness: never commit gateway creds or render artifacts
+scripts/e2e/.env
+scripts/e2e/artifacts/
+__pycache__/
+*.pyc
+
+# Local dev-sandbox bring-up script — carries the throwaway SQL Server sa cred
+scripts/spike-db.sh
