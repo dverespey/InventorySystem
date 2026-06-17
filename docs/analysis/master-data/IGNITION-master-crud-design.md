@@ -180,9 +180,26 @@ views/<Master>/Detail    — form (one labelled input per editable column; combo
 
 ### A.2 Named Query set + naming (mirror the schema/procs)
 
-Per the `ignition-named-query-crud-practice` memory, organize NQs in a folder that **mirrors the table**
-and name each for the op it performs, so "which NQ touches this table" is a single lookup and a schema
-change is a single-point edit. Folder per master under the project's Named Queries:
+> ⚠️ **MECHANISM CORRECTION (2026-06-16, build finding — overrides the "formal on-disk Named Query
+> resources" assumption below).** A headless build CANNOT reliably author on-disk Named Query resources:
+> the gateway parses a NQ's `data.bin` as **Ignition XML serialization**, and a hand-authored file fails
+> with `SAXParseException: Content is not allowed in prolog` (proven — the first hand-built `lookups/partType`
+> NQ would not deserialize; this is the exact "undocumented on-disk NQ format, do not hand-author blind"
+> hazard called out earlier). Formal NQ resources require the **Designer** (interactive), which the headless
+> fleet build doesn't have. **DELIVERY DECISION:** keep this §A.2 set as the **SQL source-of-truth** in a
+> `.sql` doc (`docs/analysis/master-data/master-crud-namedqueries.sql`, mirroring the Order spike's
+> `named-queries.sql`), and **execute each via inline `system.db.runPrepQuery(sql, args, "Inventory_Spike")`
+> in the Perspective view's binding/script transforms** — the pattern PROVEN on this gateway by the Order
+> spike. The folder/naming/param/site-seam design below is unchanged; only the runtime delivery is inline
+> `runPrepQuery` instead of a `system.db.runNamedQuery` call against an on-disk resource. (When the project
+> is later opened in the Designer, these can be promoted to true NQ resources for the single-point-edit
+> benefit — a Designer task, not a headless one.) The broken `lookups/partType` NQ resource must be removed.
+>
+> *Folder/naming below is the logical organization of that SQL (NQ-style), not literal on-disk NQ resources.*
+
+Per the `ignition-named-query-crud-practice` memory, organize the SQL in a structure that **mirrors the
+table** and name each for the op it performs, so "which query touches this table" is a single lookup and a
+schema change is a single-point edit. Logical set per master:
 
 ```
 Named Queries/
