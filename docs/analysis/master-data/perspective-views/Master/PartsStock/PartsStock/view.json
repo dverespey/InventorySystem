@@ -1,0 +1,1897 @@
+{
+ "custom": {
+  "form_comments": "",
+  "form_kanban": "",
+  "form_leadtime": 0,
+  "form_lineName": "TUNDRA",
+  "form_logisticsId": null,
+  "form_lotQty": 0,
+  "form_lotSizeOrders": true,
+  "form_ltFri": 0,
+  "form_ltMon": 0,
+  "form_ltSat": 0,
+  "form_ltThu": 0,
+  "form_ltTue": 0,
+  "form_ltWed": 0,
+  "form_partCost": 0.0,
+  "form_partNumber": "",
+  "form_partTypeId": null,
+  "form_partsName": "",
+  "form_qty": 0,
+  "form_renbanCount": 0,
+  "form_renbanId": null,
+  "form_sdFri": 0,
+  "form_sdMon": 0,
+  "form_sdSat": 0,
+  "form_sdThu": 0,
+  "form_sdTue": 0,
+  "form_sdWed": 0,
+  "form_shipdays": 0,
+  "form_sizeId": null,
+  "form_supplierId": null,
+  "lineOptions": [],
+  "logisticsOptions": [],
+  "partTypeOptions": [],
+  "recordId": 0,
+  "renbanOptions": [],
+  "runNonce": 0,
+  "searchTerm": "",
+  "siteId": 1,
+  "sizeOptions": [],
+  "statusMsg": "",
+  "supplierOptions": []
+ },
+ "params": {},
+ "propConfig": {
+  "custom.gridModel": {
+   "binding": {
+    "config": {
+     "expression": "{view.custom.searchTerm} + '|' + {view.custom.siteId} + '|' + {view.custom.runNonce}"
+    },
+    "transforms": [
+     {
+      "code": "\t# ---- Master/PartsStock combined grid builder \u2014 inline runPrepQuery (Order/Size pattern) ----\n\t# Executes the canonical PartsStock/list SQL from master-crud-namedqueries.sql via\n\t# system.db.runPrepQuery. IG81-COMPAT: plain parameterized T-SQL; identical on 8.1.52 and 8.3.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tparts = unicode(value).split(\"|\")\n\tsearchTerm = parts[0]\n\tsiteId = int(float(parts[1]))   # IG-SITE: plumbed view->query; predicate still commented (D1)\n\n\tsql = \"SELECT  p.IN_PART_ID AS RecordID, p.VC_PART_NUMBER AS PartNumber, p.VC_PARTS_NAME AS PartsName,         sup.VC_SUPPLIER_CODE AS SupplierCode, lg.VC_LOGISTICS_NAME AS LogisticsName,         sz.VC_SIZE_CODE AS SizeCode, rb.VC_RENBAN_GROUP_CODE AS RenbanCode, pt.VC_PART_TYPE AS PartType,         p.VC_LINE_NAME AS LineName, p.IN_QTY AS Qty FROM    INV_PARTS_STOCK_MST p         LEFT OUTER JOIN INV_SUPPLIER_MST sup ON p.IN_SUPPLIER_ID = sup.IN_SUPPLIER_ID         LEFT OUTER JOIN INV_LOGISTICS_MST lg ON p.IN_LOGISTICS_ID = lg.IN_LOGISTICS_ID         LEFT OUTER JOIN INV_SIZE_MST sz ON p.IN_SIZE_ID = sz.IN_SIZE_ID         LEFT OUTER JOIN INV_RENBAN_GROUP_MST rb ON p.IN_RENBAN_ID = rb.IN_RENBAN_ID         LEFT OUTER JOIN INV_PART_TYPE_MST pt ON p.IN_PART_TYPE_ID = pt.IN_PART_TYPE_ID WHERE  (? = '' OR p.VC_PART_NUMBER LIKE '%' + ? + '%' OR p.VC_PARTS_NAME LIKE '%' + ? + '%') -- IG-SITE:  AND p.site_id = ? ORDER BY p.VC_PART_NUMBER\"\n\tds = system.db.runPrepQuery(sql, [searchTerm, searchTerm, searchTerm], DB)\n\tlog.info(\"SPIKE PartsStock/list: %d rows (search='%s' site=%d)\" % (ds.rowCount, searchTerm, siteId))\n\n\tcolumns = [\n\t\t{\"field\": \"PartNumber\",   \"header\": {\"title\": \"Part Number\"}, \"strictWidth\": 130, \"sort\": \"ascending\"},\n\t\t{\"field\": \"PartsName\",    \"header\": {\"title\": \"Parts Name\"}},\n\t\t{\"field\": \"SupplierCode\", \"header\": {\"title\": \"Supplier\"}, \"strictWidth\": 90},\n\t\t{\"field\": \"LogisticsName\",\"header\": {\"title\": \"Logistics\"}, \"strictWidth\": 100},\n\t\t{\"field\": \"SizeCode\",     \"header\": {\"title\": \"Size\"}, \"strictWidth\": 80},\n\t\t{\"field\": \"RenbanCode\",   \"header\": {\"title\": \"Renban\"}, \"strictWidth\": 90},\n\t\t{\"field\": \"PartType\",     \"header\": {\"title\": \"Type\"}, \"strictWidth\": 80},\n\t\t{\"field\": \"LineName\",     \"header\": {\"title\": \"Line\"}, \"strictWidth\": 100},\n\t\t{\"field\": \"Qty\",          \"header\": {\"title\": \"On-Hand\"}, \"strictWidth\": 90},\n\t\t{\"field\": \"RecordID\",     \"header\": {\"title\": \"id\"}, \"visible\": False}\n\t]\n\trows = []\n\tfor r in xrange(ds.rowCount):\n\t\trows.append({\n\t\t\t\"RecordID\": ds.getValueAt(r, \"RecordID\"), \"PartNumber\": ds.getValueAt(r, \"PartNumber\"),\n\t\t\t\"PartsName\": ds.getValueAt(r, \"PartsName\"), \"SupplierCode\": ds.getValueAt(r, \"SupplierCode\"),\n\t\t\t\"LogisticsName\": ds.getValueAt(r, \"LogisticsName\"), \"SizeCode\": ds.getValueAt(r, \"SizeCode\"),\n\t\t\t\"RenbanCode\": ds.getValueAt(r, \"RenbanCode\"), \"PartType\": ds.getValueAt(r, \"PartType\"),\n\t\t\t\"LineName\": ds.getValueAt(r, \"LineName\"), \"Qty\": ds.getValueAt(r, \"Qty\")\n\t\t})\n\treturn {\"data\": rows, \"columns\": columns}\n",
+      "type": "script"
+     }
+    ],
+    "type": "expr"
+   }
+  },
+  "custom.recordId": {
+   "onChange": {
+    "enabled": null,
+    "script": "\t# ---- PartsStock combined view: recordId change -> load detail ----\n\t# Grid onRowClick sets self.view.custom.recordId = event.value[\"RecordID\"] (same-view\n\t# prop write, NO navigation). This onChange fires on that write and populates the\n\t# in-view form. recordId==0 -> insert mode. IG81-COMPAT: plain change script + T-SQL.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tv = self.view if hasattr(self, \"view\") else self\n\tDB = \"Inventory_Spike\"\n\tc = v.custom\n\tcv = getattr(currentValue, \"value\", currentValue)\n\trecId = int(cv or 0)\n\tlog.info(\"SPIKE PartsStock Detail recordId onChange fired: recId=%s origin=%s\" % (recId, origin))\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\t# ---- FK combo options (5 master lookups + the cross-DB Line list) ----\n\tdef opts(sql):\n\t\tds = system.db.runPrepQuery(sql, [], DB)\n\t\treturn [{\"value\": ds.getValueAt(i, \"id\"), \"label\": ds.getValueAt(i, \"label\")} for i in xrange(ds.rowCount)]\n\tc.supplierOptions = opts(\"SELECT IN_SUPPLIER_ID AS id, VC_SUPPLIER_CODE AS label FROM INV_SUPPLIER_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_SUPPLIER_CODE\")\n\tc.logisticsOptions = opts(\"SELECT IN_LOGISTICS_ID AS id, VC_LOGISTICS_NAME AS label FROM INV_LOGISTICS_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_LOGISTICS_NAME\")\n\tc.sizeOptions = opts(\"SELECT IN_SIZE_ID AS id, VC_SIZE_CODE AS label FROM INV_SIZE_MST WHERE VC_SIZE_CODE <> '' /* IG-SITE: AND site_id = ? */ ORDER BY VC_SIZE_CODE\")\n\tc.renbanOptions = opts(\"SELECT IN_RENBAN_ID AS id, VC_RENBAN_GROUP_CODE AS label FROM INV_RENBAN_GROUP_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_RENBAN_GROUP_CODE\")\n\tc.partTypeOptions = opts(\"SELECT IN_PART_TYPE_ID AS id, VC_PART_TYPE AS label FROM INV_PART_TYPE_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_PART_TYPE\")\n\t# Line: cross-DB 3-part name over Inventory_Spike (faithful spike equivalent of the ALC_Connection->VehicleOrder read)\n\tc.lineOptions = opts(\"SELECT DISTINCT LineName AS id, LineName AS label FROM VehicleOrder.dbo.LINE ORDER BY LineName\")\n\tlog.info(\"SPIKE PartsStock Detail combos: sup=%d log=%d size=%d renban=%d type=%d line=%d\" % (len(c.supplierOptions), len(c.logisticsOptions), len(c.sizeOptions), len(c.renbanOptions), len(c.partTypeOptions), len(c.lineOptions)))\n\n\tif recId <= 0:\n\t\tc.statusMsg = \"New part \u2014 enter details and Save.\"\n\t\tlog.info(\"SPIKE PartsStock Detail: insert mode (recordId=0)\")\n\t\treturn\n\n\tgetSql = (\"SELECT p.VC_PART_NUMBER, p.VC_PARTS_NAME, p.IN_SUPPLIER_ID, p.IN_LOGISTICS_ID, p.IN_SIZE_ID, \"\n\t          \"p.IN_RENBAN_ID, p.IN_PART_TYPE_ID, p.VC_LINE_NAME, p.VC_KANBAN_NUMBER, p.IN_1LOTQTY, \"\n\t          \"p.BIT_LOT_SIZE_ORDERS, p.IN_RENBAN_COUNT, p.IN_QTY, \"\n\t          \"p.IN_LEADTIME, p.IN_LEADTIME_MONDAY, p.IN_LEADTIME_TUESDAY, p.IN_LEADTIME_WEDNESDAY, \"\n\t          \"p.IN_LEADTIME_THURSDAY, p.IN_LEADTIME_FRIDAY, p.IN_LEADTIME_SATURDAY, \"\n\t          \"p.IN_SHIP_DAYS, p.IN_SHIP_DAYS_MONDAY, p.IN_SHIP_DAYS_TUESDAY, p.IN_SHIP_DAYS_WEDNESDAY, \"\n\t          \"p.IN_SHIP_DAYS_THURSDAY, p.IN_SHIP_DAYS_FRIDAY, p.IN_SHIP_DAYS_SATURDAY, \"\n\t          \"p.MO_PART_COST, p.VC_COMMENTS \"\n\t          \"FROM INV_PARTS_STOCK_MST p WHERE p.IN_PART_ID = ? -- IG-SITE: AND p.site_id = ?\")\n\tds = system.db.runPrepQuery(getSql, [recId], DB)\n\tif ds.rowCount == 0:\n\t\tc.statusMsg = \"Part id %d not found.\" % recId\n\t\tlog.warn(\"SPIKE PartsStock Detail: id %d not found\" % recId); return\n\tdef gs(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn val if val is not None else \"\"\n\tdef gi(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else 0\n\tdef gid(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else None\n\tc.form_partNumber = gs(\"VC_PART_NUMBER\"); c.form_partsName = gs(\"VC_PARTS_NAME\")\n\tc.form_supplierId = gid(\"IN_SUPPLIER_ID\"); c.form_logisticsId = gid(\"IN_LOGISTICS_ID\")\n\tc.form_sizeId = gid(\"IN_SIZE_ID\"); c.form_renbanId = gid(\"IN_RENBAN_ID\")\n\tc.form_partTypeId = gid(\"IN_PART_TYPE_ID\")\n\tc.form_lineName = gs(\"VC_LINE_NAME\") or \"TUNDRA\"\n\tc.form_kanban = gs(\"VC_KANBAN_NUMBER\"); c.form_lotQty = gi(\"IN_1LOTQTY\")\n\t# BIT_LOT_SIZE_ORDERS is stored INVERTED (order-renban memory: 0 = lot-sized TRUE).\n\t# Display: checkbox.selected = NOT stored.\n\tstoredBit = ds.getValueAt(0, \"BIT_LOT_SIZE_ORDERS\")\n\tc.form_lotSizeOrders = (not bool(storedBit)) if storedBit is not None else True\n\tc.form_renbanCount = gi(\"IN_RENBAN_COUNT\")\n\tc.form_qty = gi(\"IN_QTY\")   # READ-ONLY display only\n\tc.form_leadtime = gi(\"IN_LEADTIME\"); c.form_ltMon = gi(\"IN_LEADTIME_MONDAY\")\n\tc.form_ltTue = gi(\"IN_LEADTIME_TUESDAY\"); c.form_ltWed = gi(\"IN_LEADTIME_WEDNESDAY\")\n\tc.form_ltThu = gi(\"IN_LEADTIME_THURSDAY\"); c.form_ltFri = gi(\"IN_LEADTIME_FRIDAY\")\n\tc.form_ltSat = gi(\"IN_LEADTIME_SATURDAY\")\n\tc.form_shipdays = gi(\"IN_SHIP_DAYS\"); c.form_sdMon = gi(\"IN_SHIP_DAYS_MONDAY\")\n\tc.form_sdTue = gi(\"IN_SHIP_DAYS_TUESDAY\"); c.form_sdWed = gi(\"IN_SHIP_DAYS_WEDNESDAY\")\n\tc.form_sdThu = gi(\"IN_SHIP_DAYS_THURSDAY\"); c.form_sdFri = gi(\"IN_SHIP_DAYS_FRIDAY\")\n\tc.form_sdSat = gi(\"IN_SHIP_DAYS_SATURDAY\")\n\tcost = ds.getValueAt(0, \"MO_PART_COST\")\n\tc.form_partCost = float(cost) if cost is not None else 0.0\n\tc.form_comments = gs(\"VC_COMMENTS\")\n\tc.statusMsg = \"Editing part %s (id %d). On-hand %d is read-only (ledger-owned).\" % (c.form_partNumber, recId, c.form_qty)\n\tlog.info(\"SPIKE PartsStock Detail loaded id=%d part=%s qty=%d lotSizeShown=%s\" % (recId, c.form_partNumber, c.form_qty, c.form_lotSizeOrders))\n"
+   }
+  }
+ },
+ "props": {
+  "defaultSize": {
+   "height": 820,
+   "width": 1360
+  }
+ },
+ "root": {
+  "children": [
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "Title"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Parts Stock Master \u2014 List + Detail  \u00b7  INV_PARTS_STOCK_MST (Inventory_Spike)"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "SearchCap"
+          },
+          "props": {
+           "style": {
+            "color": "#666666",
+            "fontSize": "11px"
+           },
+           "text": "Search (part number or name)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-search",
+           "name": "SearchField"
+          },
+          "position": {
+           "basis": "240px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.searchTerm"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "SearchWrap"
+        },
+        "props": {
+         "direction": "column",
+         "style": {
+          "gap": "2px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\tself.view.custom.runNonce = (self.view.custom.runNonce or 0) + 1\n\tsystem.util.getLogger(\"SPIKE\").info(\"PartsStock search -> runNonce=\" + str(self.view.custom.runNonce))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "ps-search-btn",
+         "name": "SearchButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Search"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# New record: same-view prop write (NO navigation). recordId=0 fires the onChange -> insert mode.\n\tc = self.view.custom\n\tc.form_partNumber = \"\"; c.form_partsName = \"\"\n\tc.form_supplierId = None; c.form_logisticsId = None; c.form_sizeId = None\n\tc.form_renbanId = None; c.form_partTypeId = None; c.form_lineName = \"TUNDRA\"\n\tc.form_kanban = \"\"; c.form_lotQty = 0; c.form_lotSizeOrders = True\n\tc.form_renbanCount = 0; c.form_qty = 0\n\tc.form_leadtime = 0; c.form_ltMon = 0; c.form_ltTue = 0; c.form_ltWed = 0\n\tc.form_ltThu = 0; c.form_ltFri = 0; c.form_ltSat = 0\n\tc.form_shipdays = 0; c.form_sdMon = 0; c.form_sdTue = 0; c.form_sdWed = 0\n\tc.form_sdThu = 0; c.form_sdFri = 0; c.form_sdSat = 0\n\tc.form_partCost = 0.0; c.form_comments = \"\"\n\tc.recordId = 0\n\tc.statusMsg = \"New part \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE PartsStock New -> recordId=0 (insert mode)\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "ps-new-btn",
+         "name": "NewButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#388E3C",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "New Part"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "FilterBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "flex-end",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "12px",
+        "padding": "10px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "events": {
+       "component": {
+        "onRowClick": {
+         "config": {
+          "script": "\t# Row select -> SAME-VIEW prop write (single-view decision; NO navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\ttry:\n\t\trecId = event.value[\"RecordID\"]\n\texcept Exception:\n\t\trecId = event.value[\"RecordID\"] if hasattr(event, \"value\") else None\n\tif recId is None:\n\t\tlog.warn(\"SPIKE PartsStock list row click: no RecordID in event\")\n\t\treturn\n\tlog.info(\"SPIKE PartsStock list -> open Detail recordId=%s\" % recId)\n\tself.view.custom.recordId = int(recId)\n"
+         },
+         "scope": "G",
+         "type": "script"
+        }
+       }
+      },
+      "meta": {
+       "domId": "ps-grid",
+       "name": "PartsStockGrid"
+      },
+      "position": {
+       "basis": "500px",
+       "grow": 1
+      },
+      "propConfig": {
+       "props.columns": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.columns"
+         },
+         "type": "property"
+        }
+       },
+       "props.data": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.data"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "filtering": {
+        "enabled": false
+       },
+       "pager": {
+        "activeOption": 1000,
+        "bottom": false,
+        "options": [
+         1000
+        ],
+        "top": false
+       },
+       "selection": {
+        "enabled": true
+       },
+       "sortOrder": [
+        "0:PartNumber"
+       ]
+      },
+      "type": "ia.display.table"
+     },
+     {
+      "meta": {
+       "name": "FooterNote"
+      },
+      "props": {
+       "style": {
+        "color": "#37474F",
+        "fontSize": "11px",
+        "fontStyle": "italic"
+       },
+       "text": "Click a row to edit at right. 5 FK combos store ids/display labels; Line is a cross-DB string. On-hand is read-only (ledger-owned). Single combined view \u2014 row-select is an in-view prop write, no navigation. Site param plumbed; IG-SITE predicate commented until the Postgres phase."
+      },
+      "type": "ia.display.label"
+     }
+    ],
+    "meta": {
+     "name": "LeftPane"
+    },
+    "position": {
+     "basis": "660px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "10px"
+     }
+    },
+    "type": "ia.container.flex"
+   },
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "DetailTitle"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Detail"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "meta": {
+       "domId": "ps-status",
+       "name": "StatusMsg"
+      },
+      "propConfig": {
+       "props.text": {
+        "binding": {
+         "config": {
+          "path": "view.custom.statusMsg"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "style": {
+        "color": "#B71C1C",
+        "fontSize": "13px",
+        "fontWeight": "bold",
+        "padding": "6px 8px"
+       }
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowPartNumber"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Part Number"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-partnumber",
+           "name": "fld_ps-partnumber"
+          },
+          "position": {
+           "basis": "260px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_partNumber"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 12
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowPartNumber"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowPartsName"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Parts Name"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-partsname",
+           "name": "fld_ps-partsname"
+          },
+          "position": {
+           "basis": "340px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_partsName"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowPartsName"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowSupplier"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Supplier"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-supplier",
+           "name": "fld_ps-supplier"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.supplierOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_supplierId"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowSupplier"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowLogistics"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Logistics"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-logistics",
+           "name": "fld_ps-logistics"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.logisticsOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_logisticsId"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowLogistics"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowSize"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Size"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-size",
+           "name": "fld_ps-size"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.sizeOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sizeId"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowSize"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowRenban"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Renban Group"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-renban",
+           "name": "fld_ps-renban"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.renbanOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_renbanId"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowRenban"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowPartType"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Part Type"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-parttype",
+           "name": "fld_ps-parttype"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.partTypeOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_partTypeId"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowPartType"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowLine"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Assembly Line"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-line",
+           "name": "fld_ps-line"
+          },
+          "position": {
+           "basis": "300px"
+          },
+          "propConfig": {
+           "props.options": {
+            "binding": {
+             "config": {
+              "path": "view.custom.lineOptions"
+             },
+             "type": "property"
+            }
+           },
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_lineName"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "placeholder": "(none)"
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "rowLine"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowKanban"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Kanban Number"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-kanban",
+           "name": "fld_ps-kanban"
+          },
+          "position": {
+           "basis": "160px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_kanban"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 5
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowKanban"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowLotQty"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "1-Lot Qty"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lotqty",
+           "name": "fld_ps-lotqty"
+          },
+          "position": {
+           "basis": "160px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_lotQty"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {},
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "rowLotQty"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowLotSize"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Lot Size Orders (stored inverted)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lotsize",
+           "name": "fld_ps-lotsize"
+          },
+          "position": {
+           "basis": "60px"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_lotSizeOrders"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "rowLotSize"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowRenbanCount"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Renban Count"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-renbancount",
+           "name": "fld_ps-renbancount"
+          },
+          "position": {
+           "basis": "160px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_renbanCount"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {},
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "rowRenbanCount"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowQty"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "On-Hand Qty (read-only \u2014 ledger-owned)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-qty",
+           "name": "fld_ps-qty"
+          },
+          "position": {
+           "basis": "160px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_qty"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "enabled": false
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "rowQty"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowLeadtime"
+          },
+          "position": {
+           "basis": "120px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Lead Time"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Base_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Base"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-base",
+           "name": "ps-ltBase"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_leadtime"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Mon_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Mon"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-mon",
+           "name": "ps-ltMon"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_ltMon"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Tue_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Tue"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-tue",
+           "name": "ps-ltTue"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_ltTue"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Wed_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Wed"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-wed",
+           "name": "ps-ltWed"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_ltWed"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Thu_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Thu"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-thu",
+           "name": "ps-ltThu"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_ltThu"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Fri_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Fri"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-fri",
+           "name": "ps-ltFri"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_ltFri"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowLeadtime_Sat_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Sat"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-lt-sat",
+           "name": "ps-ltSat"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_ltSat"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "rowLeadtime"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "flexWrap": "wrap",
+          "gap": "4px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowShipdays"
+          },
+          "position": {
+           "basis": "120px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Ship Days"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Base_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Base"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-base",
+           "name": "ps-sdBase"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_shipdays"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Mon_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Mon"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-mon",
+           "name": "ps-sdMon"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sdMon"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Tue_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Tue"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-tue",
+           "name": "ps-sdTue"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sdTue"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Wed_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Wed"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-wed",
+           "name": "ps-sdWed"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sdWed"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Thu_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Thu"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-thu",
+           "name": "ps-sdThu"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sdThu"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Fri_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Fri"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-fri",
+           "name": "ps-sdFri"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sdFri"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         },
+         {
+          "meta": {
+           "name": "rowShipdays_Sat_lbl"
+          },
+          "position": {
+           "basis": "30px"
+          },
+          "props": {
+           "style": {
+            "color": "#666",
+            "fontSize": "10px"
+           },
+           "text": "Sat"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-sd-sat",
+           "name": "ps-sdSat"
+          },
+          "position": {
+           "basis": "55px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sdSat"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "rowShipdays"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "flexWrap": "wrap",
+          "gap": "4px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowPartCost"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Part Cost ($)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-partcost",
+           "name": "fld_ps-partcost"
+          },
+          "position": {
+           "basis": "160px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_partCost"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {},
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "rowPartCost"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_rowComments"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Comments"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "ps-comments",
+           "name": "fld_ps-comments"
+          },
+          "position": {
+           "basis": "380px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_comments"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 300
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "rowComments"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       }
+      ],
+      "meta": {
+       "name": "Form"
+      },
+      "props": {
+       "direction": "column",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "6px",
+        "padding": "12px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "children": [
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- PartsStock Save (insert-or-update) ----\n\t# recordId==0 -> insert; >0 -> update. IN_QTY is read-only: insert sets it to 0 (SQL\n\t# literal), update OMITS it entirely (never overwrite the trigger-maintained balance).\n\t# BIT_LOT_SIZE_ORDERS is stored INVERTED: storedBit = NOT checkbox.selected.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\tpartNo = (c.form_partNumber or \"\").strip()\n\tname = (c.form_partsName or \"\").strip()\n\n\t# ---- validation (client-side fast-fail; DB unique index is the backstop) ----\n\tif partNo == \"\":\n\t\tc.statusMsg = \"Part number is required.\"\n\t\tlog.info(\"SPIKE PartsStock save REJECTED: blank part number\"); return\n\tif len(partNo) > 12:\n\t\tc.statusMsg = \"Part number must be 12 characters or fewer.\"\n\t\tlog.info(\"SPIKE PartsStock save REJECTED: code len=%d\" % len(partNo)); return\n\n\texcludeId = recId if recId > 0 else 0\n\tchkSql = (\"SELECT COUNT(*) AS n FROM INV_PARTS_STOCK_MST \"\n\t          \"WHERE VC_PART_NUMBER = ? AND IN_PART_ID <> ? -- IG-SITE: AND site_id = ?\")\n\tdup = system.db.runPrepQuery(chkSql, [partNo, excludeId], DB)\n\tif dup.rowCount > 0 and int(dup.getValueAt(0, 0)) > 0:\n\t\tc.statusMsg = \"Part number already exists.\"\n\t\tlog.info(\"SPIKE PartsStock save REJECTED: dup part=%s\" % partNo); return\n\n\tdef ii(v):\n\t\ttry:\n\t\t\treturn int(v) if v not in (None, \"\") else 0\n\t\texcept Exception:\n\t\t\treturn 0\n\tdef fid(v):\n\t\tif v in (None, \"\", 0):\n\t\t\treturn None\n\t\ttry:\n\t\t\treturn int(v)\n\t\texcept Exception:\n\t\t\treturn None\n\tsupplierId = fid(c.form_supplierId); logisticsId = fid(c.form_logisticsId)\n\tsizeId = fid(c.form_sizeId); renbanId = fid(c.form_renbanId); partTypeId = fid(c.form_partTypeId)\n\tlineName = (c.form_lineName or \"TUNDRA\").strip() or \"TUNDRA\"\n\tkanban = (c.form_kanban or \"\")\n\tlotQty = ii(c.form_lotQty); renbanCount = ii(c.form_renbanCount)\n\t# inverted lot-size flag: stored = NOT shown\n\tlotSizeBit = 0 if c.form_lotSizeOrders else 1\n\tleadtime = ii(c.form_leadtime); ltMon = ii(c.form_ltMon); ltTue = ii(c.form_ltTue); ltWed = ii(c.form_ltWed)\n\tltThu = ii(c.form_ltThu); ltFri = ii(c.form_ltFri); ltSat = ii(c.form_ltSat)\n\tshipdays = ii(c.form_shipdays); sdMon = ii(c.form_sdMon); sdTue = ii(c.form_sdTue); sdWed = ii(c.form_sdWed)\n\tsdThu = ii(c.form_sdThu); sdFri = ii(c.form_sdFri); sdSat = ii(c.form_sdSat)\n\ttry:\n\t\tpartCost = float(c.form_partCost) if c.form_partCost not in (None, \"\") else 0.0\n\texcept Exception:\n\t\tpartCost = 0.0\n\tcomments = (c.form_comments or \"\")\n\n\taudit = (\"CONVERT(char(8),GETDATE(),112) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)\")\n\n\t# data args common to insert/update (ORDER MATCHES the ? placeholders below)\n\tdataArgs = [partNo, name, supplierId, logisticsId, sizeId, renbanId, partTypeId, lineName,\n\t            kanban, lotQty, lotSizeBit, renbanCount,\n\t            leadtime, ltMon, ltTue, ltWed, ltThu, ltFri, ltSat,\n\t            shipdays, sdMon, sdTue, sdWed, sdThu, sdFri, sdSat, partCost, comments]\n\n\ttry:\n\t\tif recId == 0:\n\t\t\t# IN_QTY literal 0 (read-only); VC_ADD (NOT NULL) audit\n\t\t\tinsSql = (\"INSERT INTO INV_PARTS_STOCK_MST \"\n\t\t\t          \"(VC_PART_NUMBER, VC_PARTS_NAME, IN_SUPPLIER_ID, IN_LOGISTICS_ID, IN_SIZE_ID, \"\n\t\t\t          \" IN_RENBAN_ID, IN_PART_TYPE_ID, VC_LINE_NAME, VC_KANBAN_NUMBER, IN_1LOTQTY, \"\n\t\t\t          \" BIT_LOT_SIZE_ORDERS, IN_RENBAN_COUNT, IN_QTY, \"\n\t\t\t          \" IN_LEADTIME, IN_LEADTIME_MONDAY, IN_LEADTIME_TUESDAY, IN_LEADTIME_WEDNESDAY, \"\n\t\t\t          \" IN_LEADTIME_THURSDAY, IN_LEADTIME_FRIDAY, IN_LEADTIME_SATURDAY, \"\n\t\t\t          \" IN_SHIP_DAYS, IN_SHIP_DAYS_MONDAY, IN_SHIP_DAYS_TUESDAY, IN_SHIP_DAYS_WEDNESDAY, \"\n\t\t\t          \" IN_SHIP_DAYS_THURSDAY, IN_SHIP_DAYS_FRIDAY, IN_SHIP_DAYS_SATURDAY, \"\n\t\t\t          \" MO_PART_COST, VC_COMMENTS, VC_ADD) \"\n\t\t\t          \"VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,0, ?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?, \" + audit + \"); \"\n\t\t\t          \"SELECT CAST(SCOPE_IDENTITY() AS int) AS newId\")\n\t\t\trs = system.db.runPrepQuery(insSql, dataArgs, DB)\n\t\t\tnewId = int(rs.getValueAt(0, 0))\n\t\t\tc.statusMsg = \"Inserted part %s (id %d, on-hand 0).\" % (partNo, newId)\n\t\t\tlog.info(\"SPIKE PartsStock INSERT ok: part=%s newId=%d qty=0\" % (partNo, newId))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1\n\t\t\tc.recordId = newId\n\t\telse:\n\t\t\t# IN_QTY OMITTED from SET; VC_LAST_UPDATE (underscore) audit\n\t\t\tupdSql = (\"UPDATE INV_PARTS_STOCK_MST SET \"\n\t\t\t          \"VC_PART_NUMBER=?, VC_PARTS_NAME=?, IN_SUPPLIER_ID=?, IN_LOGISTICS_ID=?, IN_SIZE_ID=?, \"\n\t\t\t          \"IN_RENBAN_ID=?, IN_PART_TYPE_ID=?, VC_LINE_NAME=?, VC_KANBAN_NUMBER=?, IN_1LOTQTY=?, \"\n\t\t\t          \"BIT_LOT_SIZE_ORDERS=?, IN_RENBAN_COUNT=?, \"\n\t\t\t          \"IN_LEADTIME=?, IN_LEADTIME_MONDAY=?, IN_LEADTIME_TUESDAY=?, IN_LEADTIME_WEDNESDAY=?, \"\n\t\t\t          \"IN_LEADTIME_THURSDAY=?, IN_LEADTIME_FRIDAY=?, IN_LEADTIME_SATURDAY=?, \"\n\t\t\t          \"IN_SHIP_DAYS=?, IN_SHIP_DAYS_MONDAY=?, IN_SHIP_DAYS_TUESDAY=?, IN_SHIP_DAYS_WEDNESDAY=?, \"\n\t\t\t          \"IN_SHIP_DAYS_THURSDAY=?, IN_SHIP_DAYS_FRIDAY=?, IN_SHIP_DAYS_SATURDAY=?, \"\n\t\t\t          \"MO_PART_COST=?, VC_COMMENTS=?, VC_LAST_UPDATE = \" + audit + \" \"\n\t\t\t          \"WHERE IN_PART_ID = ? -- IG-SITE: AND site_id = ?\")\n\t\t\tn = system.db.runPrepUpdate(updSql, dataArgs + [recId], DB)\n\t\t\tc.statusMsg = \"Updated part %s (%d row). On-hand untouched (ledger-owned).\" % (partNo, n)\n\t\t\tlog.info(\"SPIKE PartsStock UPDATE ok: id=%d part=%s rows=%d (IN_QTY omitted)\" % (recId, partNo, n))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1\n\texcept Exception, e:\n\t\tmsg = unicode(e)\n\t\tif \"IX_INV_PARTS_STOCK_MST\" in msg or \"duplicate key\" in msg.lower() or \"UNIQUE\" in msg.upper():\n\t\t\tc.statusMsg = \"Part number already exists.\"\n\t\t\tlog.info(\"SPIKE PartsStock save: unique-index backstop fired for part=%s\" % partNo)\n\t\telse:\n\t\t\tc.statusMsg = \"Save failed: %s\" % msg\n\t\t\tlog.warn(\"SPIKE PartsStock save FAILED: %s\" % msg)\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "ps-save-btn",
+         "name": "SaveButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Save"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- PartsStock Delete \u2014 D3 RESTRICT gate (R1-critical) ----\n\t# refCount counts EVERY transactional/child reference the live DELETE_PartNumber\n\t# trigger does NOT clean up (it only blanks assy-ratio/forecast string codes):\n\t#   INV_OPEN_ORDER_INF(by number), INV_REJECT_INF(by id), INV_STOCKTAKING_INF(by id),\n\t#   INV_PART_SHIPPING_INF(by number), INV_PART_QTY_INF(by number),\n\t#   INV_BREAKDOWN_FC_INF(by number). (HIST excluded per D-decision b: a part\\u2019s own audit snapshot is not an external reference.)\n\t# Block on any non-zero total; NEVER reach the trigger while refs exist.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tpartNo = (c.form_partNumber or \"\").strip()\n\tif recId == 0:\n\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n\t\treturn\n\trefSql = (\"SELECT \"\n\t          \"  (SELECT COUNT(*) FROM INV_OPEN_ORDER_INF       WHERE VC_PART_NUMBER = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_REJECT_INF           WHERE IN_PART_ID     = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_STOCKTAKING_INF      WHERE IN_PART_ID     = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_PART_SHIPPING_INF    WHERE VC_PART_NUMBER = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_PART_QTY_INF         WHERE VC_PART_NUMBER = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF     WHERE VC_PART_NUMBER = ?) AS n\")\n\trs = system.db.runPrepQuery(refSql, [partNo, recId, recId, partNo, partNo, partNo], DB)\n\tn = int(rs.getValueAt(0, 0))\n\tlog.info(\"SPIKE PartsStock refCount: id=%d part=%s n=%d\" % (recId, partNo, n))\n\tif n > 0:\n\t\tc.statusMsg = (\"Cannot delete part %s \u2014 still referenced by %d order/reject/stocktaking/\"\n\t\t               \"shipping/qty-ledger/forecast row(s). Reassign or archive those rows first.\") % (partNo, n)\n\t\tlog.info(\"SPIKE PartsStock DELETE BLOCKED: id=%d part=%s refs=%d\" % (recId, partNo, n)); return\n\ttry:\n\t\tdelN = system.db.runPrepUpdate(\"DELETE FROM INV_PARTS_STOCK_MST WHERE IN_PART_ID = ? -- IG-SITE: AND site_id = ?\", [recId], DB)\n\t\tlog.info(\"SPIKE PartsStock DELETE ok: id=%d part=%s rows=%d\" % (recId, partNo, delN))\n\t\tc.statusMsg = \"Deleted part %s.\" % partNo\n\t\tc.form_partNumber = \"\"; c.form_partsName = \"\"\n\t\tc.form_supplierId = None; c.form_logisticsId = None; c.form_sizeId = None\n\t\tc.form_renbanId = None; c.form_partTypeId = None; c.form_lineName = \"TUNDRA\"\n\t\tc.form_kanban = \"\"; c.form_lotQty = 0; c.form_lotSizeOrders = True\n\t\tc.form_renbanCount = 0; c.form_qty = 0\n\t\tc.form_leadtime = 0; c.form_ltMon = 0; c.form_ltTue = 0; c.form_ltWed = 0\n\t\tc.form_ltThu = 0; c.form_ltFri = 0; c.form_ltSat = 0\n\t\tc.form_shipdays = 0; c.form_sdMon = 0; c.form_sdTue = 0; c.form_sdWed = 0\n\t\tc.form_sdThu = 0; c.form_sdFri = 0; c.form_sdSat = 0\n\t\tc.form_partCost = 0.0; c.form_comments = \"\"\n\t\tc.runNonce = (c.runNonce or 0) + 1\n\t\tc.recordId = 0\n\texcept Exception, e:\n\t\tc.statusMsg = \"Delete failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE PartsStock DELETE FAILED: %s\" % unicode(e))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "ps-delete-btn",
+         "name": "DeleteButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#C62828",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Delete"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# Clear -> reset to a blank insert-mode form (recordId=0). Same-view, no navigation.\n\tc = self.view.custom\n\tc.form_partNumber = \"\"; c.form_partsName = \"\"\n\tc.form_supplierId = None; c.form_logisticsId = None; c.form_sizeId = None\n\tc.form_renbanId = None; c.form_partTypeId = None; c.form_lineName = \"TUNDRA\"\n\tc.form_kanban = \"\"; c.form_lotQty = 0; c.form_lotSizeOrders = True\n\tc.form_renbanCount = 0; c.form_qty = 0\n\tc.form_leadtime = 0; c.form_ltMon = 0; c.form_ltTue = 0; c.form_ltWed = 0\n\tc.form_ltThu = 0; c.form_ltFri = 0; c.form_ltSat = 0\n\tc.form_shipdays = 0; c.form_sdMon = 0; c.form_sdTue = 0; c.form_sdWed = 0\n\tc.form_sdThu = 0; c.form_sdFri = 0; c.form_sdSat = 0\n\tc.form_partCost = 0.0; c.form_comments = \"\"\n\tc.recordId = 0\n\tc.statusMsg = \"Cleared \u2014 ready for a new part.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE PartsStock form cleared\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "ps-clear-btn",
+         "name": "ClearButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#607D8B",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Clear"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "ActionBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "center",
+       "style": {
+        "gap": "12px",
+        "padding": "8px 0"
+       }
+      },
+      "type": "ia.container.flex"
+     }
+    ],
+    "meta": {
+     "name": "RightPane"
+    },
+    "position": {
+     "basis": "620px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "8px"
+     }
+    },
+    "type": "ia.container.flex"
+   }
+  ],
+  "meta": {
+   "name": "root"
+  },
+  "props": {
+   "style": {
+    "backgroundColor": "#F5F6F8",
+    "gap": "12px",
+    "padding": "12px"
+   }
+  },
+  "type": "ia.container.flex"
+ }
+}

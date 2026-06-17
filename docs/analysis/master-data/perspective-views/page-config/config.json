@@ -1,0 +1,37 @@
+{
+  "pages": {
+    "/order": {
+      "viewPath": "Order/OrderSpike",
+      "title": "Order Spike"
+    },
+    "/supplier": {
+      "viewPath": "Master/Supplier/Supplier",
+      "title": "Supplier Master"
+    },
+    "/size": {
+      "viewPath": "Master/Size/Size",
+      "title": "Size Master"
+    },
+    "/logistics": {
+      "viewPath": "Master/Logistics/Logistics",
+      "title": "Logistics Master"
+    },
+    "/renbangroup": {
+      "viewPath": "Master/RenbanGroup/RenbanGroup",
+      "title": "Renban Group Master"
+    },
+    "/partsstock": {
+      "viewPath": "Master/PartsStock/PartsStock",
+      "title": "Parts Stock Master"
+    },
+    "/assemblydetail": {
+      "viewPath": "Master/AssemblyDetail/AssemblyDetail",
+      "title": "Assembly Detail"
+    },
+    "/manifestcost": {
+      "viewPath": "Master/ManifestCost/ManifestCost",
+      "title": "Manifest Cost Master"
+    }
+  },
+  "sharedDocks": {}
+}

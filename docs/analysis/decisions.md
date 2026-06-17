@@ -421,3 +421,49 @@ fix. The daily order reports already use `VC_ORDER_DATE` correctly. Invoice repo
 > Closes the InventorySystem §8 decisions pass. D1–D12 cover the cross-cutting decisions + every spec's
 > confirmed-bug and domain-judgment open items. Remaining spec §8 entries are narrow "verify during build"
 > notes, not decisions.
+
+---
+
+## D13 — Assembly Detail master = INV_FORECAST_DETAIL_INF; ManifestCost relaxes the manifest-number unique quirk (option b); rollout needs a DB-diff conversion script
+
+*Recorded 2026-06-17. Two build decisions for the remaining master forms + a cross-cutting rollout note.*
+
+**1. "Assembly Detail" = the FORM name over `INV_FORECAST_DETAIL_INF` (not a table rename).**
+Verbatim intent (David): *"I'm thinking in the name of the form not name of the table. The name was
+changed on the form post go-live, the table change was dropped."* So the live BOM/ratio master — assy
+part code → tire/wheel/valve/film/label/misc part codes + ratios, effective month, broadcast code — is
+maintained by a form now titled **"Assembly Detail"** but still backed by `INV_FORECAST_DETAIL_INF`
+(table never renamed). This is the master the forecast/order explosion actually reads (the separate
+`INV_ASSY_RATIO_MST` was DROPPED per D12). The rebuild builds an "Assembly Detail" CRUD over
+`INV_FORECAST_DETAIL_INF`. Spec: `docs/analysis/forecasting/forecast-detail.md`.
+
+**2. ManifestCost — option (b): correct the legacy manifest-number-uniqueness quirk.**
+Verbatim intent (David): *"use b, correct a legacy quirk from a developed-on-the-fly feature that mostly
+works."* The live `IX_INV_MANIFEST_COST_MST` UNIQUE on `VC_ASSY_MANIFEST_NUMBER` (global manifest-number
+uniqueness) **conflicts with D6's "multiple cost windows per assy code"** and is an artifact of an on-the-fly
+feature. The rebuild **drops/relaxes** that global unique (→ allow multiple windows per assy code; the real
+constraint is **D6 non-overlapping `VC_START/END_MANIFEST` windows per (site, assy code)** + `start<=end`).
+So the ManifestCost master uses **`checkWindowOverlap`**, NOT `checkManifestNumberUnique`. (Supersedes the
+"default: honor the live index" placeholder in IGNITION-master-crud-design.md §C / R2.)
+
+**3. ROLLOUT (cross-cutting) — a solid DB-diff conversion script is required.**
+Verbatim intent (David): *"ensure we have notes for rollout that there will need to be a solid conversion
+script to support these DB diffs."* The rebuild intentionally diverges from the live legacy schema in
+several places that a production cutover must reconcile with a migration/conversion script, NOT silently:
+- **ManifestCost (D13.2):** drop the `IX_INV_MANIFEST_COST_MST` global-unique index; add the D6 per-(site,
+  assy) non-overlapping-window constraint/check.
+- **D1 multi-site:** add `site_id` (NOT NULL FK) to every master table; replace each single-column UNIQUE
+  (`IX_INV_SUPPLIER_MST`/`_SIZE_`/`_LOGISTICS_`/`_RENBAN_GROUP_`/`_PARTS_STOCK_`) with a per-site composite
+  `(site_id, <code>)`; flip every `-- IG-SITE:` predicate on in the same ordered migration (R3).
+- **Audit columns:** the rebuild keeps the 16-char `yyyymmddHHMMSSff` string form during parallel run;
+  the Postgres phase converts to real datetime DEFAULT/triggers (every `# IG83-TODO`).
+- Assembly Detail / `INV_FORECAST_DETAIL_INF` (confirmed during build, 2026-06-17): the live table has
+  **NO PK and NO unique index** — the rebuild's composite app-check `(VC_ASSY_PART_NUMBER_CODE,
+  VC_EFFECTIVE_MONTH)` is the ONLY uniqueness today (a concurrent double-insert could slip a dup). Rollout
+  must (i) add a real PK on `ID_FORECAST_DETAIL`, (ii) add `UNIQUE(VC_ASSY_PART_NUMBER_CODE,
+  VC_EFFECTIVE_MONTH)` (per-site composite under D1) as the backstop, and (iii) **pin + validate a canonical
+  `VC_EFFECTIVE_MONTH` format** (e.g. `yyyy/mm`) — all 50 live rows are blank today, so `2026/01` vs `202601`
+  would read as distinct composites and both insert, giving the unique index false confidence until the
+  format is enforced.
+**Action:** maintain a running "DB conversion / cutover script" deliverable enumerating every such diff so the
+production migration is deterministic and reviewable. Track it as the masters + later modules land.
