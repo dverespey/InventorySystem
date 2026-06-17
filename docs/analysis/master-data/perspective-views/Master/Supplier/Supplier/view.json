@@ -237,19 +237,19 @@
         "enabled": false
        },
        "pager": {
-        "enabled": true,
+        "activeOption": 1000,
+        "bottom": false,
         "options": [
-         25,
-         50,
-         100,
-         50,
-         100
+         1000
         ],
-        "rowsPerPage": 50
+        "top": false
        },
        "selection": {
         "enabled": true
-       }
+       },
+       "sortOrder": [
+        "0:SupplierCode"
+       ]
       },
       "type": "ia.display.table"
      },
