@@ -232,3 +232,162 @@ ORDER BY VC_PART_TYPE;
 /* R6: NO lookups/addPoint NQ. Inventory-Add-Point is the static S/A enum (D4),
    not a lookup combo — INV_ADD_POINT_INF query dropped as dead. The Output-File
    T/E/B enum is likewise a static dropdown (no NQ). Both declared in the view. */
+
+
+/* ============================================================================
+   SIZE MASTER  —  second master-data rebuild module (leaf master)
+   ----------------------------------------------------------------------------
+   Status:  build artifact for the Size master CRUD (replicates the PROVEN Supplier
+            pattern; strict, leaner subset)
+   Author:  ignition-developer / 2026-06-17
+   Source:  docs/analysis/master-data/size.md  +  IGNITION-master-crud-design.md §C
+   View:    Master/Size/Size  (combined master-detail, route /size)
+
+   SAME MECHANISM as Supplier above: NOT on-disk NQ resources — this is the
+   canonical SQL, executed at runtime via inline system.db.runPrepQuery inside the
+   view's binding/script transforms (positional '?' placeholders, ordered args).
+
+   GROUND TRUTH (read off live `Inventory` on mssql-spike, 2026-06-17):
+     INV_SIZE_MST: PK IN_SIZE_ID identity; business key VC_SIZE_CODE varchar(6);
+       UNIQUE IX_INV_SIZE_MST on VC_SIZE_CODE (single-column); NO site_id.
+       Data columns: VC_SIZE_NAME varchar(50), IN_USAGE int NULL, IN_DAYS int NULL.
+       Audit columns: VC_LAST_UPDATE (WITH underscore — differs from Supplier's
+       VC_LASTUPDATE), VC_ADD. 64 rows live.
+     LEAF MASTER: no FK combos, no enums (drop all lookups/*). Just 4 user fields.
+     DELETE_SizeCode trigger (verified live body, 2026-06-17): does ONE thing —
+       UPDATE INV_PARTS_STOCK_MST SET IN_SIZE_ID = NULL FROM ...,DELETED d WHERE
+       a.IN_SIZE_ID = d.IN_SIZE_ID. It does NOT touch INV_PARTS_STOCK_MST_HIST,
+       and that table DOES carry IN_SIZE_ID (COL_LENGTH = 4) — so a legacy delete
+       would leave dangling history FKs. Per D3 (RESTRICT) refCount counts BOTH
+       parts AND _HIST and BLOCKS the delete (no nulling, no dangling).
+     Audit recipe below is byte-identical to live INSERT_SizeInfo / UPDATE_SizeInfo
+       (the same 16-char yyyymmddHHMMSSff recipe Supplier uses).
+
+   8.1 ↔ 8.3:
+     # IG83-TODO: replace the yyyymmddHHMMSSff audit string with a real datetime
+                  DEFAULT/trigger at the Postgres phase; drop the string form.
+     # IG83-TODO: flip every `-- IG-SITE:` predicate on + add composite
+                  (site_id, VC_SIZE_CODE) UNIQUE index (R3 ordered migration).
+     # IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.
+
+   DIVERGENCES FROM LEGACY (documented, intentional):
+     - Validation added: presence(code, name) + len(code) <= 6. Legacy had NONE.
+       (NOTE: <=6, NOT the ==5 Supplier rule — VC_SIZE_CODE is varchar(6).)
+     - D8 Bug 1 NOT reproduced: legacy InsertSizeInfo dup-checked SELECT_AssyRatioInfo
+       (broadcast codes), so real size dups were never caught. checkCodeUnique below
+       checks INV_SIZE_MST.VC_SIZE_CODE (the size's OWN code). excludeId supports
+       rename (D2).
+     - 0-vs-NULL: IN_USAGE/IN_DAYS written as the entered integer, 0 if blank
+       (matches legacy, which forces blanks to 0; never NULL from this form).
+   ============================================================================ */
+
+
+/* ----------------------------------------------------------------------------
+   Size/list   (Query)  — grid rows for the List view
+   params (ordered):  searchTerm (String), searchTerm (String), siteId (Int)
+   returns: RecordID + the 4 display columns (no enums, no joins). Mirrors legacy
+            SELECT_SizeInfo '' (5 UI-aliased columns), ORDER BY VC_SIZE_CODE.
+   ---------------------------------------------------------------------------- */
+SELECT  IN_SIZE_ID     AS "RecordID",
+        VC_SIZE_CODE   AS "Size Code",
+        VC_SIZE_NAME   AS "Size Name",
+        IN_USAGE       AS "Daily Usage",
+        IN_DAYS        AS "Safety Days"
+FROM    INV_SIZE_MST
+WHERE  (:searchTerm = '' OR VC_SIZE_CODE LIKE '%' + :searchTerm + '%'
+                        OR VC_SIZE_NAME LIKE '%' + :searchTerm + '%')
+-- IG-SITE:  AND site_id = :siteId
+ORDER BY VC_SIZE_CODE;
+/* Parity: searchTerm='' matches SELECT_SizeInfo '' ordering/contents. Server-side
+   LIKE search improves on the legacy client-side exact Filter (documented). */
+
+
+/* ----------------------------------------------------------------------------
+   Size/get   (Query)  — one row by surrogate id, for the Detail form
+   params:  recordId (Int), siteId (Int)
+   ---------------------------------------------------------------------------- */
+SELECT  IN_SIZE_ID, VC_SIZE_CODE, VC_SIZE_NAME, IN_USAGE, IN_DAYS
+FROM    INV_SIZE_MST
+WHERE   IN_SIZE_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   Size/insert   (Update Query, returns identity)
+   params (ordered):  code, name, usage, days   ( + siteId, IG-SITE only)
+   returns: SCOPE_IDENTITY() AS newId (legacy proc never echoed it — improvement).
+   audit:   VC_ADD = byte-identical 16-char yyyymmddHHMMSSff recipe (matches live
+            INSERT_SizeInfo).  usage/days arrive as the entered ints (0 if blank).
+   ---------------------------------------------------------------------------- */
+INSERT INTO INV_SIZE_MST
+    (VC_SIZE_CODE, VC_SIZE_NAME, IN_USAGE, IN_DAYS, VC_ADD
+     /* IG-SITE: , site_id */)
+VALUES
+    (:code, :name, :usage, :days,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+     /* IG-SITE: , :siteId */);
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   Size/update   (Update Query)  — keyed on the surrogate id (D2; rename-safe)
+   params (ordered):  code, name, usage, days, recordId  ( + siteId, IG-SITE only)
+   audit:   ⚠️ VC_LAST_UPDATE (WITH underscore) = same 16-char recipe; VC_ADD untouched.
+   ---------------------------------------------------------------------------- */
+UPDATE INV_SIZE_MST SET
+    VC_SIZE_CODE=:code, VC_SIZE_NAME=:name, IN_USAGE=:usage, IN_DAYS=:days,
+    VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE IN_SIZE_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   Size/checkCodeUnique   (Query)  — uniqueness pre-check; D8 Bug-1 FIX
+   params:  code (String), excludeId (Int, default 0), siteId (Int)
+   Checks INV_SIZE_MST.VC_SIZE_CODE — the size's OWN code — NOT SELECT_AssyRatioInfo
+   (the legacy bug). excludeId = 0 on insert; = recordId on update (rename support,
+   D2). The live IX_INV_SIZE_MST UNIQUE index is the race backstop.
+   ---------------------------------------------------------------------------- */
+SELECT COUNT(*) AS n
+FROM   INV_SIZE_MST
+WHERE  VC_SIZE_CODE = :code
+  AND  IN_SIZE_ID  <> :excludeId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+
+/* ----------------------------------------------------------------------------
+   Size/refCount   (Query)  — the D3 RESTRICT delete gate (R1-critical)
+   params:  recordId (Int)
+   The live DELETE_SizeCode trigger only nullifies INV_PARTS_STOCK_MST.IN_SIZE_ID
+   (verified body, 2026-06-17) — it does NOT touch INV_PARTS_STOCK_MST_HIST, which
+   ALSO carries IN_SIZE_ID. Per D3 (RESTRICT, no unlink, no dangling), this gate
+   counts BOTH current parts AND history rows; any non-zero total -> BLOCK delete.
+   (Size's code-keyed cross-module writer UPDATE_SizeUsage is a writer, not a
+   reference; it is out of scope for the delete gate.)
+   ---------------------------------------------------------------------------- */
+SELECT
+    (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST      WHERE IN_SIZE_ID = :recordId)
+  + (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE IN_SIZE_ID = :recordId)
+    AS n;
+
+
+/* ----------------------------------------------------------------------------
+   Size/delete   (Update Query)  — only reached AFTER refCount = 0
+   param:  recordId (Int)
+   The live DELETE_SizeCode trigger then has nothing to act on (inert by
+   construction). NEVER let a delete reach the trigger while references exist.
+   ---------------------------------------------------------------------------- */
+DELETE FROM INV_SIZE_MST WHERE IN_SIZE_ID = :recordId
+-- IG-SITE:  AND site_id = :siteId
+;
+
+/* Size is a LEAF master: NO lookups/* queries (no FK combos, no enums). */

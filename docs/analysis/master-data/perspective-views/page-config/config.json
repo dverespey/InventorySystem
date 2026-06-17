@@ -1,0 +1,17 @@
+{
+  "pages": {
+    "/order": {
+      "viewPath": "Order/OrderSpike",
+      "title": "Order Spike"
+    },
+    "/supplier": {
+      "viewPath": "Master/Supplier/Supplier",
+      "title": "Supplier Master"
+    },
+    "/size": {
+      "viewPath": "Master/Size/Size",
+      "title": "Size Master"
+    }
+  },
+  "sharedDocks": {}
+}
