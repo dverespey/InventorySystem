@@ -457,7 +457,13 @@ several places that a production cutover must reconcile with a migration/convers
   `(site_id, <code>)`; flip every `-- IG-SITE:` predicate on in the same ordered migration (R3).
 - **Audit columns:** the rebuild keeps the 16-char `yyyymmddHHMMSSff` string form during parallel run;
   the Postgres phase converts to real datetime DEFAULT/triggers (every `# IG83-TODO`).
-- Assembly Detail / `INV_FORECAST_DETAIL_INF`: add a real PK on `ID_FORECAST_DETAIL` (today identity-only,
-  no declared PK) + a uniqueness rule on the business identity (confirm during build).
+- Assembly Detail / `INV_FORECAST_DETAIL_INF` (confirmed during build, 2026-06-17): the live table has
+  **NO PK and NO unique index** — the rebuild's composite app-check `(VC_ASSY_PART_NUMBER_CODE,
+  VC_EFFECTIVE_MONTH)` is the ONLY uniqueness today (a concurrent double-insert could slip a dup). Rollout
+  must (i) add a real PK on `ID_FORECAST_DETAIL`, (ii) add `UNIQUE(VC_ASSY_PART_NUMBER_CODE,
+  VC_EFFECTIVE_MONTH)` (per-site composite under D1) as the backstop, and (iii) **pin + validate a canonical
+  `VC_EFFECTIVE_MONTH` format** (e.g. `yyyy/mm`) — all 50 live rows are blank today, so `2026/01` vs `202601`
+  would read as distinct composites and both insert, giving the unique index false confidence until the
+  format is enforced.
 **Action:** maintain a running "DB conversion / cutover script" deliverable enumerating every such diff so the
 production migration is deterministic and reviewable. Track it as the masters + later modules land.
