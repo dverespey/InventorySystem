@@ -32,8 +32,9 @@ DB ground truth (verified 2026-06-17 via sqlcmd, source-of-truth
 docs/analysis/master-data/master-crud-namedqueries.sql):
   5 renban groups. Codes by VC_RENBAN_GROUP_CODE order: CAP (id 12),
   CMWA (id 11), DICAS (id 8), HCAP (id 9), PACF (id 7).
-  id 7 = PACF: 8 current parts + 12 _HIST = refCount 20 (>0; delete MUST be
-  blocked — and the _HIST rows are exactly why refCount must count _HIST).
+  id 7 = PACF: parts + _HIST refs (>0; delete MUST be blocked). The exact count
+  is computed live each run — _HIST accumulates across test runs (throwaway parts
+  leave HIST snapshots), so it is NOT a fixed constant.
   ZZQA absent.
 """
 import os
@@ -54,7 +55,7 @@ SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 EXPECTED_COUNT = 5
 ANCHOR_CODES = ["CAP", "CMWA", "DICAS"]      # stable codes, in code order
 DETAIL_ANCHOR = {"id": 11, "code": "CMWA", "count": "288"}
-REFERENCED = {"id": 7, "code": "PACF", "refCount": 20}  # delete MUST be blocked
+REFERENCED = {"id": 7, "code": "PACF"}  # delete MUST be blocked; refCount computed live (drifts as _HIST grows)
 TEST_CODE = "ZZQA"      # throwaway round-trip code (zero refs -> gate allows cleanup)
 TEST_COUNT_IN = "7"     # typed value -> must persist/display as "007"
 TEST_COUNT_OUT = "007"
@@ -310,7 +311,7 @@ def check_validation(page, rep):
 
 # ---- check 4: R1 delete-gate (CRITICAL) ----------------------------------
 def check_delete_gate(page, rep):
-    """Open the referenced group (PACF, id 7, refCount 20 = 8 parts + 12 _HIST)
+    """Open the referenced group (PACF, id 7; refCount = parts + _HIST, computed live)
     in Detail and click Delete -> MUST be blocked. Assert: status shows the
     reference message, SPIKE refCount ran and returned >0, SPIKE DELETE BLOCKED
     fired, and the row still exists in the DB. Never deletes a referenced group.
@@ -320,9 +321,12 @@ def check_delete_gate(page, rep):
                "+(SELECT COUNT(*) FROM INV_PARTS_STOCK_MST_HIST WHERE IN_RENBAN_ID=%d)"
                % (REFERENCED["id"], REFERENCED["id"]))
     db_ref = next((int(t) for t in out.split() if t.isdigit()), -1)
+    # NOTE: do NOT hardcode the expected count — _HIST accumulates across test runs (throwaway
+    # parts leave HIST snapshots the part-delete never cleans), so PACF's refCount drifts up over
+    # time. Assert it's >0 (delete must block) and that the GATE returns this SAME live value below.
     rep.check("Delete-gate pre-state: %s has %d refs in DB (parts + _HIST, >0)"
-              % (REFERENCED["code"], REFERENCED["refCount"]),
-              db_ref == REFERENCED["refCount"], "db refCount=%d" % db_ref)
+              % (REFERENCED["code"], db_ref),
+              db_ref > 0, "db refCount=%d" % db_ref)
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
@@ -354,9 +358,10 @@ def check_delete_gate(page, rep):
     stxt = status.inner_text() if status else ""
     page.screenshot(path=lib.ARTIFACTS + "/renbangroup_delete_blocked.png", full_page=True)
 
-    ran_ref = any(("n=%d" % REFERENCED["refCount"]) in l for l in ref_lines)
-    rep.check("Delete-gate: refCount ran and returned %d (SPIKE 'refCount ... n=%d')"
-              % (REFERENCED["refCount"], REFERENCED["refCount"]),
+    # the gate must report the SAME live count the DB query returned (drift-proof, not a constant)
+    ran_ref = any(("n=%d" % db_ref) in l for l in ref_lines)
+    rep.check("Delete-gate: refCount ran and returned the live DB value %d (SPIKE 'refCount ... n=%d')"
+              % (db_ref, db_ref),
               ran_ref, ref_lines[-1].split("SPIKE")[-1][:70] if ref_lines else "no refCount marker")
     rep.check("Delete-gate: DELETE BLOCKED (SPIKE 'DELETE BLOCKED' fired)",
               bool(blk_lines), blk_lines[-1].split("SPIKE")[-1][:70] if blk_lines else "no BLOCKED marker")
