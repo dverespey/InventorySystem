@@ -40,14 +40,16 @@ docs/analysis/master-data/master-crud-namedqueries.sql):
   Valid FK ids for the throwaway insert: supplier=2, logistics=1, size=1, renban=7,
   partType=1.  ZZQATEST001 absent.
 
-HIST-SCOPE FINDING (flagged for David — see check 5): unlike Size/Renban,
-INV_PARTS_STOCK_MST has an INSERT_PartsStockMST trigger that snapshots EVERY new
-part into INV_PARTS_STOCK_MST_HIST on insert. Since the refCount gate counts _HIST
-(per the spec's reference set), a brand-new throwaway already has >=1 HIST row, so
-the gate BLOCKS its delete too -> there is NO truly zero-ref part for PartsStock.
-The gate is left FAITHFUL to the written reference set (HIST included); the harness
-asserts the block honestly and proves the underlying delete+trigger path via a
-direct DELETE (the Activity.dbo.InsertAct_Log stub lets DELETE_PartNumber fire).
+HIST-SCOPE — RESOLVED (David 2026-06-17, option b): _HIST is EXCLUDED from the gate.
+INV_PARTS_STOCK_MST's INSERT_PartsStockMST trigger snapshots every new part into
+INV_PARTS_STOCK_MST_HIST on insert, so counting _HIST would make NO part deletable.
+A part's OWN audit snapshot is not an external reference, so it doesn't block — the
+gate counts only the 6 TRANSACTIONAL-child tables (open-order/reject/stocktaking/
+part-shipping/qty-ledger/breakdown-fc). Check 5 proves both sides: part 4261102Q5100
+(real history) BLOCKS at refCount=880; the throwaway ZZQATEST001 (HIST-only, zero
+transactional children) is ALLOWED through the UI delete (gate n=0). The
+Activity.dbo.InsertAct_Log stub lets DELETE_PartNumber fire. (Size/Logistics/Renban
+KEEP _HIST in their gates — there it kills the parts'-FK dangle, a different relation.)
 """
 import os
 import subprocess
