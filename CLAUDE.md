@@ -28,8 +28,10 @@ the command line here. Do not invent build/test commands.
   `SupplierMaster`, `RenbanOrder`, `ASNInvoice`, `EDIUpload`.
 - **EDI:** `EDI810Object.pas` (invoice), `EDI856Object.pas` (ASN),
   `Write810File.pas`. Specs live in `docs/`.
-- **Schema:** `DB Schema/Create Inventory.sql` (~40 `INV_*` tables) +
-  `docs/triggers.sql`.
+- **Schema:** `DB Schema/CreateInventory.sql` — the **authoritative live server dump
+  (2026-06-12)**: 42 `INV_*` tables, 182 procs, 25 triggers. (The older
+  `Create Inventory.superseded-2026-06-01.sql` is the prior snapshot that pre-2026-06-16
+  analysis specs cite by line; `docs/triggers.sql` is obsolete — do not port from it.)
 
 ## Conventions in this codebase
 
@@ -62,7 +64,7 @@ the command line here. Do not invent build/test commands.
 1. Find the live unit via `InventorySystem.dpr`.
 2. Trace data access into `DataModule.pas`.
 3. Update the `.pas` and its `.dfm` together if the UI is involved.
-4. Check `DB Schema/Create Inventory.sql` and `docs/triggers.sql` if the change
+4. Check `DB Schema/CreateInventory.sql` (the authoritative live dump) if the change
    touches the database.
 5. State clearly that the change must be compiled/tested in the Delphi 7 IDE —
    you cannot verify it from this environment.

@@ -64,6 +64,10 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 DB Schema/OrderSimulation*.xls
 DB Schema/*.bak
+# Real TEMA EDI traffic (830/810/856/…) — never commit
+EDI/*.EDI
+EDIIn/*.EDI
+EDIIn/Archive/
 
 # ---------------------------------------------------------------------------
 # Stray copies / archives that should not be versioned

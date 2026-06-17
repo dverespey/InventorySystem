@@ -250,3 +250,174 @@ in the **receiving-confirmation** action alongside the arrival-add, not the carr
 
 > Closes the confirm-and-fix batch. All three are real defects; the rebuild fixes them (Bug 3 by
 > implementing the intended arrival-reversal).
+
+---
+
+## D9 — The live server dump `CreateInventory.sql` (2026-06-12) is the authoritative schema; resolution of the "snapshot-drift" findings
+
+*Recorded 2026-06-16.*
+
+**Verbatim intent (David):** "The dump is live." `DB Schema/CreateInventory.sql` (no space, dated
+2026-06-12) is the **current live-server schema** — 182 procs / 42 tables / 25 triggers. The older
+`Create Inventory.sql` (spaced, 2026-06-01) was a stale snapshot, now renamed
+`Create Inventory.superseded-2026-06-01.sql` (retained only so pre-2026-06-16 specs' `schema:NNNN`
+line cites still resolve). Also: **CAMEX is a decommissioned site** (as is NUMMI); their reports are
+deprecated relics, out of rebuild scope.
+
+**What this means for the rebuild.** Many analysis specs flagged proc-signature mismatches / missing
+procs as "vs the checked-in snapshot — verify live" ([[reference-schema-snapshot-vs-live]]). Re-verified
+against the LIVE dump, each finding now has a concrete verdict:
+
+| Finding | Spec | Verdict vs LIVE dump |
+|---|---|---|
+| EDI `@EIN` on `REPORT_EDI810` + `REPORT_EDI856` (D1 cross-site-bleed risk) | edi/asn-invoice | **RESOLVED** — both procs declare `@EIN INTEGER=0` and use it (`IF @EIN=0`→all, else `WHERE …_EIN=@EIN`). Passing `@EIN` correctly scopes to one site. The D1-blocking concern is GONE. |
+| `DELETE_ForecastInfo` (was "missing") | forecasting/forecast-breakdown | **RESOLVED** — exists, 3 params (`@WeekDate,@HistWeekDate,@PartNumber`) matching the caller exactly. |
+| `INV_FORECAST_DETAIL_INF` label/misc columns | forecasting/forecast-detail | **RESOLVED** — live table HAS `VC_LABEL_PART_NUMBER`/`VC_MISC1_PART_NUMBER`/`VC_MISC2_PART_NUMBER`; CRUD procs reference them. |
+| `UPDATE_UserPassword` (was "missing") | admin/auth-users | **RESOLVED on existence** — exists, 2 params (`@UserID,@NewPass`). **But NEW REAL mismatch:** caller passes `@Password` (DataModule.pas:6310) ≠ proc `@NewPass` → by-name ADO bind fails. |
+| Shipping M1 `INSERT_ShippingDetail` | shipping/shipping | **REAL** — live declares 4 params (`@PartShipID,@PartNumber,@Productiondate,@Qty`); caller passes 5 (diff names). |
+| Shipping M2 `INSERT_StockTakingInfo` | shipping/dailybuildtotal | **REAL** — live 3 params (`@PartNumber,@QTY,@Reason`); caller passes 5. |
+| Shipping M3 `INSERT_ShippingInfo` | shipping/shipping | **REAL** — live 9 params (incl. `@ShippingID OUTPUT,@DTStartSeq,@DTEndSeq`); caller passes 6. |
+| `SELECT_PartsStockInfo` (auto-scrap) | shipping/dailybuildtotal | **REAL** — live still 1 param (`@PartNum`); caller passes 3 and reads a `'Last Scrap Count'` column the proc doesn't return → `FieldByName` raises. |
+| `REPORT_ASNWithCost`, `REPORT_ForecastCAMEXReport` | reporting, forecasting | **DEPRECATED** — absent from live; CAMEX decommissioned. Not bugs. |
+| `REPORT_NUMMILotLocation[W]`, `ForecastCamexreport.pas` | reporting | **DEPRECATED RELIC** — NUMMI/CAMEX decommissioned sites; out of scope. |
+
+**NEW findings surfaced by the live dump (real, for the build):**
+- **Hardcoded site EIN in `REPORT_EDI856`:** one branch has `WHERE a.IN_ASN_EIN = 6440` (live `:3683`) —
+  a literal site EIN baked into the proc. A D1 hazard (pins one site); the rebuild must parameterize it.
+- **`UPDATE_UserPassword` param-name mismatch:** caller `@Password` vs proc `@NewPass` — reconcile in the
+  auth rebuild (moot once auth moves to the Ignition User Source).
+
+**Net:** the four scariest "snapshot-drift" items (EDI cross-site, the three missing procs) are RESOLVED;
+the genuine residue is the **Shipping signature mismatches (M1/M2/M3 + SELECT_PartsStockInfo)** — these are
+REAL vs the live schema and confirm the ManualShipping / daily-pull / auto-scrap paths are broken in the
+deployed code (a real defect to fix in the rebuild, not a snapshot artifact). Resolves the
+"verify-live / snapshot-drift" §8 items across shipping, edi, forecasting, admin specs.
+
+---
+
+## D10 — Forecast week numbering is TEMA-supplied and production-relative (ISO − 1 for 2026); the Order R1 fix is validated against a real 830
+
+*Recorded 2026-06-16. Resolves forecast-breakdown.md §8 Q1 (the highest-risk forecast question) and
+confirms the shipped `SIM_OrderSimulation` R1 fix.*
+
+**Evidence:** David provided a real TMMMS 830 forecast feed (`EDI/830000008976.EDI`, gitignored client
+data — sender Toyota DUNS `808369495`, receiver Magnolia `71930`, horizon 5/08–7/31, generated 2026-04-27).
+Its FST (Forecast Schedule) segments carry the week number in the **FST09 "DO" reference number**, e.g.:
+
+```
+FST*144*D*W*20260615*20260619***DO*2624   → production week of 6/15, DO ref 2624
+```
+
+The legacy parser reads `week = copy(delSL[9], 3, 2)` = chars 3-4 of the DO ref → for `2624` → **`24`**.
+The DO ref is structured `2` + `6` (year 2026) + `WW` (week), so `2624` = "2026, week 24".
+
+**Measured across the whole horizon, `ISO_week(start_date) − TEMA_DO_week = 1` for every normal
+production week** (the lone exception, the 7/12 single-day `FST*0…*2628`, is the mid-July shutdown stub —
+zero qty, off-cycle):
+
+| FST start | DO ref | TEMA wk | ISO wk | ISO − TEMA |
+|---|---|---|---|---|
+| 2026-06-08 | 2623 | 23 | 24 | 1 |
+| 2026-06-15 | 2624 | 24 | 25 | 1 |
+| 2026-06-22 | 2625 | 25 | 26 | 1 |
+
+(…holds for all 12 normal weeks 18→30.)
+
+**What this means for the rebuild.**
+1. **The forecast week number is TEMA-supplied, NOT app-computed.** It is parsed verbatim from the 830's
+   FST09 DO reference (chars 3-4) and stored as `INV_BREAKDOWN_FC_INF.IN_WEEK_NUMBER`. The forecast WRITE
+   side stores it unmodified (`checkweeknumber`); the FirstProductionDay offset is applied only to a local
+   holiday-lookup variable, never to the row (per the Forecasting spec).
+2. **TEMA's numbering is production-relative, running exactly `ISO − 1` for 2026** — which equals
+   `weekoffset = INT_FIRST_PRODUCTION_WEEK[2026] − 1 = 2 − 1 = 1` (the value `INV_FIRST_PRODUCTION_DAY`
+   carries; see [[project-order-renban-domain]] / the Production-calendar spec).
+3. **The shipped Order R1 fix (`SIM_OrderSimulation` STEP 4) is VALIDATED.** The READ side computes
+   `@WeekNo = ISO_week(prodDate) − weekoffset = ISO − 1`, and the stored `IN_WEEK_NUMBER` = the TEMA DO
+   week = `ISO − 1`. They match exactly on real data. The "three week-number conventions coexist; consistency
+   hinges on the 830 being production-relative" risk (Forecasting §8 Q1) is **confirmed safe** — the feed IS
+   production-relative.
+4. **Rebuild rule:** ingest `IN_WEEK_NUMBER` from FST09 chars 3-4 verbatim; do not recompute from the date.
+   When the read side needs a week for a production date, use `ISO_week(date) − (INT_FIRST_PRODUCTION_WEEK[year] − 1)`.
+   The "year + week" DO encoding (`26` + `WW`) is the durable key; carry both year and week, not just week,
+   to disambiguate across year boundaries (the legacy stores week-only and relies on delete-forward each cycle).
+
+---
+
+## D11 — Confirmed-bug batch: the rebuild FIXES these (David, 2026-06-16)
+
+*Resolves the "confirmed bug" §8 items across the Receiving/Shipping/Forecasting/EDI/Reporting/
+Production-calendar/Admin specs. The D8 pattern: each is a verified-against-source defect; the rebuild
+implements the corrected behavior (the legacy is NOT hotfixed — see the P12 NO-legacy-hotfix policy).*
+
+**Decision (verbatim intent):** *"Confirm Group B, fix in the rebuild."*
+
+**The batch (all confirmed against the live `CreateInventory.sql` and the `.pas`):**
+
+1. **D6 window-aware pricing — everywhere.** Manifest-cost pricing must pick the price whose
+   `VC_START_MANIFEST`/`VC_END_MANIFEST` window contains the ASN/production date, in **all** instances:
+   the EDI 810 build (`REPORT_EDI810`/`SELECT_INVOICEItems`) and the Reporting invoice summaries
+   (`REPORT_INVOICESSummary`, `REPORT_MonthlyINVOICESSummary`). Copy the correct `REPORT_EDI856` predicate.
+   Enforce non-overlapping windows per (site, assy code); reject `start>end`. (Extends D6 to the Reporting
+   instances found 2026-06-16.)
+2. **`REPORT_UnusedWheelPartNumbers`** queries the TIRE part-number column for wheel parts
+   (schema `…UnusedWheelPartNumbers` `NOT IN (SELECT vc_tire_part_number_code…)`) → use the WHEEL column.
+3. **Forecast day-spread** for valve/film/label/misc uses `wheelcount` (`ForecastBreakdownF.pas:1252-1285`)
+   instead of each component's own count → spread each component on its own count.
+4. **Shipping proc-signature mismatches (M1/M2/M3 + `SELECT_PartsStockInfo`)** — REAL vs the live schema
+   (D9): the ManualShipping / daily-ALC-pull / auto-scrap paths are broken in deployed code. The rebuild
+   uses correct, reconciled signatures (one canonical Named Query per op).
+5. **Hardcoded `WHERE a.IN_ASN_EIN = 6440`** in `REPORT_EDI856` (live `CreateInventory.sql:3683`) →
+   parameterize by the current site's EIN (D1).
+6. **DATAPURGE non-transactional `PurgeMode`** (`DELETE_AutoPurge`) — a mid-run error leaves `PurgeMode=1`
+   + a partial delete. The rebuild wraps the purge in a transaction (set/clear the flag atomically) and
+   re-homes the cross-DB `Activity` audit coupling.
+7. **RenbanGroup counter read-then-write race** — `UPDATE_RenbanGroupCount` + the client-side
+   `Format('%.3d',…)` count (RenbanOrder/RenbanGroupMaster) → atomic, by-id increment in the rebuild.
+8. **`INV_FIRST_PRODUCTION_DAY`** has no PK and `INSERT_FirstProductionDay` never dedups (the form's
+   "already exists" message is fiction) → real PK on `(site_id, production_year)` + a true upsert.
+9. **Reject-delete inflates on-hand** — `DELETE_RejectParts` has no purge bypass (unlike RecConfStat), so
+   purging a reject row adds its qty back. The rebuild's single stock-ledger service handles reject
+   reversal correctly (a reject delete is not a stock movement).
+
+> All nine are fixed structurally in the rebuild. Where a fix lands in the re-homed **stock-ledger**
+> service (4 partially, 9), it composes with the additive-delta ledger model. D6 (1) shares one
+> window-aware manifest-cost lookup across EDI + Reporting.
+
+---
+
+## D12 — Group C domain-judgment answers (David, 2026-06-16)
+
+*Resolves the remaining genuine-domain §8 questions across Assembly, EDI, Receiving, and Reporting.
+This closes the §8 decisions pass for the InventorySystem analysis (D1–D12).*
+
+**1. Drop `INV_ASSY_RATIO_MST` from the rebuild.** *(Assembly — assy-ratio-master §8.1/§8.2)*
+Verbatim intent: *"INV_ASSY_RATIO_MST failed conversion thought, drop for rebuild."* The table + its
+AssyRatioMaster screen were an abandoned design (the screen is hidden "not used yet"; no forecast/order
+proc reads the table — the live explosion uses `INV_FORECAST_DETAIL_INF`). **Do NOT port** `INV_ASSY_RATIO_MST`,
+`AssyRatioMaster`, or `BCRatioMaster` (already dead). The broadcast→part ratio model lives entirely in
+`INV_FORECAST_DETAIL_INF`.
+
+**2. EDI 820 remittance stays report-only.** *(EDI — edi-upload §8)*
+Verbatim intent: *"Keep report only now, site isn't using it."* The legacy 820 path's "Store in Table"
+TODO stays unimplemented; the rebuild renders 820 as a report (no payment-application persistence) for now.
+Revisit if a site starts using remittance reconciliation. (Still fix the latent parse bugs — `SE*` EOF
+loop, the `TStringList` leak — if/when the report is rebuilt.)
+
+**3. Plant-yard AND assembler-yard count as arrival on edit.** *(Receiving — recconfstat §8.5)*
+Verbatim intent: *"Plant/yard both count as arrival."* The legacy UPDATE arrival-add leg fires only on
+`VC_ARRIVAL`, so stamping plant-yard/assembler-yard on an EDIT of an `'A'` order under-counts vs the
+INSERT/DELETE legs (which treat plant-yard/assembler-yard/warehouse as arrival-equivalents). The rebuild's
+receiving action treats **plant-yard and assembler-yard as arrival-equivalent on edit too** — symmetric
+with insert — so the `'A'`-supplier stock-add fires consistently however arrival status is recorded. (Folds
+into the stock-ledger service alongside D7 + the D8(3) reversal.)
+
+**4. Monthly order reports range on ORDER date.** *(Reporting — reporting §8.2)*
+Verbatim intent: *"Should range on order date."* The legacy monthly supplier/logistics ORDER reports
+(`REPORT_MonthlySupplierOrders`/`…Cost`/`REPORT_MonthlyLogisticsOrders`) filter on
+`VC_STATUS_SUPPLIER_SHIPPING` (ship date), which is wrong — an order placed in month M-1 and shipped in M
+shows in M. The rebuild ranges these on **`VC_ORDER_DATE`** instead. (Confirmed bug; behaves like a D11
+fix. The daily order reports already use `VC_ORDER_DATE` correctly. Invoice reports are unaffected.)
+
+> Closes the InventorySystem §8 decisions pass. D1–D12 cover the cross-cutting decisions + every spec's
+> confirmed-bug and domain-judgment open items. Remaining spec §8 entries are narrow "verify during build"
+> notes, not decisions.
