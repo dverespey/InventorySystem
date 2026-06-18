@@ -90,8 +90,13 @@ def computePosts(op, old=None, new=None):
 			delta = _effect(new) - _effect(old)    # new.IN_QTY - old.IN_QTY
 			if delta == 0:
 				return []
-			return [_post(_partId(new), delta, _key(new, "upd:v=%s" % _ver(new)), new,
-			              "stocktaking: amend adjustment net delta")]
+			# Amend key includes the TARGET adjustment (:to=) as well as the version stamp, so it is
+			# collision-safe even at the stamp's hundredth-second resolution: two posting amends of the
+			# same row cannot share (stamp, target) — if they targeted the same value the second has
+			# delta 0 and posts nothing. (Without :to=, two sub-hundredth amends collide and the 2nd is
+			# silently swallowed by the (IN_PART_ID, VC_SOURCE_EVENT) idempotency backstop.)
+			return [_post(_partId(new), delta, _key(new, "upd:to=%d:v=%s" % (_effect(new), _ver(new))),
+			              new, "stocktaking: amend adjustment net delta")]
 		# part-id change (domain-forbidden; faithful two-post via the independent-join trigger):
 		posts = []
 		oldBackout = -_effect(old)                 # remove the old part's adjustment
@@ -118,3 +123,77 @@ def postStocktakingEvent(op, old=None, new=None, site=1, database=None):
 		stockLedger.post(p["partId"], p["delta"], p["sourceEnum"], p["eventKey"],
 		                 sourceRowId=p["sourceRowId"], reason=p["reason"],
 		                 site=site, purge=False, database=db)
+
+
+# =============================================================================================
+# WRITE-THEN-POST — the amend/write seam the Stocktaking screen calls (the Stage-3 reimplement).
+# Each function writes the INV_STOCKTAKING_INF source row, re-reads it, then posts the matching
+# ledger movement through postStocktakingEvent. This is the CUTOVER write path: it owns IN_QTY via
+# the ledger, so it presumes the three legacy stocktaking triggers are GONE (during parallel run the
+# legacy triggers stay live and the ledger is a shadow built by replay — do NOT run this path against
+# a DB that still has those triggers, or IN_QTY double-counts).
+#
+# The source row is written with a fresh, non-NULL 16-char VC_LAST_UPDATE via the live SQL stamp
+# recipe — this BOTH fixes the legacy Bug2 NULL-timestamp (UPDATE_StockTakingInfo built it off an
+# uninitialized @Update) AND gives the amend its idempotency version token. We do NOT call the buggy
+# UPDATE_StockTakingInfo proc; the amend is a correct UPDATE here.
+#
+# ATOMICITY (flagged for cutover, not solved here): the source-row write and the ledger post are two
+# statements on (potentially) two connections, so they are NOT yet one atomic unit — a post failure
+# after the source write commits would orphan the source row from the ledger. During parallel run this
+# is moot (the ledger is a shadow). At cutover, make them atomic — combine into one stored proc, or
+# thread a txId through stockLedger.post. Escalate the choice to the architect before cutover.
+
+# The live 16-char yyyymmddHHMMSSff stamp recipe (matches INSERT_StockTakingInfo / the legacy triggers).
+_STAMP_SQL = ("CONVERT(varchar, getdate(), 112) + SUBSTRING(CONVERT(varchar, getdate(), 114), 1, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 4, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 7, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 10, 2)")
+
+
+def _readRow(stkId, db):
+	"""Re-read a stocktaking row as a plain dict (the source of truth the post is built from)."""
+	rows = system.db.runPrepQuery(
+		"SELECT IN_STOCKTAKING_ID, IN_PART_ID, IN_QTY, VC_REASON, VC_LAST_UPDATE, VC_ADD "
+		"FROM INV_STOCKTAKING_INF WHERE IN_STOCKTAKING_ID = ?", [stkId], db)
+	if len(rows) == 0:
+		return None
+	r = rows[0]
+	return {"IN_STOCKTAKING_ID": r["IN_STOCKTAKING_ID"], "IN_PART_ID": r["IN_PART_ID"],
+	        "IN_QTY": r["IN_QTY"], "VC_REASON": r["VC_REASON"],
+	        "VC_LAST_UPDATE": r["VC_LAST_UPDATE"], "VC_ADD": r["VC_ADD"]}
+
+
+def insertAdjustment(partId, qty, reason=None, site=1, database=None):
+	"""Record a new stocktaking adjustment for partId (signed qty, D5) and post +qty to the ledger.
+	Returns the new IN_STOCKTAKING_ID."""
+	db = database if database is not None else stockLedger.DATABASE
+	newId = system.db.runPrepUpdate(
+		"INSERT INTO INV_STOCKTAKING_INF (IN_PART_ID, IN_QTY, VC_REASON, VC_LAST_UPDATE, VC_ADD) "
+		"VALUES (?, ?, ?, " + _STAMP_SQL + ", " + _STAMP_SQL + ")",
+		[partId, qty, reason], db, getKey=True)
+	postStocktakingEvent("insert", new=_readRow(newId, db), site=site, database=db)
+	return newId
+
+
+def amendAdjustment(stkId, newQty, newReason=None, site=1, database=None):
+	"""Edit an existing adjustment's qty/reason and post the net delta. Writes a fresh non-NULL
+	VC_LAST_UPDATE (fixes Bug2; serves as the amend version token)."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readRow(stkId, db)
+	if old is None:
+		raise ValueError("stocktaking.amendAdjustment: no row IN_STOCKTAKING_ID=%r" % (stkId,))
+	system.db.runPrepUpdate(
+		"UPDATE INV_STOCKTAKING_INF SET IN_QTY = ?, VC_REASON = ?, VC_LAST_UPDATE = " + _STAMP_SQL +
+		" WHERE IN_STOCKTAKING_ID = ?", [newQty, newReason, stkId], db)
+	postStocktakingEvent("update", old=old, new=_readRow(stkId, db), site=site, database=db)
+
+
+def deleteAdjustment(stkId, site=1, database=None):
+	"""Remove an adjustment and post the reversal (-its qty)."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readRow(stkId, db)
+	if old is None:
+		return
+	system.db.runPrepUpdate("DELETE FROM INV_STOCKTAKING_INF WHERE IN_STOCKTAKING_ID = ?", [stkId], db)
+	postStocktakingEvent("delete", old=old, site=site, database=db)
