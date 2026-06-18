@@ -35,10 +35,11 @@
 --   (Q-overlap) GAP convention (David): adjacent windows are entered with a 1-day gap (…1231 then 0101…),
 --     so they NEVER share a boundary day -> inclusive-both never double-matches -> windows are
 --     non-overlapping by data-entry rule. The TOP 1 below is therefore dead-defense (it never
---     disambiguates a real overlap). ENFORCE the gap at WRITE in the ManifestCost master (reject a new
---     window that overlaps an existing one for the part) so the rule can't be violated; the overlap
---     diagnostic at the bottom is the interim/cutover check (expect ZERO rows). [Master no-overlap guard:
---     follow-up on the ManifestCost master CRUD module.]
+--     disambiguates a real overlap). The gap is ENFORCED at WRITE by the ManifestCost master Save
+--     action (D13.2(b) checkWindowOverlap: NOT (:end < VC_START OR :start > VC_END) -> reject) — it
+--     allows gap windows and rejects touching/overlapping ones. ALREADY BUILT + TESTED
+--     (test_manifestcost_crud.py UI + test_manifestcost_overlap_guard.py headless boundary lock). The
+--     overlap diagnostic at the bottom is the cutover/interim check (expect ZERO rows).
 -- IG81-COMPAT: a plain inline TVF, identical on 8.1.52 and 8.3; report Named Queries CROSS APPLY it.
 -- IG83-TODO: at the Postgres phase, VC_START/VC_END_MANIFEST (yyyymmdd strings) -> date; the string
 --            comparison here is correct ONLY because the stamps are zero-padded yyyymmdd (lexicographic
