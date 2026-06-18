@@ -85,8 +85,12 @@ def computePosts(op, old=None, new=None):
 			delta = _effect(new) - _effect(old)    # old.IN_QTY - new.IN_QTY
 			if delta == 0:
 				return []
-			return [_post(_partId(new), delta, _key(new, "upd:v=%s" % _ver(new)), new,
-			              "reject: amend qty net delta")]
+			# Amend key carries the TARGET effect (:to=) plus the version stamp -> collision-safe even
+			# at the stamp's hundredth-second resolution (two posting amends of one row can't share
+			# (stamp, target): a same-target second amend has delta 0 and posts nothing). Same fix as
+			# the stocktaking twin; see IGNITION-stock-ledger-design §4.
+			return [_post(_partId(new), delta, _key(new, "upd:to=%d:v=%s" % (_effect(new), _ver(new))),
+			              new, "reject: amend qty net delta")]
 		# part-id change (domain-forbidden; faithful two-post via the independent-join trigger):
 		posts = []
 		oldRestore = -_effect(old)                 # +old.IN_QTY back to the old part
@@ -113,3 +117,68 @@ def postRejectEvent(op, old=None, new=None, site=1, database=None):
 		stockLedger.post(p["partId"], p["delta"], p["sourceEnum"], p["eventKey"],
 		                 sourceRowId=p["sourceRowId"], reason=p["reason"],
 		                 site=site, purge=False, database=db)
+
+
+# =============================================================================================
+# WRITE-THEN-POST — the reject screen's amend/write seam (the Stage-3 reimplement), twin of the
+# stocktaking seam. Each function writes the INV_REJECT_INF source row, re-reads it, then posts the
+# matching ledger movement via postRejectEvent. CUTOVER write path: owns IN_QTY via the ledger, so it
+# presumes the three legacy reject triggers are GONE (during parallel run the legacy triggers stay
+# live and the ledger is a shadow built by replay — do NOT run this against a trigger-live DB or
+# IN_QTY double-counts). Source-write/ledger-post ATOMICITY is a flagged cutover TODO (combine into a
+# proc or thread a txId through stockLedger.post — escalate to the architect). VC_LAST_UPDATE is
+# written fresh per edit (the amend version token).
+
+# The live 16-char yyyymmddHHMMSSff stamp recipe (matches the legacy reject triggers / INSERT procs).
+_STAMP_SQL = ("CONVERT(varchar, getdate(), 112) + SUBSTRING(CONVERT(varchar, getdate(), 114), 1, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 4, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 7, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 10, 2)")
+
+
+def _readRow(rejId, db):
+	"""Re-read a reject row as a plain dict (the source of truth the post is built from)."""
+	rows = system.db.runPrepQuery(
+		"SELECT IN_REJECT_ID, VC_DIVISION, IN_PART_ID, IN_QTY, VC_REASON, VC_LAST_UPDATE, VC_ADD "
+		"FROM INV_REJECT_INF WHERE IN_REJECT_ID = ?", [rejId], db)
+	if len(rows) == 0:
+		return None
+	r = rows[0]
+	return {"IN_REJECT_ID": r["IN_REJECT_ID"], "VC_DIVISION": r["VC_DIVISION"],
+	        "IN_PART_ID": r["IN_PART_ID"], "IN_QTY": r["IN_QTY"], "VC_REASON": r["VC_REASON"],
+	        "VC_LAST_UPDATE": r["VC_LAST_UPDATE"], "VC_ADD": r["VC_ADD"]}
+
+
+def insertReject(partId, qty, division, reason=None, site=1, database=None):
+	"""Record a new reject for partId (qty removed from on-hand) and post -qty to the ledger.
+	Returns the new IN_REJECT_ID."""
+	db = database if database is not None else stockLedger.DATABASE
+	newId = system.db.runPrepUpdate(
+		"INSERT INTO INV_REJECT_INF (VC_DIVISION, IN_PART_ID, IN_QTY, VC_REASON, VC_LAST_UPDATE, VC_ADD) "
+		"VALUES (?, ?, ?, ?, " + _STAMP_SQL + ", " + _STAMP_SQL + ")",
+		[division, partId, qty, reason], db, getKey=True)
+	postRejectEvent("insert", new=_readRow(newId, db), site=site, database=db)
+	return newId
+
+
+def amendReject(rejId, newQty, newReason=None, site=1, database=None):
+	"""Edit an existing reject's qty/reason and post the net delta. Writes a fresh VC_LAST_UPDATE
+	(the amend version token)."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readRow(rejId, db)
+	if old is None:
+		raise ValueError("reject.amendReject: no row IN_REJECT_ID=%r" % (rejId,))
+	system.db.runPrepUpdate(
+		"UPDATE INV_REJECT_INF SET IN_QTY = ?, VC_REASON = ?, VC_LAST_UPDATE = " + _STAMP_SQL +
+		" WHERE IN_REJECT_ID = ?", [newQty, newReason, rejId], db)
+	postRejectEvent("update", old=old, new=_readRow(rejId, db), site=site, database=db)
+
+
+def deleteReject(rejId, site=1, database=None):
+	"""Un-reject (remove the reject row) and post the restoring +qty."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readRow(rejId, db)
+	if old is None:
+		return
+	system.db.runPrepUpdate("DELETE FROM INV_REJECT_INF WHERE IN_REJECT_ID = ?", [rejId], db)
+	postRejectEvent("delete", old=old, site=site, database=db)

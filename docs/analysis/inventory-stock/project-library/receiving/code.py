@@ -176,7 +176,11 @@ def computePosts(op, old=None, new=None, addPoint=None, addPointOld=None, addPoi
 			if delta == 0:
 				return []
 			enum = _updateEnum(addPoint, old, new)
-			return [_post(newPart, delta, enum, _key(enum, new, "upd:v=%s" % _ver(new)), new,
+			# Amend key carries the TARGET effect (:to=) + version stamp -> collision-safe at the stamp's
+			# hundredth-second resolution (two posting amends of one order can't share (stamp, target): a
+			# same-target second amend has delta 0 and posts nothing). Twin of stocktaking/reject; §4.
+			return [_post(newPart, delta, enum,
+			              _key(enum, new, "upd:to=%d:v=%s" % (_effect(new, addPoint), _ver(new))), new,
 			              "receiving edit: net on-hand delta")]
 
 		# F5 — the edit RE-POINTS the part number (UPDATE_RecConfStatInfo can rewrite the key).
@@ -252,3 +256,96 @@ def postOrderEvent(op, old=None, new=None, site=1, purge=False, database=None):
 		stockLedger.post(partId, p["delta"], p["sourceEnum"], p["eventKey"],
 		                 sourceRowId=p["sourceRowId"], reason=p["reason"],
 		                 site=site, purge=False, database=db)
+
+
+# =============================================================================================
+# WRITE-THEN-POST — the RecConfStat screen's amend/write seam (the Stage-3 reimplement). Writes the
+# INV_OPEN_ORDER_INF row, re-reads it, then posts via postOrderEvent. CUTOVER write path: owns IN_QTY
+# via the ledger, presumes the three legacy RecConfStat qty triggers are GONE (parallel run keeps the
+# triggers live + the ledger a shadow — do NOT run this against a trigger-live DB or IN_QTY
+# double-counts). Source-write/ledger-post ATOMICITY is a flagged cutover TODO (combine into a proc or
+# thread a txId — escalate to the architect).
+#
+# Stage-3 fixes baked in by keying writes on the SURROGATE IN_ORDER_ID (not the editable natural
+# 4-tuple): this sidesteps BOTH the supplier-blind DELETE_RecConfStatInfo bug (recconfstat §4 — it
+# omitted VC_SUPPLIER_CODE) AND the prev-tuple UPDATE_RecConfStatInfo complexity. VC_LAST_UPDATE is
+# re-stamped fresh per write (the amend version token). VC_FRS_DATE (the only nullable column) is left
+# to the screen's derivation step and not touched here.
+#
+# SCOPE: this is the stock-path seam. The full screen (FRS-date year-rollover derivation, the RENBAN
+# batch update, server-side search) is the dedicated RecConfStat module build, not this seam.
+
+# The live 16-char yyyymmddHHMMSSff stamp recipe (matches the legacy RecConfStat procs/triggers).
+_STAMP_SQL = ("CONVERT(varchar, getdate(), 112) + SUBSTRING(CONVERT(varchar, getdate(), 114), 1, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 4, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 7, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 10, 2)")
+
+_OO_VARCHARS = ("VC_STATUS_SUPPLIER_SHIPPING", "VC_ARRIVAL", "VC_TRAILER_NUMBER", "VC_STATUS_PLANT_YARD",
+                "VC_PLANT_PARKING", "VC_STATUS_ASSEMBLER_YARD", "VC_ASSEMBLER_LOCATION",
+                "VC_STATUS_EMPTY_TRAILER", "VC_DETENTION", "VC_ORDER_DATE", "VC_WAREHOUSE",
+                "VC_TERMINATED", "VC_SHIP_DATE", "VC_KANBAN_NUMBER")  # NOT-NULL varchars (default '')
+
+
+def _readOrder(orderId, db):
+	"""Re-read the stock-relevant columns of an open-order row as a plain dict (what computePosts reads)."""
+	rows = system.db.runPrepQuery(
+		"SELECT IN_ORDER_ID, VC_PART_NUMBER, IN_QTY, VC_STATUS_SUPPLIER_SHIPPING, VC_ARRIVAL, "
+		"VC_STATUS_PLANT_YARD, VC_STATUS_ASSEMBLER_YARD, VC_WAREHOUSE, VC_TERMINATED, "
+		"VC_STATUS_EMPTY_TRAILER, VC_LAST_UPDATE FROM INV_OPEN_ORDER_INF WHERE IN_ORDER_ID = ?",
+		[orderId], db)
+	if len(rows) == 0:
+		return None
+	r = rows[0]
+	return dict((c, r[c]) for c in
+	            ("IN_ORDER_ID", "VC_PART_NUMBER", "IN_QTY", "VC_STATUS_SUPPLIER_SHIPPING", "VC_ARRIVAL",
+	             "VC_STATUS_PLANT_YARD", "VC_STATUS_ASSEMBLER_YARD", "VC_WAREHOUSE", "VC_TERMINATED",
+	             "VC_STATUS_EMPTY_TRAILER", "VC_LAST_UPDATE"))
+
+
+def insertOpenOrder(oo, site=1, database=None):
+	"""Insert an open order (oo = dict of supplier/part/FRS/renban/qty + any milestone stamps; missing
+	NOT-NULL varchars default to '') and post the add-point-gated movement. Returns the new IN_ORDER_ID."""
+	db = database if database is not None else stockLedger.DATABASE
+	cols = ["VC_SUPPLIER_CODE", "VC_PART_NUMBER", "VC_FRS_NUMBER", "VC_RENBAN_NUMBER", "IN_QTY"] + list(_OO_VARCHARS)
+	vals = [oo.get(c, "") for c in cols]
+	vals[4] = int(oo["IN_QTY"])
+	placeholders = ", ".join(["?"] * len(cols))
+	newId = system.db.runPrepUpdate(
+		"INSERT INTO INV_OPEN_ORDER_INF (" + ", ".join(cols) + ", VC_LAST_UPDATE, VC_ADD) "
+		"VALUES (" + placeholders + ", " + _STAMP_SQL + ", " + _STAMP_SQL + ")",
+		vals, db, getKey=True)
+	postOrderEvent("insert", new=_readOrder(newId, db), site=site, database=db)
+	return newId
+
+
+def updateOpenOrder(orderId, oo, site=1, database=None):
+	"""Edit an open order by surrogate id (oo = the fields to set) and post the net movement. Re-stamps
+	VC_LAST_UPDATE. Keying on IN_ORDER_ID fixes the legacy editable-key / prev-tuple hazards."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readOrder(orderId, db)
+	if old is None:
+		raise ValueError("receiving.updateOpenOrder: no row IN_ORDER_ID=%r" % (orderId,))
+	cols = ["VC_SUPPLIER_CODE", "VC_PART_NUMBER", "VC_FRS_NUMBER", "VC_RENBAN_NUMBER", "IN_QTY"] + list(_OO_VARCHARS)
+	setters, vals = [], []
+	for c in cols:
+		if c in oo:
+			setters.append("%s = ?" % c)
+			vals.append(int(oo[c]) if c == "IN_QTY" else oo[c])
+	setters.append("VC_LAST_UPDATE = " + _STAMP_SQL)
+	vals.append(orderId)
+	system.db.runPrepUpdate("UPDATE INV_OPEN_ORDER_INF SET " + ", ".join(setters) +
+	                        " WHERE IN_ORDER_ID = ?", vals, db)
+	postOrderEvent("update", old=old, new=_readOrder(orderId, db), site=site, database=db)
+
+
+def deleteOpenOrder(orderId, site=1, purge=False, database=None):
+	"""Delete an open order by surrogate id and post the reversal (gated by VC_TERMINATED=''/empty-
+	trailer in computePosts; purge=True posts nothing, §3.1). Keying on IN_ORDER_ID fixes the legacy
+	supplier-blind delete."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readOrder(orderId, db)
+	if old is None:
+		return
+	system.db.runPrepUpdate("DELETE FROM INV_OPEN_ORDER_INF WHERE IN_ORDER_ID = ?", [orderId], db)
+	postOrderEvent("delete", old=old, site=site, purge=purge, database=db)
