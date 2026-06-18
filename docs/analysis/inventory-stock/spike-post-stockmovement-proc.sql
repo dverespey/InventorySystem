@@ -25,7 +25,7 @@ CREATE PROCEDURE dbo.POST_StockMovement
     @delta       int,
     @sourceEnum  varchar(24),
     @sourceRowId int          = NULL,
-    @eventKey    varchar(40),
+    @eventKey    varchar(100),
     @reason      varchar(300) = NULL,
     @site        int          = 1,
     @purge       bit          = 0

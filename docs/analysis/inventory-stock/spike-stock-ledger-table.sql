@@ -22,7 +22,10 @@ CREATE TABLE dbo.INV_STOCK_LEDGER (
     IN_BALANCE_AFTER  int           NULL,                   -- running on-hand AFTER this post (materialized snapshot)
     VC_SOURCE_ENUM    varchar(24)   NOT NULL,               -- movement class: RECEIVING_SHIP / _ARRIVAL / _REVERSAL / REJECT / STOCKTAKING / SHIPPING
     IN_SOURCE_ROW_ID  int           NULL,                   -- surrogate id of the source row (order/reject/stk/shipping)
-    VC_SOURCE_EVENT   varchar(40)   NOT NULL,               -- idempotency discriminator, e.g. 'SHIPPING:psh=12077:ins'
+    VC_SOURCE_EVENT   varchar(100)  NOT NULL,               -- idempotency discriminator, e.g. 'SHIPPING:psh=12077:ins'
+                                                            -- (100 not 40: amend keys carry ':upd:to=<effect>:v=<16-char stamp>' and the
+                                                            --  longest ENUM is RECEIVING_REVERSAL -> ~64 chars; varchar(40) silently truncated,
+                                                            --  dropping the per-edit stamp and re-introducing the amend-collision it guards against)
     site_id           int           NOT NULL DEFAULT (1),   -- D1; parallel-run is single-site (default 1)
     VC_REASON         varchar(300)  NULL,                   -- coded/free-text reason
     TS_POSTED         varchar(16)   NOT NULL,               -- 16-char yyyymmddHHMMSSff (P2; matches VC_ADD/VC_LAST_UPDATE)

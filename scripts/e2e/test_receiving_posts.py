@@ -94,8 +94,8 @@ def main():
     p = only(cp("update", old=row(qty=100, ship=D), new=row(qty=140, ship=D), addPoint="S"))
     rep.check("edit qty while shipped 'S' 100->140 -> +40 SHIP (delta, not double-count)",
               p["delta"] == 40 and p["sourceEnum"] == R.ENUM_RECEIVING_SHIP, str(p))
-    rep.check("edit event key is ':upd:v=<ts>'",
-              p["eventKey"] == "RECEIVING_SHIP:ord=8842:upd:v=20260618120000ff", p["eventKey"])
+    rep.check("edit event key is ':upd:to=<target>:v=<ts>' (collision-safe)",
+              p["eventKey"] == "RECEIVING_SHIP:ord=8842:upd:to=140:v=20260618120000ff", p["eventKey"])
 
     p = only(cp("update", old=row(qty=100), new=row(qty=100, ship=D), addPoint="S"))
     rep.check("ship-status set 'S' blank->set -> +qty SHIP", p["delta"] == 100, str(p))
@@ -163,6 +163,11 @@ def main():
     k1 = only(cp("update", old=row(qty=100, ship=D), new=row(qty=120, ship=D, ts="AAA"), addPoint="S"))["eventKey"]
     k2 = only(cp("update", old=row(qty=120, ship=D), new=row(qty=130, ship=D, ts="BBB"), addPoint="S"))["eventKey"]
     rep.check("successive edits get DISTINCT event keys (version = VC_LAST_UPDATE)", k1 != k2, "%s vs %s" % (k1, k2))
+    # collision-safety: SAME stamp, different target effects -> distinct keys (the :to= discriminator).
+    s1 = only(cp("update", old=row(qty=100, ship=D), new=row(qty=140, ship=D, ts="SAME"), addPoint="S"))["eventKey"]
+    s2 = only(cp("update", old=row(qty=140, ship=D), new=row(qty=180, ship=D, ts="SAME"), addPoint="S"))["eventKey"]
+    rep.check("same-stamp distinct-target edits get distinct keys (:to= collision-safety)",
+              s1 != s2, "%s vs %s" % (s1, s2))
     ka = only(cp("insert", new=row(qty=10, ship=D, oid=11), addPoint="S"))["eventKey"]
     kb = only(cp("insert", new=row(qty=10, ship=D, oid=22), addPoint="S"))["eventKey"]
     rep.check("different orders get distinct insert keys", ka != kb, "%s vs %s" % (ka, kb))

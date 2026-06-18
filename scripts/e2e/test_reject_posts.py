@@ -66,7 +66,8 @@ def main():
     print("\n--- UPDATE (amend, same part) ---")
     p = only(cp("update", old=row(qty=100), new=row(qty=140)))
     rep.check("amend 100->140 -> -40 (reject 40 more)", p["delta"] == -40, str(p))
-    rep.check("amend key ':upd:v=<ver>'", p["eventKey"] == "REJECT:rej=551:upd:v=20260618120000ff", p["eventKey"])
+    rep.check("amend key ':upd:to=<target>:v=<ver>' (collision-safe)",
+              p["eventKey"] == "REJECT:rej=551:upd:to=-140:v=20260618120000ff", p["eventKey"])
     p = only(cp("update", old=row(qty=140), new=row(qty=100)))
     rep.check("amend 140->100 -> +40 (restore 40)", p["delta"] == 40, str(p))
     rep.check("amend no change -> no post", cp("update", old=row(qty=100), new=row(qty=100)) == [])
@@ -82,6 +83,11 @@ def main():
     k1 = only(cp("update", old=row(qty=100), new=row(qty=120, upd="AAA")))["eventKey"]
     k2 = only(cp("update", old=row(qty=120), new=row(qty=130, upd="BBB")))["eventKey"]
     rep.check("successive amends distinct keys (version = VC_LAST_UPDATE)", k1 != k2, "%s vs %s" % (k1, k2))
+    # collision-safety: SAME stamp, different targets -> distinct keys (the :to= discriminator).
+    s1 = only(cp("update", old=row(qty=100), new=row(qty=140, upd="SAME")))["eventKey"]
+    s2 = only(cp("update", old=row(qty=140), new=row(qty=180, upd="SAME")))["eventKey"]
+    rep.check("same-stamp distinct-target amends get distinct keys (:to= collision-safety)",
+              s1 != s2, "%s vs %s" % (s1, s2))
     ka = only(cp("insert", new=row(rej=11)))["eventKey"]
     kb = only(cp("insert", new=row(rej=22)))["eventKey"]
     rep.check("different reject rows distinct insert keys", ka != kb, "%s vs %s" % (ka, kb))

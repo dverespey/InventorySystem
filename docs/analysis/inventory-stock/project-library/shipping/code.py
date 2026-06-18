@@ -114,7 +114,11 @@ def computePosts(op, old=None, new=None):
 			delta = _effect(new) - _effect(old)
 			if delta == 0:
 				return []
-			return [_post(newPart, delta, _key(new, "upd:v=%s" % _ver(new)), new,
+			# Amend key carries the TARGET effect (:to=) + version stamp -> collision-safe at the
+			# stamp's hundredth-second resolution (two posting amends of one row can't share
+			# (stamp, target): a same-target second amend has delta 0 and posts nothing). Twin of
+			# the stocktaking/reject/receiving fix; see IGNITION-stock-ledger-design §4.
+			return [_post(newPart, delta, _key(new, "upd:to=%d:v=%s" % (_effect(new), _ver(new))), new,
 			              "shipping: amend qty net delta")]
 
 		# Part-number amend -> two posts (restore old part, consume new part). Verified to MATCH the
@@ -183,3 +187,84 @@ def postHeaderDelete(shippingId, site=1, database=None):
 	          "VC_PART_NUMBER": r["VC_PART_NUMBER"], "IN_QTY": r["IN_QTY"], "VC_ADD": r["VC_ADD"]}
 	         for r in rows]
 	_postAll(computeHeaderDeletePosts(plain), site, database)
+
+
+# =============================================================================================
+# WRITE-THEN-POST — the Shipping screens' amend/write seam (the Stage-3 reimplement). Writes the
+# INV_PART_SHIPPING_INF row(s), re-reads, then posts via postShippingEvent / postHeaderDelete.
+# CUTOVER write path: owns IN_QTY via the ledger, presumes the *PartShipping triggers + DeleteShipDate
+# are GONE (parallel run keeps them live + the ledger a shadow — do NOT run against a trigger-live DB
+# or IN_QTY double-counts). Source-write/ledger-post ATOMICITY is a flagged cutover TODO (combine into
+# a proc or thread a txId — escalate to the architect).
+#
+# VC_ADD is re-stamped fresh on each write — this IS the AmendShipment "re-stamp VC_ADD per edit"
+# contract flagged in the post-service docstring (INV_PART_SHIPPING_INF has no VC_LAST_UPDATE column,
+# so VC_ADD is the amend version token; the :to= discriminator makes the amend key collision-safe).
+#
+# SCOPE: this is the stock-path seam. The GALC ratio-explosion (CalculateFRS), the manual-grid post,
+# and the (line,date) "already processed" lock are the dedicated Shipping module build, not this seam.
+
+# The live 16-char yyyymmddHHMMSSff stamp recipe (matches the legacy shipping INSERT procs/triggers).
+_STAMP_SQL = ("CONVERT(varchar, getdate(), 112) + SUBSTRING(CONVERT(varchar, getdate(), 114), 1, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 4, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 7, 2) "
+              "+ SUBSTRING(CONVERT(varchar, getdate(), 114), 10, 2)")
+
+
+def _readPartShip(partShipId, db):
+	"""Re-read a part-shipping row as a plain dict (the source of truth the post is built from)."""
+	rows = system.db.runPrepQuery(
+		"SELECT IN_PART_SHIPPING_ID, IN_SHIPPING_ID, VC_PART_NUMBER, VC_PRODUCTION_DATE, IN_QTY, VC_ADD "
+		"FROM INV_PART_SHIPPING_INF WHERE IN_PART_SHIPPING_ID = ?", [partShipId], db)
+	if len(rows) == 0:
+		return None
+	r = rows[0]
+	return {"IN_PART_SHIPPING_ID": r["IN_PART_SHIPPING_ID"], "IN_SHIPPING_ID": r["IN_SHIPPING_ID"],
+	        "VC_PART_NUMBER": r["VC_PART_NUMBER"], "VC_PRODUCTION_DATE": r["VC_PRODUCTION_DATE"],
+	        "IN_QTY": r["IN_QTY"], "VC_ADD": r["VC_ADD"]}
+
+
+def insertPartShipping(shippingId, partNumber, productionDate, qty, site=1, database=None):
+	"""Record a consumed part-shipping line (stock-OUT) and post -qty. Returns the new IN_PART_SHIPPING_ID."""
+	db = database if database is not None else stockLedger.DATABASE
+	newId = system.db.runPrepUpdate(
+		"INSERT INTO INV_PART_SHIPPING_INF (IN_SHIPPING_ID, VC_PART_NUMBER, VC_PRODUCTION_DATE, IN_QTY, VC_ADD) "
+		"VALUES (?, ?, ?, ?, " + _STAMP_SQL + ")",
+		[shippingId, partNumber, productionDate, qty], db, getKey=True)
+	postShippingEvent("insert", new=_readPartShip(newId, db), site=site, database=db)
+	return newId
+
+
+def amendPartShipping(partShipId, newQty, newPartNumber=None, site=1, database=None):
+	"""Edit a posted line's qty (and optionally re-point its part) and post the net movement / the
+	part-change two-post. Re-stamps VC_ADD (the amend version token)."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readPartShip(partShipId, db)
+	if old is None:
+		raise ValueError("shipping.amendPartShipping: no row IN_PART_SHIPPING_ID=%r" % (partShipId,))
+	part = newPartNumber if newPartNumber is not None else old["VC_PART_NUMBER"]
+	system.db.runPrepUpdate(
+		"UPDATE INV_PART_SHIPPING_INF SET IN_QTY = ?, VC_PART_NUMBER = ?, VC_ADD = " + _STAMP_SQL +
+		" WHERE IN_PART_SHIPPING_ID = ?", [newQty, part, partShipId], db)
+	postShippingEvent("update", old=old, new=_readPartShip(partShipId, db), site=site, database=db)
+
+
+def deletePartShipping(partShipId, site=1, database=None):
+	"""Remove a posted line and post the restoring +qty."""
+	db = database if database is not None else stockLedger.DATABASE
+	old = _readPartShip(partShipId, db)
+	if old is None:
+		return
+	system.db.runPrepUpdate("DELETE FROM INV_PART_SHIPPING_INF WHERE IN_PART_SHIPPING_ID = ?", [partShipId], db)
+	postShippingEvent("delete", old=old, site=site, database=db)
+
+
+def deleteShipmentHeader(shippingId, site=1, database=None):
+	"""Delete a shipment header and ALL its part-shipping rows, posting the restore for each (the
+	re-homed DeleteShipDate cascade — scoped to IN_SHIPPING_ID so it fixes the legacy line-blind
+	VC_PRODUCTION_DATE-only cascade, and multi-row-safe). Posts BEFORE the physical delete (the post
+	reads the qtys to restore)."""
+	db = database if database is not None else stockLedger.DATABASE
+	postHeaderDelete(shippingId, site=site, database=db)
+	system.db.runPrepUpdate("DELETE FROM INV_PART_SHIPPING_INF WHERE IN_SHIPPING_ID = ?", [shippingId], db)
+	system.db.runPrepUpdate("DELETE FROM INV_SHIPPING_INF WHERE IN_SHIPPING_ID = ?", [shippingId], db)
