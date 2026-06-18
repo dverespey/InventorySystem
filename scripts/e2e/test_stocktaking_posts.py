@@ -73,7 +73,8 @@ def main():
     print("\n--- UPDATE (amend, same part) ---")
     p = only(cp("update", old=row(qty=50), new=row(qty=80)))
     rep.check("amend +50->+80 -> +30 (net new-old)", p["delta"] == 30, str(p))
-    rep.check("amend key ':upd:v=<ver>'", p["eventKey"] == "STOCKTAKING:stk=903:upd:v=20260618120000ff", p["eventKey"])
+    rep.check("amend key ':upd:to=<target>:v=<ver>' (collision-safe)",
+              p["eventKey"] == "STOCKTAKING:stk=903:upd:to=80:v=20260618120000ff", p["eventKey"])
     p = only(cp("update", old=row(qty=50), new=row(qty=20)))
     rep.check("amend +50->+20 -> -30", p["delta"] == -30, str(p))
     rep.check("amend no change -> no post", cp("update", old=row(qty=50), new=row(qty=50)) == [])
@@ -89,6 +90,12 @@ def main():
     k1 = only(cp("update", old=row(qty=50), new=row(qty=60, upd="AAA")))["eventKey"]
     k2 = only(cp("update", old=row(qty=60), new=row(qty=70, upd="BBB")))["eventKey"]
     rep.check("successive amends distinct keys (version = VC_LAST_UPDATE)", k1 != k2, "%s vs %s" % (k1, k2))
+    # collision-safety: SAME stamp but different targets -> distinct keys (the :to= discriminator),
+    # so a sub-hundredth-second pair of distinct amends is NOT swallowed by the idempotency backstop.
+    s1 = only(cp("update", old=row(qty=50), new=row(qty=80, upd="SAME")))["eventKey"]
+    s2 = only(cp("update", old=row(qty=80), new=row(qty=120, upd="SAME")))["eventKey"]
+    rep.check("same-stamp distinct-target amends get distinct keys (:to= collision-safety)",
+              s1 != s2, "%s vs %s" % (s1, s2))
     ka = only(cp("insert", new=row(stkid=11)))["eventKey"]
     kb = only(cp("insert", new=row(stkid=22)))["eventKey"]
     rep.check("different stocktaking rows distinct insert keys", ka != kb, "%s vs %s" % (ka, kb))
