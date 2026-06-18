@@ -57,6 +57,16 @@ def scalar(query):
     return r[0][0] if r else None
 
 
+def rows_col(query, col=0):
+    """First column of every row (a flat list of strings)."""
+    return [r[col] for r in sql(query) if len(r) > col and r[col] != ""]
+
+
+def quote(s):
+    """Single-quote a string literal for inline T-SQL (doubling embedded quotes)."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
 # ---------------------------------------------------------------------------------------------
 # A. PROC self-test
 # ---------------------------------------------------------------------------------------------
@@ -64,6 +74,11 @@ def proc_self_test(rep):
     print("\n--- A. POST_StockMovement self-test (part 16) ---")
     PART, DELTA, EVT = 16, 137, "SPIKE_PARITY:tx=1"
     base = int(scalar("SELECT IN_QTY FROM INV_PARTS_STOCK_MST WHERE IN_PART_ID=%d" % PART))
+    # The proc's IN_QTY bump fires the LEGACY UPDATE_PartNumber trigger (this spike DB still has the
+    # legacy triggers attached), which writes spurious INV_PART_QTY_INF + _HIST audit rows. In the
+    # rebuild DB those triggers won't exist (design §5). Disable it around the self-test so the test
+    # leaves no audit-row residue; re-enabled in teardown.
+    sql("DISABLE TRIGGER UPDATE_PartNumber ON INV_PARTS_STOCK_MST")
 
     sql("EXEC POST_StockMovement @partId=%d, @delta=%d, @sourceEnum='STOCKTAKING', "
         "@sourceRowId=999999, @eventKey='%s', @reason='parity self-test', @site=1, @purge=0"
@@ -99,9 +114,10 @@ def proc_self_test(rep):
     rep.check("rebuildBalance re-stamps absolute SUM(ledger)", rebuilt == DELTA,
               "IN_QTY=%d == SUM(ledger)=%d" % (rebuilt, DELTA))
 
-    # Fixture discipline: delete test rows + restore the part's original IN_QTY.
+    # Fixture discipline: delete test rows, restore the part's IN_QTY, re-enable the legacy trigger.
     sql("DELETE FROM INV_STOCK_LEDGER WHERE VC_SOURCE_EVENT LIKE 'SPIKE_PARITY:%%'; "
-        "UPDATE INV_PARTS_STOCK_MST SET IN_QTY=%d WHERE IN_PART_ID=%d" % (base, PART))
+        "UPDATE INV_PARTS_STOCK_MST SET IN_QTY=%d WHERE IN_PART_ID=%d; "
+        "ENABLE TRIGGER UPDATE_PartNumber ON INV_PARTS_STOCK_MST" % (base, PART))
     restored = int(scalar("SELECT IN_QTY FROM INV_PARTS_STOCK_MST WHERE IN_PART_ID=%d" % PART))
     leftover = int(scalar("SELECT COUNT(*) FROM INV_STOCK_LEDGER WHERE VC_SOURCE_EVENT LIKE 'SPIKE_PARITY:%%'"))
     rep.check("DB restored as found (no test rows, IN_QTY intact)",
@@ -218,45 +234,65 @@ def reconcile(rep):
     print("\n  per-part reconciliation (%d parts): %d EXACT (diff 0), %d non-zero"
           % (len(data), len(exact), len(nonzero)))
 
-    # Classify the non-zero diffs.
-    f3_part = scalar("SELECT TOP 1 ps.IN_PART_ID FROM INV_PART_SHIPPING_INF s "
-                     "JOIN INV_PARTS_STOCK_MST ps ON ps.VC_PART_NUMBER=s.VC_PART_NUMBER "
-                     "WHERE s.VC_PART_NUMBER=(SELECT TOP 1 VC_PART_NUMBER FROM INV_PART_SHIPPING_INF "
-                     "GROUP BY IN_SHIPPING_ID, VC_PART_NUMBER HAVING COUNT(*)>1)")
-    f3_part = int(f3_part) if f3_part else None
+    # ---- F3 candidate SET (review fix #2): legacy multi-row-trigger under-count is reachable
+    # via ANY source table whose trigger joins `inserted` by a key that can repeat in one batch —
+    # shipping + reject + open-orders (design §6 cites all three). Resolve the full set of parts
+    # that have >1 same-key row in a single source batch, and warn LOUDLY if a candidate can't
+    # resolve to a live part (so it can't silently evaporate the way a TOP 1 did).
+    f3_parts = set()
+    f3_unresolved = []
+    # shipping: multi-row same-part within one shipping batch (keyed VC_PART_NUMBER)
+    for pn in rows_col("SELECT VC_PART_NUMBER FROM INV_PART_SHIPPING_INF "
+                       "GROUP BY IN_SHIPPING_ID, VC_PART_NUMBER HAVING COUNT(*)>1"):
+        pid = scalar("SELECT IN_PART_ID FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER=%s"
+                     % quote(pn))
+        (f3_parts.add(int(pid)) if pid else f3_unresolved.append(("shipping", pn)))
+    # open-orders: multi-row same-part within one FRS batch (keyed VC_PART_NUMBER)
+    for pn in rows_col("SELECT VC_PART_NUMBER FROM INV_OPEN_ORDER_INF "
+                       "GROUP BY VC_FRS_NUMBER, VC_PART_NUMBER HAVING COUNT(*)>1"):
+        pid = scalar("SELECT IN_PART_ID FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER=%s"
+                     % quote(pn))
+        (f3_parts.add(int(pid)) if pid else f3_unresolved.append(("open-order", pn)))
+    # reject: multi-row same-part id in one reject batch (keyed IN_PART_ID — already an id)
+    for pid in rows_col("SELECT IN_PART_ID FROM INV_REJECT_INF "
+                        "GROUP BY IN_REJECT_ID, IN_PART_ID HAVING COUNT(*)>1"):
+        if str(pid).strip().lstrip("-").isdigit():
+            f3_parts.add(int(pid))
+    if f3_unresolved:
+        print("  ⚠️  F3 candidate part(s) NOT in INV_PARTS_STOCK_MST (cannot adjudicate, NOT swallowed): %s"
+              % f3_unresolved)
 
+    # Classification is DIRECTION-based:
+    #   derived > legacy (OVER-count): the rebuild-bug signature — derived posted more stock than the
+    #     legacy IN_QTY holds. The ONLY benign over-count is F3 (legacy multi-row trigger silently
+    #     dropped rows, so the ledger is correctly HIGHER). Any other over-count is a real defect and
+    #     must FAIL on EVERY snapshot (review fix #1 — not maskable by purge_horizon).
+    #   derived < legacy (UNDER-count): on a post-purge snapshot this is the §3.1 purge horizon — the
+    #     receiving IN-movements that built legacy IN_QTY were aged out, so the from-zero replay can't
+    #     reach them. On a FULL-history (pre-purge) dataset an under-count would instead be a bug; that
+    #     case is caught by the from-zero-reconciliation check, which only runs when purge_horizon is False.
     classified = {"PURGE_HORIZON": [], "F3": [], "UNEXPLAINED": []}
     for d in nonzero:
-        # In this snapshot every non-zero diff is dominated by the purge horizon: the receiving
-        # IN-movements that built legacy IN_QTY are gone (counting_open_orders==0), so derived
-        # under-counts legacy for every part that ever received stock. That is NOT a rebuild bug
-        # and NOT one of the four FIX divergences — it is the §3.1 purge horizon. We tag it as
-        # such (reachable only because the snapshot is post-purge), and separately flag any part
-        # where the diff direction is INEXPLICABLE by purge (derived>legacy with no F3 candidate).
-        if d["diff"] > 0 and not (f3_part is not None and d["part"] == f3_part):
-            classified["UNEXPLAINED"].append(d)
-        elif f3_part is not None and d["part"] == f3_part:
-            classified["F3"].append(d)
-        else:
-            classified["PURGE_HORIZON"].append(d)
+        if d["diff"] > 0:                               # OVER-count
+            (classified["F3"] if d["part"] in f3_parts else classified["UNEXPLAINED"]).append(d)
+        else:                                           # UNDER-count (diff < 0)
+            (classified["PURGE_HORIZON"] if purge_horizon else classified["UNEXPLAINED"]).append(d)
 
     print("\n  classification of non-zero diffs:")
     print("    PURGE_HORIZON (derived<legacy; receiving IN-movements purged, §3.1): %d"
           % len(classified["PURGE_HORIZON"]))
-    print("    F3 multi-row under-count candidate part(s): %d  %s"
+    print("    F3 over-count candidate part(s) (legacy multi-row under-count; shipping+reject+open-order set): %d  %s"
           % (len(classified["F3"]), [d["part"] for d in classified["F3"]]))
-    print("    UNEXPLAINED (derived>legacy, no purge/F3 explanation): %d  %s"
+    print("    UNEXPLAINED (rebuild-bug signature): %d  %s"
           % (len(classified["UNEXPLAINED"]), [(d["part"], d["diff"]) for d in classified["UNEXPLAINED"]]))
 
-    # ---- Adjudication ----------------------------------------------------------------------
-    # GO/NO-GO truth for THIS snapshot:
-    #  * The proc/service mechanics (part A) must be perfect — that is the buildable foundation.
-    #  * A clean from-zero reconciliation is NOT achievable against a post-purge snapshot; we
-    #    assert that the harness correctly DETECTS and EXPLAINS the divergence (purge horizon),
-    #    rather than passing green-on-incomplete-data (the fixture-fidelity failure mode).
-    rep.check("reconciliation harness runs + classifies every non-zero diff",
-              len(classified["UNEXPLAINED"]) == 0 or purge_horizon,
-              "%d exact, %d purge-horizon, %d F3, %d unexplained"
+    # ---- Adjudication (review fix #1: the OVER-count bug signature must FAIL UNCONDITIONALLY) ----
+    # A derived>legacy diff that is not a known F3 part is a real rebuild defect — it must fail on
+    # ANY snapshot, post-purge or not. purge_horizon only gates the separate from-zero TOTAL SKIP
+    # below; it must NOT mask an over-count (that was the vacuous-assert the reviewer caught).
+    rep.check("no UNEXPLAINED over-count diffs (rebuild-bug signature) — must hold on any snapshot",
+              len(classified["UNEXPLAINED"]) == 0,
+              "%d exact, %d purge-horizon, %d F3, %d UNEXPLAINED"
               % (len(exact), len(classified["PURGE_HORIZON"]),
                  len(classified["F3"]), len(classified["UNEXPLAINED"])))
 
@@ -277,13 +313,10 @@ def reconcile(rep):
         fh.write("part\tlegacy\tderived\tdiff\td_recv\td_stk\td_shp\tclassification\n")
         for d in data:
             cls = "EXACT"
-            if d["diff"] != 0:
-                if f3_part is not None and d["part"] == f3_part:
-                    cls = "F3_candidate"
-                elif d["diff"] > 0:
-                    cls = "UNEXPLAINED"
-                else:
-                    cls = "PURGE_HORIZON"
+            if d["diff"] > 0:
+                cls = "F3_candidate" if d["part"] in f3_parts else "UNEXPLAINED"
+            elif d["diff"] < 0:
+                cls = "PURGE_HORIZON" if purge_horizon else "UNEXPLAINED"
             fh.write("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n"
                      % (d["part"], d["legacy"], d["derived"], d["diff"],
                         d["d_recv"], d["d_stk"], d["d_shp"], cls))
