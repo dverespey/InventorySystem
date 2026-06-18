@@ -21,6 +21,7 @@ ENUM_RECEIVING_REVERSAL = "RECEIVING_REVERSAL"
 ENUM_REJECT             = "REJECT"
 ENUM_STOCKTAKING        = "STOCKTAKING"
 ENUM_SHIPPING           = "SHIPPING"
+ENUM_OPENING_BALANCE    = "OPENING_BALANCE"   # cutover backfill seed (thread b, option 2)
 
 
 def resolvePartId(partNumber, database=DATABASE):
@@ -71,4 +72,27 @@ def rebuildBalance(partId, database=DATABASE):
 	lost. Use to heal a drift the reconciliation harness finds — NOT in the hot path."""
 	call = system.db.createSProcCall("PROC_RebuildStockBalance", database)
 	call.registerInParam("partId", system.db.INTEGER, partId)
+	system.db.execSProcCall(call)
+
+
+def seedOpeningBalance(partId, site=1, database=DATABASE):
+	"""CUTOVER backfill (thread b / option 2): record this part's CURRENT IN_QTY as a single
+	OPENING_BALANCE ledger movement WITHOUT bumping IN_QTY (the materialized column already holds the
+	cutover value). After seeding, SUM(qty_delta) == IN_QTY by construction; forward post()s keep the
+	invariant. Idempotent on (partId, 'OPENING:part=<id>') — safe to re-run. The from-zero replay is
+	impossible on the purged data (receiving IN-moves aged out, F2), so this opening balance + forward
+	parity IS the cutover sign-off, not a full-history reconstruction."""
+	call = system.db.createSProcCall("SEED_OpeningBalance", database)
+	call.registerInParam("partId", system.db.INTEGER, partId)
+	call.registerInParam("site",   system.db.INTEGER, site)
+	system.db.execSProcCall(call)
+
+
+def seedAllOpeningBalances(site=1, database=DATABASE):
+	"""Seed an opening balance for EVERY part (the one-time cutover backfill) via the SET-BASED
+	SEED_AllOpeningBalances proc — one statement / one transaction, so it scales to thousands of parts
+	(not a per-part round-trip loop). Genesis-only + idempotent: only parts with no ledger row yet are
+	seeded, so a re-run is safe. This is the exact path the validator exercises."""
+	call = system.db.createSProcCall("SEED_AllOpeningBalances", database)
+	call.registerInParam("site", system.db.INTEGER, site)
 	system.db.execSProcCall(call)
