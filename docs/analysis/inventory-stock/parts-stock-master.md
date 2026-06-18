@@ -134,7 +134,7 @@ receiving + shipping families key on the string `VC_PART_NUMBER`.** All write `V
 |---------|----------|--------------------|----------|------|
 | `INSERT_RecConfStatPartsStockMstQTY` | `INV_OPEN_ORDER_INF` | `+= i.IN_QTY` | `VC_PART_NUMBER` | supplier `VC_INVENTORY_ADD_POINT='S'` & `VC_STATUS_SUPPLIER_SHIPPING<>''`, **or** `='A'` & arrival/yard/warehouse status set. Also copies row to `INV_OPEN_ORDER_INF_HIST` |
 | `UPDATE_RecConfStatPartsStockMstQTY` | `INV_OPEN_ORDER_INF` | several `±` legs (qty-change at ship/arrival; ship-status flip; arrival-status flip) | `VC_PART_NUMBER` | add-point S/A; copies *deleted* to `_HIST`. The most complex trigger in the DB |
-| `DELETE_RecConfStatPartsStockMstQTY` | `INV_OPEN_ORDER_INF` | `-= d.IN_QTY` | `VC_PART_NUMBER` | add-point S/A; **skipped entirely when `Purge.PurgeMode = 1`** (data-purge bypass) ⚠️ |
+| `DELETE_RecConfStatPartsStockMstQTY` | `INV_OPEN_ORDER_INF` | `-= d.IN_QTY` | `VC_PART_NUMBER` | add-point S/A + **`VC_TERMINATED=''`** gate. ⚠️ CORRECTED (D9, 2026-06-17): NO `Purge.PurgeMode` bypass (stale snapshot) — purge safety is `DELETE_AutoPurge` pre-stamping `VC_TERMINATED` (see §4) |
 | `INSERT_RejectParts` | `INV_REJECT_INF` | `-= i.IN_QTY` | **`IN_PART_ID`** | (none) |
 | `UPDATE_RejectParts` | `INV_REJECT_INF` | `+= d.IN_QTY` then `-= i.IN_QTY` | **`IN_PART_ID`** | (none) |
 | `DELETE_RejectParts` | `INV_REJECT_INF` | `+= d.IN_QTY` (adds the deleted reject back) | **`IN_PART_ID`** | (none) |
@@ -279,9 +279,13 @@ latent cross-module hazard (P9): Update/Delete here key off it with no guard.
 - **Delete is hard on the part, soft on string-code references.** `DELETE_PartNumber` blanks the
   assy-ratio/forecast number references; the part row and its HIST/qty-ledger rows are untouched.
   Transactional children are left dangling (§8).
-- **Purge-mode bypass:** `DELETE_RecConfStatPartsStockMstQTY` checks `Purge.PurgeMode` and **skips**
-  the qty decrement when purge mode is on — so bulk data-purge deletes of open orders don't wrongly
-  drain on-hand. The rebuild's purge path must replicate this "don't re-balance during purge" rule.
+- **Purge safety (CORRECTED 2026-06-17 vs live, D9):** there is **NO `Purge.PurgeMode` bypass** (stale-
+  snapshot artifact; the live DB has no `Purge` table). `DELETE_RecConfStatPartsStockMstQTY` subtracts
+  unconditionally on a qualifying delete, but is gated `VC_TERMINATED = ''`. The real "don't drain on-hand
+  during purge" mechanism is in `DELETE_AutoPurge`: it **pre-stamps `VC_TERMINATED <> ''`** on aged rows
+  before deleting them, so the trigger's qty-subtraction skips them. The rebuild's purge must keep this
+  terminate-then-delete ordering (and the ledger is append-only, so a purge of source rows reverses no
+  real movement — see the stock-ledger design §3.1).
 - **Timestamps are `yyyymmddHHMMSSff` strings (P2):** `VC_ADD` (NOT NULL) on insert,
   `VC_LAST_UPDATE` on update and on every qty-trigger touch. Byte-identical recipe to the other
   masters (`CONVERT(char(8),…,112)` + four `SUBSTRING(…,114,2)` slices).

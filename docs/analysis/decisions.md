@@ -368,9 +368,13 @@ implements the corrected behavior (the legacy is NOT hotfixed — see the P12 NO
    uses correct, reconciled signatures (one canonical Named Query per op).
 5. **Hardcoded `WHERE a.IN_ASN_EIN = 6440`** in `REPORT_EDI856` (live `CreateInventory.sql:3683`) →
    parameterize by the current site's EIN (D1).
-6. **DATAPURGE non-transactional `PurgeMode`** (`DELETE_AutoPurge`) — a mid-run error leaves `PurgeMode=1`
-   + a partial delete. The rebuild wraps the purge in a transaction (set/clear the flag atomically) and
-   re-homes the cross-DB `Activity` audit coupling.
+6. **DATAPURGE non-transactional** (`DELETE_AutoPurge`). ⚠️ CORRECTED (2026-06-17 vs live, D9): the
+   "`PurgeMode` flag" was a stale-snapshot artifact — **no `Purge` table/flag exists in the live DB**. The
+   real body pre-stamps `VC_TERMINATED` on aged rows then deletes 3 tables with `@@error`/`RETURN`, NO
+   `BEGIN TRAN` — a mid-run error leaves a **partial delete + partial termination-stamp** (not a stuck
+   flag). The fix is unchanged in spirit: the rebuild wraps the purge transactionally (terminate→delete
+   atomic) and re-homes the cross-DB `Activity` audit coupling. The on-hand-drain safety is the
+   `VC_TERMINATED=''` trigger gate, not a flag (see configuration-site / parts-stock-master, corrected).
 7. **RenbanGroup counter read-then-write race** — `UPDATE_RenbanGroupCount` + the client-side
    `Format('%.3d',…)` count (RenbanOrder/RenbanGroupMaster) → atomic, by-id increment in the rebuild.
 8. **`INV_FIRST_PRODUCTION_DAY`** has no PK and `INSERT_FirstProductionDay` never dedups (the form's

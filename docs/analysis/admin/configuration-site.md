@@ -143,24 +143,27 @@ Startup sequence (`FormShow`, around `:415-546`):
 - Calls `DELETE_AutoPurge(@DataRentention := 0 - fiDataRetention.AsInteger)` — passes the
   retention as a **negative month offset**.
 
-**`DELETE_AutoPurge` (`Create Inventory.sql:2106`):**
-- Sets `Purge.PurgeMode = 1` (a one-row flag table, `Create Inventory.sql:1782`:
-  `Purge(PurgeMode int)`), then **deletes rows older than `DATEADD(MONTH, @DataRentention,
-  getdate())`** (a past cutoff, since the arg is negative) from exactly **three tables**:
-  1. `INV_OPEN_ORDER_INF`
-  2. `INV_OPEN_ORDER_INF_HIST`
-  3. `INV_PARTS_STOCK_MST_HIST`
-  Cutoff is compared against each table's `VC_ADD` (the 16-char `yyyymmddHHMMSS+ff` add-stamp),
-  rebuilt inline as `CONVERT(char(8),...,112)` + 4×`SUBSTRING(...,114)` = 16 chars (correct count).
-  Each delete checks `@@error` and `RETURN`s on failure. Finally sets `Purge.PurgeMode = 0`.
+**`DELETE_AutoPurge`** — ⚠️ **CORRECTED 2026-06-17 vs the LIVE `CreateInventory.sql` (D9).** An earlier
+draft (from the stale `Create Inventory.superseded-2026-06-01.sql`) described a `Purge.PurgeMode` flag
+table — **that table and flag DO NOT EXIST in the live DB** (`OBJECT_ID('Purge') IS NULL`; zero `PurgeMode`
+references in the live dump). The real live body:
+- (1) **Pre-stamps termination:** `UPDATE INV_OPEN_ORDER_INF SET VC_TERMINATED = <cutoff date> WHERE …
+  AND VC_TERMINATED = ''` — marks aged un-terminated open orders as terminated.
+- (2) Then **deletes rows older than the cutoff** (`DATEADD(MONTH, @DataRentention, getdate())`, a past
+  cutoff since the arg is negative) from **three tables**: `INV_OPEN_ORDER_INF`, `INV_OPEN_ORDER_INF_HIST`,
+  `INV_PARTS_STOCK_MST_HIST`. Cutoff compares against each table's `VC_ADD` (16-char add-stamp). Each
+  statement checks `@@error` and `RETURN`s on failure. **It does NOT delete `INV_REJECT_INF` or
+  `INV_PART_SHIPPING_INF`.**
+- **The on-hand-drain avoidance mechanism (the real one):** the pre-stamp sets `VC_TERMINATED <> ''`, and
+  the `DELETE_RecConfStatPartsStockMstQTY` trigger's qty-subtraction is gated `… AND VC_TERMINATED = ''` —
+  so the now-terminated aged rows are **already excluded** from the qty removal when the DELETE fires. There
+  is NO PurgeMode flag/bypass; termination-before-delete is what keeps the purge from draining `IN_QTY`.
 
 **Hazards / findings:**
-- 🟠 **`PurgeMode` flag is a global guard, not transactional.** `DELETE_AutoPurge` is **not
-  wrapped in a transaction** — it flips `PurgeMode=1`, deletes across 3 tables checking
-  `@@error`, then `PurgeMode=0`. A mid-run failure leaves `PurgeMode` stuck at 1 (the
-  `PurgeMode=0` reset is skipped by the early `RETURN`), and a partial delete is **not rolled
-  back**. The `Purge` flag presumably gates other writers (the trigger/insert paths) from
-  running during a purge — but there's no enforced cleanup if a delete errors mid-stream.
+- 🟠 **`DELETE_AutoPurge` is non-transactional** (still a real finding — the PurgeMode framing was wrong,
+  the non-atomicity is right). No `BEGIN TRAN`; it pre-stamps `VC_TERMINATED` then deletes 3 tables with the
+  `@@error`/`RETURN` pattern. A mid-run failure leaves a **partial delete + partially-stamped termination**,
+  not rolled back. The rebuild's purge must be transactional (see D11#6, corrected).
 - 🟠 **Cross-DB Activity coupling (commit-path hazard).** Purge only touches the Inventory DB,
   but every operation (including the purge itself, `LogActLog('PURGE',...)` `DataModule.pas:6921`)
   writes to the **separate Activity DB**. The audit and the data live in different databases
@@ -200,8 +203,9 @@ Startup sequence (`FormShow`, around `:415-546`):
   hard gate is obsolete under a single gateway-served Perspective app (one version of truth).
   Keep an optional schema/migration-version check at startup if desired.
 - **DATAPURGE → an Ignition Gateway Scheduled Task** (or a DB Agent job) running a window-aware,
-  **transactional** purge per `sites.data_retention_months`, scoped by `site_id`. Fix the
-  non-transactional `PurgeMode` flag (wrap in a transaction; no stuck flag) and decide whether
+  **transactional** purge per `sites.data_retention_months`, scoped by `site_id`. Make the purge
+  transactional (the legacy `DELETE_AutoPurge` is non-atomic: pre-stamp `VC_TERMINATED` + 3 deletes
+  with `@@error`/`RETURN`, no `BEGIN TRAN` — a mid-run failure partial-deletes; no PurgeMode flag) and decide whether
   to extend retention to the other history tables. The Activity/audit write becomes part of the
   same gateway transaction context or an idempotent audit log.
 
@@ -219,8 +223,10 @@ Startup sequence (`FormShow`, around `:415-546`):
    retention to rejects / stocktaking / shipping / ASN / forecast history?
 2. **Per-site retention:** is `DataRetention` (months) a per-site setting, or one global policy
    across all sites?
-3. **`PurgeMode` flag:** what readers honor `Purge.PurgeMode`? (Need to confirm what the flag
-   blocks so the transactional rewrite preserves the guard.)
+3. ✅ RESOLVED (2026-06-17): there is **no `Purge.PurgeMode` flag** in the live DB (stale-snapshot
+   artifact). The legacy avoids draining on-hand during purge by **pre-stamping `VC_TERMINATED`** before
+   the delete (the qty trigger is gated `VC_TERMINATED=''`). The transactional rewrite preserves this
+   ordering (terminate → delete) atomically; no flag to honor.
 4. **DISPLAY prefs (`HideTerminated`, `BuildOut`, seq lengths):** per-site, per-user, or both?
 5. **Site identity source of truth:** confirm the `SiteDataSet`/`TSiteInfo` DB values (DUNS,
    EIN, EDI separators, TMM DUNS) are the authoritative trading-partner identity to fold into
