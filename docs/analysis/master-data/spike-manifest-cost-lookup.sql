@@ -23,19 +23,22 @@
 -- one-lookup-mirrors-the-rule practice): every report NQ CROSS APPLYs it instead of re-deriving the
 -- (often missing) window filter inline.
 --
--- ⚠️ TWO OPEN DECISIONS for David (this lookup deliberately does NOT silently bake either — both
---    change a billing value, so they are surfaced, not guessed):
---   (Q-boundary) The legacy procs DISAGREE on the window boundary: REPORT_EDI856 uses INCLUSIVE
---     (<= / >=); SELECT_ManifestCost;1 (the master/UI date lookup) uses STRICT (> / <). This TVF
---     follows EDI856 (inclusive — the billing/ASN path). The rebuild must pick ONE so the UI and the
---     reports agree on "in window"; if exclusive is chosen, flip the operators below.
---   (Q-overlap) D6 intends windows to be NON-OVERLAPPING (a price's clean effective period), enforced
---     at WRITE by the ManifestCost master CRUD. If that holds, at most one window covers any date and
---     the TOP 1 below never disambiguates real overlap (it is defensive determinism only). If overlap
---     is allowed, this lookup SILENTLY picks newest-start — which DIVERGES from legacy EDI856, whose
---     GROUP BY (incl. MO_PRICE) returns BOTH overlapping rows (row-multiply). Decide: forbid-at-write
---     (preferred — see the overlap diagnostic at the bottom) vs surface-as-error. Until decided, run
---     the diagnostic before trusting totals.
+-- BOUNDARY + OVERLAP — RESOLVED (David 2026-06-18):
+--   (Q-boundary) INCLUSIVE (<= / >=). VC_END_MANIFEST is the LAST day the price is effective (the live
+--     data confirms it: end dates like 20280630/20270627 are real last-effective days, not next-start
+--     days). So a production date ON a window's start OR end is IN that window and IS priced. This TVF's
+--     <= / >= is correct as-is. The legacy SELECT_ManifestCost;1 (the master/UI date lookup) used STRICT
+--     (> / <), which silently DROPPED the first AND last effective day of every window (no price on a
+--     price-change day) — a latent bug. SELECT_ManifestCost is therefore SUPERSEDED by this TVF, not
+--     ported: the rebuilt master "what price on date D" lookup SELECTs fn_ManifestCostAt so the UI and
+--     the reports agree on "in window" (they disagreed in legacy).
+--   (Q-overlap) GAP convention (David): adjacent windows are entered with a 1-day gap (…1231 then 0101…),
+--     so they NEVER share a boundary day -> inclusive-both never double-matches -> windows are
+--     non-overlapping by data-entry rule. The TOP 1 below is therefore dead-defense (it never
+--     disambiguates a real overlap). ENFORCE the gap at WRITE in the ManifestCost master (reject a new
+--     window that overlaps an existing one for the part) so the rule can't be violated; the overlap
+--     diagnostic at the bottom is the interim/cutover check (expect ZERO rows). [Master no-overlap guard:
+--     follow-up on the ManifestCost master CRUD module.]
 -- IG81-COMPAT: a plain inline TVF, identical on 8.1.52 and 8.3; report Named Queries CROSS APPLY it.
 -- IG83-TODO: at the Postgres phase, VC_START/VC_END_MANIFEST (yyyymmdd strings) -> date; the string
 --            comparison here is correct ONLY because the stamps are zero-padded yyyymmdd (lexicographic
@@ -77,6 +80,11 @@ GO
 -- the legacy inner JOIN's behavior for a date outside every window). Use OUTER APPLY only if a
 -- report must keep priceless lines (a domain call — flag to David). Also drop the hardcoded
 -- IN_ASN_EIN=6440 in the REPORT_EDI856 @EIN!=0 branch (a separate D1/site bug) when migrating it.
+--
+-- SELECT_ManifestCost;1 (the master/UI "price on date D" lookup) is also SUPERSEDED by this TVF — its
+-- legacy STRICT (> / <) boundary dropped the first/last effective day (Q-boundary, resolved inclusive).
+-- The rebuilt UI lookup becomes:  SELECT MO_PRICE FROM dbo.fn_ManifestCostAt(@assyCode, @prodDate);
+-- so the master screen and the reports return the SAME price for a boundary day (they disagreed before).
 --
 -- ⚠️ Per-caller date ARG (the lookup's 2nd arg must be the PER-ROW 8-char yyyymmdd production date,
 -- never a report filter param):

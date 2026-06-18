@@ -91,9 +91,17 @@ def main():
                   price_at("20240615") == P_OLD, "got %s (want %s)" % (price_at("20240615"), P_OLD))
         rep.check("date in NEW window -> new price",
                   price_at("20260615") == P_NEW, "got %s (want %s)" % (price_at("20260615"), P_NEW))
-        rep.check("boundary dates are inclusive (<=, >=)",
+        # Q-boundary RESOLVED inclusive (David): the price-change boundary days ARE priced — the day the
+        # OLD price ends (20241231) bills OLD, the day the NEW price starts (20250101) bills NEW. The
+        # legacy strict SELECT_ManifestCost (> / <) returned NO price on both days (the bug this fixes).
+        rep.check("boundary days are priced inclusive (<=/>=): end-day=OLD, start-day=NEW",
                   price_at("20241231") == P_OLD and price_at("20250101") == P_NEW,
                   "%s / %s" % (price_at("20241231"), price_at("20250101")))
+        # GAP convention (David): adjacent windows are entered end=…1231 / next start=…0101, so the two
+        # boundary days each fall in EXACTLY ONE window — inclusive-both never double-matches, no overlap.
+        rep.check("gap convention: each boundary day matches exactly ONE window (no overlap)",
+                  rowcount_at("20241231") == 1 and rowcount_at("20250101") == 1,
+                  "end-day rows=%d start-day rows=%d" % (rowcount_at("20241231"), rowcount_at("20250101")))
         rep.check("date OUTSIDE every window -> no row",
                   rowcount_at("20230101") == 0 and rowcount_at("20290101") == 0,
                   "before=%d after=%d" % (rowcount_at("20230101"), rowcount_at("20290101")))
@@ -117,17 +125,19 @@ def main():
                   price_at("20260615") == legacy_windowed_price(PARTC, "20260615") and
                   legacy_windowed_count(PARTC, "20260615") == 1)
 
-        # OVERLAP divergence (Q-overlap, made EXPLICIT not hidden): on overlapping windows the legacy
-        # windowed JOIN (and EDI856's GROUP-BY-on-price) returns BOTH rows = row-multiply; the TVF's
-        # TOP 1 returns ONE. This is the intended dedup PENDING David's overlap policy — surfaced here.
+        # OVERLAP = a now-FORBIDDEN data error (Q-overlap RESOLVED: gap convention + a master no-overlap
+        # write guard mean windows never overlap). This case should never reach production; the assertions
+        # below document the TVF's DEAD-DEFENSE behavior IF it ever did: legacy windowed JOIN (and EDI856's
+        # GROUP-BY-on-price) returns BOTH rows (row-multiply -> over-bill), the TVF's TOP 1 returns ONE
+        # deterministic row. The overlap diagnostic in spike-manifest-cost-lookup.sql must read ZERO.
         for mfst, win in (("Y1", W_OV1), ("Y2", W_OV2)):
             sql("INSERT INTO INV_MANIFEST_COST_MST (VC_ASSY_PART_NUMBER_CODE, VC_ASSY_MANIFEST_NUMBER, "
                 "VC_START_MANIFEST, VC_END_MANIFEST, MO_PRICE) VALUES ('%s','%s','%s','%s',%s)"
                 % (PARTC2, mfst, win[0], win[1], P_OLD))
         OVDATE = "20250615"   # in BOTH overlapping windows
-        rep.check("overlap: legacy windowed JOIN returns 2 rows (multiply)",
+        rep.check("FORBIDDEN overlap (dead-defense): legacy windowed JOIN over-bills (2 rows)",
                   legacy_windowed_count(PARTC2, OVDATE) == 2, "legacy=%d" % legacy_windowed_count(PARTC2, OVDATE))
-        rep.check("overlap: TVF returns exactly 1 (deterministic dedup; DIVERGES from legacy — Q-overlap)",
+        rep.check("FORBIDDEN overlap (dead-defense): TVF stays deterministic (1 row) — must not occur in prod",
                   int(scalar("SELECT COUNT(*) FROM dbo.fn_ManifestCostAt('%s','%s')" % (PARTC2, OVDATE))) == 1)
     finally:
         cleanup()
