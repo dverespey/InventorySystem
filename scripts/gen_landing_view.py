@@ -139,7 +139,7 @@ def topbar():
                  "events": {"component": {"onActionPerformed": {"type": "script", "scope": "G",
                      "config": {"script":
                          "\tcur = self.session.props.theme\n"
-                         "\tsystem.perspective.setTheme('tai-light' if cur == 'tai-dark' else 'tai-dark')\n"}}}}}
+                         "\tself.session.props.theme = 'tai-light' if cur == 'tai-dark' else 'tai-dark'\n"}}}}}
 
     avatar = flex("avatar", [lbl("ini", "DV", {"fontWeight": "600", "color": TXT, "fontSize": "13px"})],
                   align="center", justify="center",
