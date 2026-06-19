@@ -151,14 +151,27 @@ See **carry 10** below. Sequenced in Phase A (additive proc edits, pre-window) p
 - **Stocktaking:** the edit path must write a NON-NULL `VC_LAST_UPDATE` (fixes the legacy Bug2 NULL).
 - All producers' amend keys use `:upd:to=<effect>:v=<stamp>` (collision-safe); keep that on any new write path.
 
-## 7. Headless Jython driver coverage  (retro R8 — partially done)
+## 7. Headless Jython driver coverage  (retro R8 — ✅ CLOSED 2026-06-19)
 `scripts/e2e/jython_shim.py` + `test_seam_driver.py` run the REAL stocktaking + reject + **shipping +
 receiving** wrappers end-to-end (autocommit shim) — including shipping's header-delete cascade and
 receiving's `resolveAddPoint` add-point gate (asserted with a NON-zero IN_QTY delta on a counted 'S'
-order). **Remaining extend:** **Order needs the shim's persistent-sqlcmd-session extension** (its
-`beginTransaction` spans statements). A true in-gateway runtime test (Perspective/Playwright is
-trial-gated; no WebDev; no gateway-event infra) remains a gap — the shim covers the driver LOGIC/SQL, not
-Jython-2.7-vs-CPython runtime quirks. (Note: extending to shipping/receiving surfaced + fixed a narrow
+order). **Order is now covered too** — the §7 gap is **CLOSED.** The shim gained a
+**persistent-sqlcmd-session** transaction extension (`_TxSession`): `beginTransaction` opens ONE
+long-lived `docker exec -i sqlcmd` connection and feeds it framed batches (each batch terminated by a
+unique `PRINT '<<<EOB:nonce>>>'` + `GO` sentinel read off a background-thread queue), so a `BEGIN TRAN`
+spans statements as a real transaction. `runPrepUpdate(...,tx=session)` routes onto that connection;
+`commit/rollback/closeTransaction` drive it; the autocommit path (tx None / `"tx-noop"`) is UNCHANGED.
+`scripts/e2e/test_seam_driver_order.py` (13/13) drives the REAL `order.commitOrders`: happy-path commit
+(2 records + counter advance + IN_QTY unmoved, persisting after close) **and a mid-transaction rollback
+proof** (first INSERT shown visible *inside* the open tx, forced failure → 0 rows persist + counter
+unchanged = cross-statement atomicity). Regression: `test_seam_driver.py` 23/23.
+**Framing caveat:** when a batch raises a T-SQL error, sqlcmd ABORTS the rest of that batch, so the
+trailing sentinel PRINT never runs — `_TxSession` watches for `Msg NNNN` lines and raises a `SqlError`
+immediately (which is what fires `commitOrders`' except→rollback). `rollback()` guards with
+`IF @@TRANCOUNT > 0` so a tx already auto-doomed by a fatal error doesn't raise Msg 3903 and mask the
+original error. A true in-gateway runtime test (Perspective/Playwright is trial-gated; no WebDev; no
+gateway-event infra) remains a gap — the shim covers the driver LOGIC/SQL + the real transaction lifecycle,
+not Jython-2.7-vs-CPython runtime quirks. (Note: extending to shipping/receiving surfaced + fixed a narrow
 shim coercion gap — digit-only VARCHAR business keys were being int-coerced on dataset round-trip; see
 `jython_shim.py::_PyDataset._coerce`.)
 

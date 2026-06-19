@@ -9,24 +9,38 @@ Loading a wrapper module with this `system` injected runs its ACTUAL code (the d
 getKey round-trip, _readRow re-read, branch selection, the stockLedger.post funnel) — closing the gap
 that the SQL-reimplementing integration tests left open.
 
-Scope: autocommit only (the producer seams don't open transactions; Order's beginTransaction path is a
-documented extension — see notes). Jython 2.7 vs CPython differences aren't covered (the wrappers are
+Scope: the producer seams run autocommit (a fresh `docker exec -Q` per call); Order's `commitOrders`
+opens a transaction that spans statements, served by the persistent-sqlcmd-session extension below
+(beginTransaction -> a long-lived `docker exec -i` connection; see `_TxSession`). Jython 2.7 vs CPython
+differences aren't covered (the wrappers are
 written 2.7/CPython-portable, verified by the reviewers); this catches the LOGIC/SQL the proc-EXEC tests
 couldn't.
 """
-import os, subprocess, sys, importlib.util
+import os, subprocess, sys, importlib.util, threading, time
+try:
+    import queue          # Py3
+except ImportError:       # pragma: no cover - Jython/Py2 fallback (shim runs under CPython3 here)
+    import Queue as queue
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
 SA_PASS = os.environ.get("SA_PASS")
 SQL_DB = "Inventory"   # the SQL Server DB; the wrappers' logical name "Inventory_Spike" maps here
 
 
-def _run(sql_text, want_rows):
-    """Execute one batch via sqlcmd. want_rows=True keeps the header row (for column-name access)."""
+def _sqlcmd_args(db, interactive=False):
+    """The shared sqlcmd invocation flags. `interactive=True` adds `-i` stdin streaming for the
+    persistent transaction session (so multiple batches share ONE connection)."""
     if not SA_PASS:
         sys.exit("export SA_PASS first")
-    args = ["docker", "exec", CONTAINER, "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "localhost",
-            "-U", "sa", "-P", SA_PASS, "-d", SQL_DB, "-W", "-s", "\t"]
+    base = ["docker", "exec"] + (["-i"] if interactive else []) + [
+        CONTAINER, "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "localhost",
+        "-U", "sa", "-P", SA_PASS, "-d", db, "-W", "-s", "\t"]
+    return base
+
+
+def _run(sql_text, want_rows, db=SQL_DB):
+    """Execute one batch via a fresh (autocommit) sqlcmd. want_rows=True keeps the header row."""
+    args = _sqlcmd_args(db)
     if not want_rows:
         args += ["-h", "-1"]
     out = subprocess.check_output(args + ["-Q", "SET NOCOUNT ON; " + sql_text], text=True)
@@ -109,6 +123,140 @@ def _parse_rows(out):
     return columns, data
 
 
+# ----------------------------------------------------------------------------------------------------
+# Persistent-session transaction support (the documented extension — Order's commitOrders).
+#
+# The autocommit path (_run) is a fresh `docker exec sqlcmd -Q` per statement: a separate connection
+# each time, so a `BEGIN TRAN` in one would NOT carry to the next. To make `beginTransaction` actually
+# span statements we hold ONE long-lived `docker exec -i sqlcmd` subprocess open and feed it batches on
+# stdin; all statements then run on the SAME connection/transaction until COMMIT/ROLLBACK.
+#
+# THE FIDDLY PART — batch framing. sqlcmd in stdin mode only executes a batch when it reads a `GO`. To
+# know when a batch has FINISHED (and to capture its rows) we append a unique sentinel
+# `PRINT '<<<EOB:nonce>>>'` and read stdout until that line appears. ERROR CAVEAT: when a batch raises a
+# T-SQL error, sqlcmd ABORTS the rest of that batch — so the trailing PRINT sentinel NEVER executes and
+# would hang the reader forever. We therefore watch for `Msg NNNN` error lines and, on the first one,
+# drain the immediately-available error text and RAISE — which is exactly what lets `commitOrders`'
+# try/except fire `rollbackTransaction`. (Verified: after such an error the session is still alive and
+# accepts ROLLBACK on the same connection.) stdout is drained by a background thread into a queue so a
+# missing sentinel times out instead of deadlocking.
+#
+# IG81-COMPAT: this is TEST-HARNESS plumbing only — the gateway provides real JDBC transactions via
+# system.db.beginTransaction; nothing here ships. 8.1.52 and 8.3 expose the same beginTransaction API.
+# ----------------------------------------------------------------------------------------------------
+class SqlError(Exception):
+    pass
+
+
+class _TxSession(object):
+    """One open sqlcmd connection holding a transaction across batches."""
+    _seq = 0
+
+    def __init__(self, db):
+        self.db = db
+        self.proc = subprocess.Popen(_sqlcmd_args(db, interactive=True), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True, bufsize=1)
+        self._q = queue.Queue()
+        self._closed = False
+        t = threading.Thread(target=self._pump)
+        t.daemon = True
+        t.start()
+        self._batch("SET NOCOUNT ON;", want_rows=False)
+        self._batch("BEGIN TRANSACTION;", want_rows=False)
+
+    def _pump(self):
+        for line in self.proc.stdout:
+            self._q.put(line)
+        self._q.put(None)               # EOF sentinel
+
+    def _send(self, text):
+        self.proc.stdin.write(text + "\n")
+        self.proc.stdin.flush()
+
+    def _batch(self, sql_text, want_rows, timeout=30):
+        """Run one batch on the session; return (columns, rows) when want_rows else None.
+        Raises SqlError on any `Msg NNNN` (so the caller's rollback path runs)."""
+        _TxSession._seq += 1
+        nonce = "EOB%d" % _TxSession._seq
+        sentinel = "<<<%s>>>" % nonce
+        self._send(sql_text)
+        self._send("PRINT '%s';" % sentinel)   # framing marker (skipped by sqlcmd if the batch errored)
+        self._send("GO")
+        captured, err, end = [], None, time.time() + timeout
+        while True:
+            try:
+                line = self._q.get(timeout=max(0.1, end - time.time()))
+            except queue.Empty:
+                if err is not None:
+                    raise SqlError("; ".join(err))
+                raise SqlError("tx batch timed out waiting for sentinel; partial=%r" % captured[:8])
+            if line is None:
+                raise SqlError("tx session closed unexpectedly during batch")
+            line = line.rstrip("\n")
+            if sentinel in line:
+                break
+            if line.startswith("Msg ") and ", Level " in line and ", State " in line:
+                # a real sqlcmd error header is "Msg <n>, Level <n>, State <n>, ..." — match that
+                # shape (not a bare "Msg " prefix, which can occur in legitimate SELECT output).
+                # error -> the sentinel PRINT won't run; grab the immediate error text, then raise
+                err = [line]
+                while True:
+                    try:
+                        more = self._q.get(timeout=2)
+                    except queue.Empty:
+                        break
+                    if more is None or sentinel in more:
+                        break
+                    err.append(more.rstrip("\n"))
+                raise SqlError("; ".join(err))
+            captured.append(line)
+        if err is not None:
+            raise SqlError("; ".join(err))
+        if not want_rows:
+            return None
+        # parse the framed rows the same way _parse_rows handles -Q output (header, dashes, data)
+        body = [l for l in captured if l.strip() and not l.startswith("(")]
+        if not body:
+            return [], []
+        columns = body[0].split("\t")
+        data = [ln.split("\t") for ln in body[1:] if set(ln) - set("- \t")]
+        return columns, data
+
+    def exec_update(self, stmt, get_key=False):
+        if get_key:
+            cols, rows = self._batch(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True)
+            return int(rows[-1][0]) if rows and rows[-1][0] != "NULL" else None
+        self._batch(stmt, want_rows=False)
+        return 1
+
+    def commit(self):
+        self._batch("COMMIT TRANSACTION;", want_rows=False)
+        self.close()
+
+    def rollback(self):
+        # Guard with @@TRANCOUNT: a fatal statement error (e.g. a type-conversion failure) can DOOM and
+        # auto-roll-back the transaction before our explicit ROLLBACK runs; an unconditional ROLLBACK
+        # would then raise Msg 3903 ("no corresponding BEGIN") and MASK the original SqlError. The IF
+        # makes rollback a no-op when SQL Server already unwound the tx — so commitOrders' real failure
+        # propagates. (Real JDBC connection.rollback() is likewise safe on an already-rolled-back tx.)
+        if not self._closed:
+            self._batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", want_rows=False)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self.proc.wait(timeout=10)
+        except Exception:
+            self.proc.kill()
+
+
 class _SProcCall(object):
     def __init__(self, name):
         self.name, self.params = name, []
@@ -125,6 +273,12 @@ class _DB(object):
 
     def runPrepUpdate(self, sql, args, db=None, getKey=False, tx=None):
         stmt = _bind(sql, args)
+        # Inside a live transaction, route the statement to THAT session's connection (so it shares the
+        # open BEGIN TRAN). getKey is supported on the tx path too (SCOPE_IDENTITY in the framed output)
+        # even though Order doesn't use it — keep it correct for future tx writers.
+        if isinstance(tx, _TxSession):
+            return tx.exec_update(stmt, get_key=getKey)
+        # autocommit path (tx is None or the "tx-noop" sentinel) — UNCHANGED.
         if getKey:
             out = _run(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True)
             cols, rows = _parse_rows(out)
@@ -141,16 +295,20 @@ class _DB(object):
         exec_sql = "EXEC %s %s" % (call.name, ", ".join("@%s=?" % n for n in names))
         self.runPrepUpdate(exec_sql, vals, getKey=False)
 
-    # autocommit shim: transactions are no-ops (producer seams don't use them; Order's path is a
-    # documented extension — it would need a persistent sqlcmd session to span statements).
+    # Transactions: open a persistent sqlcmd session that spans statements (Order's commitOrders).
+    # The producer seams pass no tx; they keep hitting the autocommit _run path above untouched.
     def beginTransaction(self, db=None, **k):
-        return "tx-noop"
+        return _TxSession(db or SQL_DB)
     def commitTransaction(self, tx):
-        pass
+        if isinstance(tx, _TxSession):
+            tx.commit()
     def rollbackTransaction(self, tx):
-        pass
+        if isinstance(tx, _TxSession):
+            tx.rollback()
     def closeTransaction(self, tx):
-        pass
+        # idempotent — commit/rollback may already have closed the session.
+        if isinstance(tx, _TxSession):
+            tx.close()
 
 
 class _System(object):
