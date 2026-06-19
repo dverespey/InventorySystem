@@ -452,11 +452,24 @@ The reviewer can eyeball that the only non-zero rows carry a divergence tag.
 - **`site_id` FK** on `INV_STOCK_LEDGER` + per-site scoping (D1, Postgres phase).
 - **Timestamp normalization** `TS_POSTED`/`VC_ADD` 16-char string → `datetime2` (Postgres phase, every
   `# IG83-TODO`).
-- **Backfill:** at cutover, seed the ledger by deriving one movement per live source row (the §6
-  derivation, run for-real once) so the ledger's `SUM` equals the cutover `IN_QTY` exactly — then flip
-  reads to the ledger. The harness IS the backfill validator.
-- **Bug fixes that intentionally change on-hand at cutover** (D8(3) arrival-reversal, D12#3 plant/assembler-yard,
-  **F3 multi-row under-count, F5 part-change** — D11#9 is retired): the backfill will produce the *corrected*
-  on-hand. Reconcile the delta explicitly in the cutover runbook (these are the "ledger correct, legacy buggy"
-  parts from §6) so the corrected balances are reviewed, not silent.
+- **Backfill:** ⚠️ **SUPERSEDED FOR THE CUTOVER WRITER (David decided — see `cutover-runbook.md` §4,
+  BLOCKER 2 RESOLVED).** The cutover backfill is the **opening-balance copy**: `SEED_AllOpeningBalances`
+  records each part's CURRENT legacy `IN_QTY` as one `OPENING_BALANCE` ledger row (so `SUM(ledger)==IN_QTY`
+  by construction), in a quiesced window after the trigger drop. David's "start clean, go forward": a
+  from-zero / per-source-row replay is **impossible** because `DELETE_AutoPurge` aged out the receiving
+  IN-moves, so a replay reconstructs a WRONG (missing-receipts) opening. **The "derive one movement per
+  live source row" derivation below survives ONLY as the read-only §6 parity-harness derivation — it is
+  NEVER the cutover seed/writer.** Do not redesign this; the opening-balance copy is the decided path.
+- **Bug fixes "at cutover" — SUPERSEDED as *balance corrections*; they are FORWARD-only divergences.**
+  ⚠️ The original claim ("the backfill will produce the *corrected* on-hand for D8(3)/D12#3/F3/F5;
+  reconcile the delta explicitly") is **dead for the cutover** — the opening-balance copy FREEZES the
+  legacy (buggy) `IN_QTY` into the seed; it does NOT correct historical on-hand, and there is **no
+  delta-reconciliation step** (the copy is exact by construction). Only **forward** posts (via the seams)
+  get the corrected behavior, where the seams intentionally diverge from the old triggers. The four classes
+  (D8(3) arrival-reversal, D12#3 plant/assembler-yard, F3 multi-row under-count, F5 part-change) remain
+  meaningful ONLY as the §6 forward-behavior parity tags and the read-only harness derivation — they are
+  **retired from cutover scope as balance corrections.** **Honest caveat (`feedback-parity-fixture-fidelity`):**
+  `test_ledger_opening_balance.py`'s "0 drift after backfill" check is **vacuously green by construction**
+  (it copies `IN_QTY` in) — it proves the seed **MECHANISM**, NOT balance correctness; never cite it as a
+  correctness/parity sign-off.
 ```
