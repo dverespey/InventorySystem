@@ -284,7 +284,7 @@
                   "type": "script",
                   "scope": "G",
                   "config": {
-                    "script": "\tcur = self.session.props.theme\n\tsystem.perspective.setTheme('tai-light' if cur == 'tai-dark' else 'tai-dark')\n"
+                    "script": "\tcur = self.session.props.theme\n\tself.session.props.theme = 'tai-light' if cur == 'tai-dark' else 'tai-dark'\n"
                   }
                 }
               }
