@@ -444,13 +444,13 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
     for a **single gateway**. Redundancy will be discussed with the user/IT separately, but Ignition gateway
     redundancy is **invisible to the application** — so the app architecture does NOT design around it (no
     app-level failover logic); it's a deployment decision layered on later without code changes.
-15. 🔶 **EXPANSION PROVIDED — awaiting David's decision (2026-06-19).** The Order calc changes are the
-    Option-B MRP proposals C1–C6 (`docs/analysis/order/option-b.md`). **C1 is a defect fix** (silent ≤200-row
-    truncation → remove cap + warn) tracked separately from the MRP candidates. **C2–C6** are cited MRP
-    modernizations (lead-time offset on the working calendar; statistical safety stock; net-requirements
-    trigger; production-calendar forecast bucketing + firm/forecast split) — each KEEP-PROPOSED, none WONTFIX,
-    all needing sign-off. Spike built **Option A (faithful)**; SC1 parity = 19/20. Decision pending: approve C1
-    (recommended — pure defect, no value change), and stay faithful (defer C2–C6) vs adopt specific ones.
+15. ✅ **RESOLVED (David 2026-06-19) — build FAITHFUL (Option A); defer C2–C6 to a post-cutover doc.** *"Build
+    as legacy, don't confuse the users any more than we have to."* The rebuild reproduces the legacy order
+    calc exactly so it parity-matches under the dev-mirror comparison (Q16). **C1 (silent ≤200-row truncation
+    → remove cap + warn) IS included** — a defect fix that prevents silent data loss, no order-math change.
+    **C2–C6 (MRP modernizations) are deferred** and tracked in
+    `docs/analysis/production-readiness/post-cutover-enhancements.md`, to be adopted one-at-a-time post-cutover
+    behind sign-off + a per-site toggle, validated against the faithful baseline.
 16. ✅ **RESOLVED (David 2026-06-19) — dev mirror compared over a multi-week timeframe.** Rather than a prod
     parallel-run only, **run a MIRROR in dev** and compare Ignition output against legacy **over a multi-week
     window** before the transmission cutover. The comparison harness (the existing parity-diff approach +
