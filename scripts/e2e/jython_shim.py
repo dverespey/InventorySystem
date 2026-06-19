@@ -64,15 +64,17 @@ class _PyDataset(object):
         self.rowCount = len(rows)
 
     def _coerce(self, s):
-        if s == "NULL":
-            return None
-        try:
-            return int(s)
-        except ValueError:
-            try:
-                return float(s)
-            except ValueError:
-                return s
+        # NULL -> None; everything else stays a STRING. A real Ignition PyDataset preserves the column's
+        # declared type, so a VARCHAR business key (e.g. a digit-only VC_PART_NUMBER like '478930223000')
+        # comes back as a string and re-binds as a quoted literal. The shim parses untyped text output, so
+        # earlier it greedily int-coerced any all-digit cell — which silently corrupted the digit-only part
+        # number on the round-trip _readRow -> resolvePartId/resolveAddPoint bind (emitted UNQUOTED ->
+        # "Error converting data type varchar to numeric" -> no part resolved -> no post). The int-keyed
+        # producers (stocktaking/reject) hold the int id directly and never hit this; only the part-number-
+        # resolving shipping/receiving drivers did. Every numeric the drivers read is explicitly int()-cast
+        # by their own code, so keeping cells as strings is both correct and sufficient. (Genuine narrow
+        # shim coercion gap — NOT the documented persistent-session/transaction extension.)
+        return None if s == "NULL" else s
 
     class _Row(object):
         def __init__(self, ds, cells):
