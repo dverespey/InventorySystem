@@ -364,8 +364,16 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    - **`CalculateASNFRS` — still a behavior-port item** (date/FRS logic, not site config): confirm the body
      with delphi-architect before porting; decide then whether it moves to Inventory or stays ALC. (The
      calendar proc `AD_GetSpecialDate` is tracked separately in Q9.)
-5. **Unsend semantics** — `UPDATE_INVUnsend` **hard-deletes** the invoice header. Make it a recoverable status
-   revert per D3?
+5. ✅ **RESOLVED (David 2026-06-19) — in-place status + recreate flag, no hard-delete.** Legacy
+   `UPDATE_INVUnsend` detaches the lines (`INV_ASN_DETAIL_MST.IN_INV_ID = null`) then **hard-deletes the
+   `INV_INV_MST` header** — today the only way to flag an invoice for recreate, used when no ack/acceptance
+   message ever comes back; the delete forces a full cost recreate on rebuild. (The proc even has a
+   commented-out `SET VC_INV_STATUS='C'` — the status approach was contemplated.) **Rebuild (David's better
+   solution):** update **in place** — set `VC_INV_STATUS` back to an unsent state + a clear **"recreate the
+   810 file" flag**, keep the header row (recoverable, D3 — no destructive delete), and **recompute costs in
+   place via `fn_ManifestCostAt`** (D6) rather than delete-and-rebuild. The flag drives the system to
+   regenerate + retransmit the 810; the "no ack received" use case is preserved (operator action or an
+   unacked-past-threshold alarm, §4). Audit trail of the original send is retained.
 
 **Blocking M2:**
 6. **997 AK9 semantics** — map AK9 group codes (`A`/`E`/`P`/`R`) to distinct statuses and tolerate `AK2/AK3/AK4`
