@@ -1,0 +1,18 @@
+/* ----------------------------------------------------------------------------
+   Suite design tokens that DON'T change between light and dark:
+   typography, radii, motion. Brand colours live in tokens.light/dark.css.
+   ---------------------------------------------------------------------------- */
+:root {
+    /* Type. Inter / JetBrains Mono preferred; graceful fallback to Ignition's
+       bundled Noto Sans and the system stack so it looks right offline. */
+    --tai-font-sans: 'Inter', 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --tai-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+    /* Radii */
+    --tai-radius:         12px;  /* cards / containers          */
+    --tai-radius-control:  8px;  /* buttons, dropdowns          */
+    --tai-radius-input:    6px;  /* text inputs                 */
+
+    /* Motion */
+    --tai-transition: 150ms ease;
+}
