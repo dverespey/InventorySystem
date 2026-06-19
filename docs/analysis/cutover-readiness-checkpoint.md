@@ -5,7 +5,15 @@ InventorySystem is analyzed, rebuilt on Ignition Perspective, shadow-wired to th
 parity-closed. David's final 4 cutover go-decisions are made and recorded (§4 — all RESOLVED), and the 3
 SQL artifacts those decisions newly required are built + spike-validated (branch `cutover-artifacts`). What
 remains before production is the **cutover flip** itself (the parallel-run → live switch), whose plan is
-fully designed, adversarially reviewed, and now fully artifact-backed.
+fully designed, adversarially reviewed, artifact-backed, and now **dress-rehearsed end-to-end on the spike**.
+
+**DRESS-REHEARSAL (2026-06-19) — GO.** The entire Phase A→D sequence was run against the spike (fenced by a
+pre-backup + post-restore, spike proven as-found): **GO/NO-GO zero-drift gate = 0/47 parts** (`IN_QTY ==
+SUM(ledger)` after dropping the 13 triggers + `SEED_AllOpeningBalances`); forward-post smoke proved the
+seams are the SOLE `IN_QTY` writer with triggers dropped (no double-count); genesis guard fires correctly.
+Full write-up: `docs/analysis/cutover-dress-rehearsal.md`. **One residual to verify on PROD:** the
+`IX_INV_MANIFEST_COST_MST` constraint-DROP path could NOT be exercised on the spike (already dropped there),
+so the `ALTER TABLE … DROP CONSTRAINT` step is the one cutover action untested-in-rehearsal — confirm on prod.
 
 **The 3 new cutover SQL artifacts (built + spike-validated 2026-06-19):**
 - `docs/analysis/master-data/spike-partsstockinfo-drop-qty-clause.sql` (Carry 10)
