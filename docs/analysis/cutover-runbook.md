@@ -130,11 +130,15 @@ See **carry 10** below. Sequenced in Phase A (additive proc edits, pre-window) p
 - All producers' amend keys use `:upd:to=<effect>:v=<stamp>` (collision-safe); keep that on any new write path.
 
 ## 7. Headless Jython driver coverage  (retro R8 — partially done)
-`scripts/e2e/jython_shim.py` + `test_seam_driver.py` run the REAL stocktaking + reject wrappers end-to-end
-(autocommit shim). **Extend:** shipping + receiving (same shim, mechanical); **Order needs the shim's
-persistent-sqlcmd-session extension** (its `beginTransaction` spans statements). A true in-gateway runtime
-test (Perspective/Playwright is trial-gated; no WebDev; no gateway-event infra) remains a gap — the shim
-covers the driver LOGIC/SQL, not Jython-2.7-vs-CPython runtime quirks.
+`scripts/e2e/jython_shim.py` + `test_seam_driver.py` run the REAL stocktaking + reject + **shipping +
+receiving** wrappers end-to-end (autocommit shim) — including shipping's header-delete cascade and
+receiving's `resolveAddPoint` add-point gate (asserted with a NON-zero IN_QTY delta on a counted 'S'
+order). **Remaining extend:** **Order needs the shim's persistent-sqlcmd-session extension** (its
+`beginTransaction` spans statements). A true in-gateway runtime test (Perspective/Playwright is
+trial-gated; no WebDev; no gateway-event infra) remains a gap — the shim covers the driver LOGIC/SQL, not
+Jython-2.7-vs-CPython runtime quirks. (Note: extending to shipping/receiving surfaced + fixed a narrow
+shim coercion gap — digit-only VARCHAR business keys were being int-coerced on dataset round-trip; see
+`jython_shim.py::_PyDataset._coerce`.)
 
 ## 8. Postgres-phase (D13) — the `# IG83-TODO` set
 `TS_POSTED`/`VC_ADD`/`VC_LAST_UPDATE` 16-char strings → `datetime2`; `site_id` NOT NULL FKs (D1) +
