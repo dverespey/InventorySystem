@@ -329,10 +329,25 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
 ## 6. Open questions for David (decisions needed before / early in the build)
 
 **Blocking M1:**
-1. **ASN-detail dedup/delete scope.** Legacy `INSERT_ASNDetail` dedups (and `DELETE_ASNItem` deletes) by
-   `VC_MANIFEST_NUMBER` **globally**. Scope to `(IN_ASN_ID, manifest)` + per-site under D1? (Recommend: yes.)
-2. **`UPDATE_ASNStatus('S')` flips ALL `'C'` ASNs** (no id filter). Per-ASN send, or intentional batch? (Multi-
-   user/multi-site breaks the batch assumption.)
+1. ✅ **RESOLVED (David 2026-06-19) — ASN-detail dedup/delete scope.**
+   - **Preserve the accumulate-on-repeat upsert.** `INSERT_ASNDetail` (@HotCall=0) is an UPSERT: manifest
+     exists → `IN_QTY += @Qty`, else INSERT. It is **called multiple times during ASN creation and the
+     manifest qty accumulates** — this is intentional and must be kept. `@HotCall=1` always INSERTs (hot
+     calls never dedup) — keep that branch too.
+   - **Add `site_id` to the key** ("yes, add the site info"): the upsert existence-check AND the delete must
+     include `site_id` so two sites' identical manifest numbers never collide/accumulate into one row.
+   - **Also scope to `IN_ASN_ID` (recommended, pending David's nod).** Today the upsert WHERE and
+     `DELETE_ASNItem` key on `VC_MANIFEST_NUMBER` **alone** (`DELETE_ASNItem` takes only `@ManifestNumber`)
+     — so a later ASN reusing a manifest would accumulate into the OLD ASN's row, and deleting one ASN's
+     line wipes that manifest from every ASN. Scoping both to **`(site_id, IN_ASN_ID, manifest)`** preserves
+     the within-ASN accumulate while removing the cross-ASN/cross-site collision. Final key TBD David.
+2. ✅ **RESOLVED (David 2026-06-19) — per-ASN status flip, not bulk.** Legacy `UPDATE_ASNStatus 'S'` does
+   `UPDATE INV_ASN_MST SET VC_ASN_STATUS='S' WHERE VC_ASN_STATUS='C'` (flips EVERY open ASN at once,
+   verified). **Rebuild: flip one ASN at a time, immediately after that individual ASN's 856 send.** Add
+   `@ASNID` (+ `site_id`) → `WHERE IN_ASN_ID=@ASNID AND VC_ASN_STATUS='C' [AND site_id=@site]`. Couple the
+   flip to the send (don't mark `'S'` until that ASN's 856 file write + transmit commits — the at-least-once
+   idempotency rule, §4). This is also required for multi-user/multi-site (the bulk flip would send another
+   operator's / another site's open ASNs).
 3. **D6 window boundary inclusivity** — confirm `>=`/`<=` (inclusive), and that 810 must price identically to 856.
 4. **ALC-DB procs** (`AD_GetSite`, `AD_GetSiteTMMDUNS`, `AD_UpdateEIN`, `CalculateASNFRS`): confirm bodies + that
    the EIN counter is the authoritative outbound control number to replicate as a **per-site sequence**.
