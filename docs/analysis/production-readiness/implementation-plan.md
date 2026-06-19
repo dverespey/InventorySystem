@@ -89,38 +89,69 @@ The ASN *is* the shipment notice. Daily per line + hot-call (`8HC`).
 - **Perspective views:** an **EDI Outbound** panel on `asn/Manage` (recreate / send / unsend buttons; status
   filter C/S/A/R). No new heavy screen — bolt onto the ASN browser.
 - **Gateway scripts (Project Library `edi/edi_outbound.py`):**
-  - `build_856(site, asn_ein)` — port the `EDI856Object.T856EDI` segment map **verbatim** (`asn-invoice.md §4.2`:
+  - `build_856(site, asn_id)` — port the `EDI856Object.T856EDI` segment map **verbatim** (`asn-invoice.md §4.2`:
     ISA/GS/ST/BSN/DTM/HL-loop/PRF/LIN/SN1/TD5/CTT/SE/GE/IEA; separators from `sites`; the hardcoded `TD3`
     truck-id and HL parent quirks preserved unless David says otherwise). Replace the inconsistent `fSegCount`
     increment with a **computed** SE01 count (byte-exact SE count is a TEMA-reject risk).
+  - **DO NOT wrap `REPORT_EDI856` to feed this builder.** Verified (`CreateInventory.sql:3695`,
+    `/tmp/inv_utf8.sql:3695`): the proc's `@EIN<>0` branch executes
+    `UPDATE INV_ASN_MST set VC_ASN_STATUS='S' WHERE IN_ASN_EIN=@EIN` — calling it to *read* the 856 data flips
+    real ASN status to `'S'` for every ASN sharing that EIN, in the shared DB, before any file is written. Under
+    parallel-run/shadow that makes the legacy app see those ASNs as already-sent and skip its own 856
+    (double-source corruption). **Resolution: build the 856 from a NEW pure-SELECT** (`edi/asn_856_data` NQ — the
+    SELECT lifted out of the `@EIN<>0` branch, with the embedded `UPDATE` dropped and the hardcoded `6440`/EIN
+    predicate parameterized per-site). The builder ports the `EDI856Object` segment logic over that SELECT.
   - File write → `<sites.edi_out_path>\856<date><line>.txt` (normal) or `8HC<...>` (hot-call sentinel
     `StartSeq=-1`). **Transmission stays external** (the VAN mailer), as today.
-  - `mark_sent(site, ...)` → `UPDATE_ASNStatus('S')` — **re-scope to per-ASN** (legacy flips ALL `'C'` rows; a
-    multi-user/multi-site landmine — open Q).
-- **Named Queries:** `edi/report_856` (window-aware `REPORT_EDI856`, made inclusive `>=/<=`),
-  `asn/update_status` (`UPDATE_ASNStatus`), `asn/unsend` (`UPDATE_ASNUnsend`).
+  - `mark_sent(site, asn_id, ein)` → the **decoupled per-ASN status flip** (Q2): set `VC_ASN_STATUS='S'` for that
+    one ASN **only after** its 856 file write + transmit commits (the at-least-once rule, §4). This is the flip
+    that BLOCKER-1 removes from the report proc — it now lives explicitly here, per-ASN, never as a side effect of
+    reading data. Re-scope the underlying update to `WHERE IN_ASN_ID=@ASNID AND VC_ASN_STATUS='C' AND site_id=@site`.
+- **Named Queries:** `edi/asn_856_data` (the **pure SELECT** lifted from `REPORT_EDI856`, embedded UPDATE
+  removed, window-aware inclusive `>=/<=`, EIN/site parameterized — **not** a wrap of the mutating proc),
+  `asn/update_status` (the re-scoped per-ASN `UPDATE_ASNStatus`), `asn/unsend` (`UPDATE_ASNUnsend`).
 - **Tags/UDTs:** none. Generation is request-scoped.
+- **Principle (applies to ALL report procs):** the wrap-the-proc shadow strategy is **only valid for
+  pure-SELECT** procs. Any proc that mutates state — status flips, inserts, the embedded `UPDATE`s in
+  `REPORT_EDI856`/`REPORT_EDI810` — **must be reimplemented, not wrapped.** Before relying on any other `REPORT_*`
+  or `EDI*` proc as a shadow data feed, audit its body for hidden writes (see §4 "wrap-vs-reimplement audit").
 
-### Rank 3 — EDI inbound import / 997 ack — *NOT BUILT (procs exist, no caller)*
+### Rank 3 — EDI inbound import / 997 + 824 ack (M1) + 830/862 forecast import (M2) — *NOT BUILT (procs exist, no caller)*
 11 EDIIMP rows/day, serviced in ~4 bursts. Closes the accept/reject loop. **The single strongest
 gateway-Python-service candidate** (`edi-upload.md §6`).
+
+> **Milestone split (BLOCKER-3 boundary redraw):** the **minimal inbound that closes the outbound loop — 997
+> functional-group ack + 824 application-advice — is M1** (without it, an Ignition-built ASN can reach `'S'` but
+> never `'A'`/`'R'`, so M1's "TEMA-accept" gate is unreachable). The **remaining inbound — 830/862 forecast
+> import + the forecast-fill — is M2.** The poller shell (`poll_edi_in`, X12 parse, DUNS→site routing, archive,
+> processed-files ledger) is built in M1 (it must run to ingest 997/824) and **extended** in M2 to dispatch
+> 830/862. The dispatch table below tags each transaction set with its milestone.
 
 - **Perspective views:** `edi/Inbound` — a status/results table (replacing the blocking Delphi log + busy-wait):
   per-file Found / Trading-Partner / type / accept-reject / archive, backed by a DB-tracked **processed-files**
   table; a "Run poll now" button + the scheduled cadence indicator.
 - **Gateway scripts (Project Library `edi/edi_inbound.py` + a Gateway Timer/Scheduled script):**
-  - `poll_edi_in(site)` — replaces the manual button + filesystem scan. List `<sites.edi_in_path>`, sniff `ISA`,
-    parse the interchange header with a **real X12 split honoring ISA-declared separators** (NOT `copy(,n,len)`
-    byte offsets), resolve **`delSL[4]` → site (D1)**, dispatch by transaction-set id, then move to archive only
+  - `poll_edi_in()` — replaces the manual button + filesystem scan. **One gateway poller serves all sites**
+    (single gateway, Q14 + multi-site, D1). List the shared `<edi_in drop>`, sniff `ISA`, parse the interchange
+    header with a **real X12 split honoring ISA-declared separators** (NOT `copy(,n,len)` byte offsets), resolve
+    the file's sender **DUNS** (`delSL[4]`) and **match it against ALL configured `sites` rows' DUNS, routing the
+    file to the matching site** (D1). A file whose DUNS matches **no** configured site is **dropped/quarantined**
+    (logged + alarmed, not silently consumed). Then dispatch by transaction-set id, then move to archive only
     **after** the DB side-effect commits (idempotent + crash-safe; fixes the legacy re-ingest + `EDIFileNumber`
     carry-over bugs).
-  - Dispatch: **997** → `UPDATE_EINStatus` (the only DB-writing inbound path); **830** → call the shared
-    forecast-ingest service (validate DUNS **once**); **862/824** → server-side report render (no Excel);
-    **820** → REPORT-ONLY (D12 — site doesn't use it).
+  - Dispatch (milestone-tagged): **997 (M1)** → the site-scoped ack flip (see `ein/ack` below — the only
+    DB-writing inbound path in M1); **824 (M1)** → auto-flag the named ASN rejected + raise the home-screen alarm
+    (Q10); **830 (M2)** → call the shared forecast-ingest service (validate DUNS **once**); **862 (M2)** →
+    server-side report render (no Excel); **820** → REPORT-ONLY (D12 — site doesn't use it).
   - **997 hardening:** parse **AK9 explicitly** (map `A`/`E`/`P`/`R`), tolerate `AK2/AK3/AK4` detail between AK1
     and AK9 — the legacy blindly reads char 5 of the next segment (`edi-upload.md §4.4`, open Q).
-- **Named Queries:** `ein/ack` (`UPDATE_EINStatus`: `@EINType='SH'`→ASN status, else→invoice status, site-scoped),
-  plus a new `edi/processed_files` insert/select for the idempotency ledger.
+- **Named Queries:** `ein/ack` (`UPDATE_EINStatus`: `@EINType='SH'`→ASN status, else→invoice status). **Must be
+  site-scoped (BLOCKER-2).** Verified the proc keys on `WHERE IN_ASN_EIN=@EIN` / `IN_INV_EIN=@EIN` **alone**
+  (`/tmp/inv_utf8.sql:1724/1728`) — with Q4's per-site EIN sequences, site A and site B can both hold EIN 9069, so
+  a 997 for site A would flip **both** sites' ASN 9069. **Add `site_id` to the WHERE** so the flip scopes to
+  `(site_id, EIN)`; the inbound file already resolved to a site by DUNS (Q7/Q11), so pass that `site_id` through.
+  (General rule: every EIN-keyed update must be re-checked for the same un-scoped pattern — see §4.) Plus a new
+  `edi/processed_files` insert/select for the idempotency ledger.
 - **Tags/UDTs:** an **EDI inbound health** tag group (last-poll time, files-processed count, unacked-856/810
   count) feeding the landing hub + an alarm (see §3 alerting). This replaces the operator's manual "did the acks
   come in?" vigilance.
@@ -135,14 +166,22 @@ Billing accuracy → payment. Qty corrections feed the invoice; the 810 is the d
   - `edi/Invoice810` panel — create/recreate/unsend 810; a **priceless-lines pre-check** (the D6 diagnostic
     `REPORT_EDI810_PricelessLines`) surfaced **before** billing so gaps are caught, not shipped as $0.
 - **Gateway scripts (`edi/edi_outbound.py`):**
-  - `build_810(site, inv_ein)` — port `EDI810Object.T810EDI` segment map verbatim (`asn-invoice.md §4.3`:
+  - `build_810(site, inv_id)` — port `EDI810Object.T810EDI` segment map verbatim (`asn-invoice.md §4.3`:
     ISA/GS/ST/BIG/IT1-loop/REF/DTM/TDS/CTT/SE/GE/IEA; `M391` broadcast vs `M390` hot-call rule). **Replace the
     hand-rolled `FloatToStr`-split TDS money formatting with explicit integer-cents** (locale-fragile in legacy).
+  - **DO NOT wrap `REPORT_EDI810` to feed this builder** — it has the same self-mutation as 856 (BLOCKER-1 twin,
+    NIT-2 **confirmed**). Verified (`/tmp/inv_utf8.sql`, `REPORT_EDI810` `@EIN<>0` branch):
+    `UPDATE INV_INV_MST SET VC_INV_STATUS='S' WHERE IN_INV_EIN=@EIN`. Build the 810 from a NEW pure-SELECT
+    (`edi/inv_810_data` NQ — the SELECT lifted out, embedded UPDATE dropped, EIN/site parameterized).
+  - **Decoupled per-INV status flip (Q2 parallel for 810):** set `VC_INV_STATUS='S'` for the one invoice only
+    after its 810 file write + transmit commits — never as a side effect of reading data.
   - **D6 fix:** the 810 line price uses the **same window-aware pricing function** as the 856 (`fn_ManifestCostAt`)
-    so 810 and 856 agree. This is the one place we *port logic* rather than wrap a buggy proc.
-- **Named Queries:** `inv/create` (`INSERT_INVInfo`+`UPDATE_INVItems`), `inv/unsend` (`UPDATE_INVUnsend` — note it
-  **hard-deletes**; reconsider under D3, open Q), `edi/report_810` (window-aware), `asn/update_item`,
-  `asn/delete_item` (re-scoped).
+    so 810 and 856 agree. This is one of the places we *port logic* rather than wrap a buggy proc.
+- **Named Queries:** `inv/create` (`INSERT_INVInfo`+`UPDATE_INVItems`), `inv/unsend` (the **in-place**
+  recreate-flag rebuild of `UPDATE_INVUnsend` per Q5/D3 — no hard-delete), `edi/inv_810_data` (the **pure SELECT**
+  lifted from `REPORT_EDI810`, embedded UPDATE removed, window-aware, EIN/site parameterized — **not** a wrap of
+  the mutating proc), `inv/mark_sent` (the decoupled per-INV flip), `asn/update_item`, `asn/delete_item`
+  (re-scoped to `(site_id, IN_ASN_ID, manifest)`).
 
 ### Rank 5 — Order worksheet + order-FILE generation + renban breakdown — *PARTIAL / NOT BUILT*
 The replenishment side. 36 ORDERF/ORDERS rows/day. The Order worksheet **display + commit** are spike-built
@@ -180,7 +219,7 @@ out immediately.
   up to 12 assy-part/qty pairs against manifest + line + date.
 - **Gateway script:** reuse `create_asn` with the **hot-call branch** (`@StartSeq=-1`, `@EndSeq=-1`,
   `@EIN=SiteEIN+1`, `@HotCall=1` forces insert past dedup), then `build_856` emits the `8HC` filename.
-- **NQ:** reuses `asn/insert_info`, `asn/insert_detail` (HotCall=1), `edi/report_856`.
+- **NQ:** reuses `asn/insert_info`, `asn/insert_detail` (HotCall=1), `edi/asn_856_data` (the pure-SELECT feed).
 
 ### Rank 7 — Daily reports — *PARTIAL (data migrated, no view; the FAILING path)*
 The Daily Shipping Assy Report and the other `REPORT_*` reports. **Every ERROR row in the log was this Excel/OLE
@@ -230,14 +269,15 @@ plan finishes the job by moving the *presentation/print* path server-side too.
 | Gap | Production design | Carry/decision ref |
 |---|---|---|
 | **Security — plaintext passwords, single `BIT_ADMIN`** | Retire `INV_USERS` + the `SELECT/INSERT/UPDATE/DELETE_UserInfo` procs. Use an **Ignition User Source** (internal for dev, AD/LDAP/OAuth/SAML for prod). Map `BIT_ADMIN=1`→`Admin` role, else `User`; gate Administration + EDI/order views by **role-based component security**. **Admin/User two-role split for now** (Q12 — the finer per-feature model, e.g. EDI-only/receiving-only, is deferred). Seed from `INV_USERS` once; **force a password reset on first login** (cannot migrate plaintext→hash). | `admin/auth-users.md §6` |
-| **Multi-site (D1) — spike is single-site** | Every `INV_*` table gains `site_id`; the INI `[SITE]`/`[INIT]`/`[DISPLAY]` flags + the DB `TSiteInfo` identity (DUNS, EIN, ISA/GS separators, TMM DUNS, delivery-method, supplier code) merge into one **`sites` row**. **Site comes from the session/user, never a client param** (`siteScopedQuery()`). **F1 hazard:** adding `site_id` breaks `SELECT *` `_HIST` triggers unless the `_HIST` table gets the column too (proven on the spike for `INV_PARTS_STOCK_MST`). The EDI `delSL[4]` DUNS lookup (`AD_GetSiteTMMDUNS`, ALC DB) collapses into a per-site `sites` attribute. **Parameterize the hardcoded `IN_ASN_EIN=6440` in `REPORT_EDI856`** (a baked-in site EIN — D1 blocker). **OWN THE `sites` TABLE IN THE INVENTORY DB (new scope, David 2026-06-19):** the authoritative site/line configuration currently lives in the **VehicleOrder** DB (a cross-DB dependency — the order/forecast `LINE` lookups + site config read across databases today). Relocate it to be the canonical **`Inventory.dbo.sites`** table so multi-site config is self-contained and the cross-DB read is eliminated; migration = copy `VehicleOrder.sites`→`Inventory.sites`, repoint every cross-DB reference (order/forecast `LINE`, `AD_GetSite`/`AD_GetSiteTMMDUNS` DUNS lookups), then retire the VehicleOrder copy. Add a **Sites master screen** — the **8th master-data CRUD** (Admin-gated), managing each site row: plant/assembler/supplier codes, DUNS + TMM DUNS, EIN seed/sequence, ISA/GS separators, delivery method, and the `[INIT]`/`[DISPLAY]` flags (`fill_days`, `forecast_usage_compare`, `use_first_production_day`, …). It reuses the proven master-CRUD pattern (combined view + Named Queries + refCount delete-gate); since `site_id` FKs every table, this delete-gate is the strictest of all. | `admin/configuration-site.md §6`, `edi/asn-invoice.md §4.4`, `decisions.md` D1 |
+| **Multi-site (D1) — spike is single-site** | Every `INV_*` table gains `site_id`; the INI `[SITE]`/`[INIT]`/`[DISPLAY]` flags + the DB `TSiteInfo` identity (DUNS, EIN, ISA/GS separators, TMM DUNS, delivery-method, supplier code) merge into one **`sites` row**. **Site comes from the session/user, never a client param** (`siteScopedQuery()`). **F1 hazard — full blast radius enumerated (bake into M4, don't discover mid-build):** adding `site_id` to a base table breaks any `INSERT ... _HIST SELECT * FROM inserted/deleted` trigger unless the `_HIST` table gains the same column in lockstep. **7 confirmed `SELECT *` history triggers across 3 tables** (verified `/tmp/inv_utf8.sql`): FORECAST — `INSERT INTO INV_FORECAST_DETAIL_INF_HIST SELECT *` at lines **2664** (del), **3440** (ins), **3617** (ins); PARTS_STOCK — `INV_PARTS_STOCK_MST_HIST SELECT *` at **4107** (del), **4269** (ins); OPEN_ORDER — `INV_OPEN_ORDER_INF_HIST SELECT *` at **5475** (del), **7496** (ins). (`INV_ASSY_BUILD_HIST` is safe — explicit `VALUES`, not `SELECT *`.) M4 pre-flight: add `site_id` to each of the 3 `_HIST` tables before/with the base-table change; a mismatched-column `SELECT *` throws at runtime and halts the base DML. (Bonus: re-audit the remaining triggers — 25 total — for any other `SELECT *` on a table gaining `site_id`.) The EDI `delSL[4]` DUNS lookup (`AD_GetSiteTMMDUNS`, ALC DB) collapses into a per-site `sites` attribute. **Parameterize the hardcoded `IN_ASN_EIN=6440` in `REPORT_EDI856`** (a baked-in site EIN — D1 blocker). **OWN THE `sites` TABLE IN THE INVENTORY DB (new scope, David 2026-06-19):** the authoritative site/line configuration currently lives in the **VehicleOrder** DB (a cross-DB dependency — the order/forecast `LINE` lookups + site config read across databases today). Relocate it to be the canonical **`Inventory.dbo.sites`** table so multi-site config is self-contained and the cross-DB read is eliminated; migration = copy `VehicleOrder.sites`→`Inventory.sites`, repoint every cross-DB reference (order/forecast `LINE`, `AD_GetSite`/`AD_GetSiteTMMDUNS` DUNS lookups), then retire the VehicleOrder copy. **M4 PRE-TASK (verify-before-relocate) — `VehicleOrder.sites` existence + readers are UNVERIFIED in the InventorySystem source** (the adversarial review found no `FROM sites`/`dbo.sites` reference in any `.pas`/`.dfm`; site identity in *this* app is read from INI per `SiteInfo.pas`). David asserts the table lives in VehicleOrder — so **before relocating/retiring it, confirm with delphi-architect: (1) the real table name + which DB/schema it actually lives in, (2) the exact cross-DB references to repoint, and (3) which sibling apps read it** (GALC/MES in `Delphi-VCL-Components` — the Q9 calendar decision already establishes VehicleOrder is shared across Inventory/GALC/MES, so a retire step has cross-app blast radius). If it has sibling readers, "retire the VehicleOrder copy" becomes "keep shared / dual-read," not a clean move. Do not break siblings. (This is verify-before-relocate, not a contradiction of David's call.) Add a **Sites master screen** — the **8th master-data CRUD** (Admin-gated), managing each site row: plant/assembler/supplier codes, DUNS + TMM DUNS, EIN seed/sequence, ISA/GS separators, delivery method, and the `[INIT]`/`[DISPLAY]` flags (`fill_days`, `forecast_usage_compare`, `use_first_production_day`, …). It reuses the proven master-CRUD pattern (combined view + Named Queries + refCount delete-gate); since `site_id` FKs every table, this delete-gate is the strictest of all. | `admin/configuration-site.md §6`, `edi/asn-invoice.md §4.4`, `decisions.md` D1 |
 | **File-share access + secrets/paths config** | The legacy mapped-drive UNC paths (`X:\EDIOut\`, `S:\<carrier>\`, `<EDIIn>`) become **gateway-mounted shares**; paths live in `sites`/gateway config, **DB connection strings + credentials in the gateway secret store** (never per-client INI). Gateway needs read/write to these shares — a deployment prerequisite. | `configuration-site.md §6` |
 | **Error handling / resilience / alerting** | Replace the blocking Delphi log + busy-wait with **native Ignition Alarming**: alarms on EDI poll failure, unacked 856/810 past a threshold (compliance/payment risk), 824 rejects, order-file write failure, and a stale-inbound watchdog. Notification pipelines (email/SMS) replace the operator manually noticing. The EDI inbound health tag group (Rank 3) drives these. | new |
 | **At-least-once / idempotency on EDI I/O** | Outbound: don't mark sent until the file write + status flip commit. Inbound: don't archive until the DB side-effect commits; a DB-tracked **processed-files** ledger replaces move-to-archive as the idempotency key (fixes the legacy re-ingest + `EDIFileNumber` carry-over bugs). **This is NOT Store-and-Forward** (that's tag history only). | `edi-upload.md §4.8` |
 | **Atomicity (Carry 1) + renban race (Carry 2) + trigger retirement** | Already tracked in the cutover runbook. Fold source-write + ledger post into one transaction at cutover; atomic renban-counter claim; drop the 13 qty-triggers as the seams become the live `IN_QTY` writer (dress-rehearsed). | `cutover-runbook.md`, checkpoint §3 |
 | **Backup/restore** | Gateway config + project backup (`.gwbk`) on a schedule; DB backup remains SQL Server's job. Document a restore runbook. Spike infra (Colima/docker mssql) is dev-only; prod is the existing SQL Server. | new |
 | **Deployment topology** | One Gateway (prod 8.3) serving Perspective; SQL Server as today. Decide **redundancy/failover** (Ignition redundant gateway) given EDI is revenue-critical — recommend a redundant pair for prod, single gateway acceptable for parallel-run. | new (open Q) |
-| **EDI EIN / site-scoping hooks** | `AD_UpdateEIN` (the EIN counter, ALC DB) becomes a **per-site sequence**; the ALC `AD_GetSite`/`AD_GetSiteTMMDUNS` bodies must be confirmed before relying on them. EIN is the outbound control number — it must be allocated atomically per site. | `asn-invoice.md §4.4`, open Q |
+| **EDI EIN / site-scoping hooks** | `AD_UpdateEIN` (the EIN counter, ALC DB) becomes a **per-site sequence** (Q4 — the VAN control number per site/DUNS); the ALC `AD_GetSite`/`AD_GetSiteTMMDUNS` bodies must be confirmed before relying on them. EIN is the outbound control number — it must be allocated atomically per site. **BLOCKER-2 — site-scope every EIN-keyed update:** `UPDATE_EINStatus` keys on `WHERE IN_ASN_EIN=@EIN` / `IN_INV_EIN=@EIN` **alone** (verified `/tmp/inv_utf8.sql:1724/1728`) — with per-site EIN sequences (Q4), two sites can hold the same EIN, so an unscoped flip acks the wrong site. **Add `site_id` to the WHERE** → `(site_id, EIN)`; the inbound 997/824 already resolves a site by DUNS (Q7/Q11) so the `site_id` is in hand. **Audit ALL EIN-keyed updates** for the same un-scoped pattern before per-site EIN goes live (this row + `REPORT_EDI856`/`810`'s now-removed embedded flips were the same class of bug). | `asn-invoice.md §4.4`, decisions Q4, BLOCKER-2 |
+| **Wrap-vs-reimplement audit (report procs)** | The shadow strategy's "wrap the proc as-is" is **only safe for pure-SELECT procs.** Two supposed read procs mutate state: `REPORT_EDI856` (`:3695`, flips ASN→`'S'`) and `REPORT_EDI810` (flips INV→`'S'`) — both are now **reimplemented as pure-SELECT NQs with the embedded UPDATE removed** and the status flip decoupled to send-commit (Rank 2/4, Q2). **Before relying on any other `REPORT_*`/`EDI*` proc as a shadow data feed, read its body for hidden `UPDATE`/`INSERT`/`DELETE`.** A proc that writes cannot be wrapped read-only during parallel-run. | §2 Rank 2/4, BLOCKER-1, NIT-2 |
 | **Audit trail (`LogActLog`)** | The per-action audit trail (every ASN/EDI/order action) → an Ignition **audit profile** or an `audit_log` table written by the gateway services, carrying the Perspective username + client address. Keep the human-readable EDI per-file trail. | `auth-users.md §6` |
 
 ---
@@ -262,28 +302,58 @@ quiesced flip.
 
 ### Milestones
 
-**M1 — The revenue-critical ASN → 856 → 810 daily loop (parallel-run shadow). ~5–7 dev-weeks.**
-Ranks 1, 2, 4 + the outbound half of the loop.
-- ASN entry (create transaction + sequence check + split-by-ratio review), ASN invoice reconciliation, 856 + 810
-  builders (Gateway Jython, byte-exact), status flip/unsend, D6 window-aware pricing shared by 810/856.
-- **Mode:** **shadow** — Ignition writes ASN/INV rows + EDI files to a **separate `EDIOut` staging dir**; diff
-  against legacy files; do NOT transmit Ignition's files until byte-parity + a TEMA test-accept. Legacy stays the
-  system of record.
-- **Depends on:** ASN-detail dedup scope decision; `CalculateASNFRS` body; ALC `AD_*` bodies; the persistent-tx
-  shim (proven).
-- **Gate:** byte-diff 856/810 vs legacy on a sample day; TEMA test-accept of an Ignition-built 856 and 810.
+> **M1↔M2 boundary (redrawn — BLOCKER-3, David 2026-06-19):** M1's old gate ("997-accepted by TEMA") was
+> unreachable inside the old M1 because the 997 ingester sat in M2 — a circular dependency. **Resolution: M1 = the
+> FULL ASN→856/810→997/824 loop** (outbound generation + transmit-staging **plus** the minimal inbound ack
+> ingestion that closes the loop and makes M1 gate-able on a real TEMA accept). **M2 = the remaining inbound (830/862
+> forecast import + forecast-fill) + order-file generation + renban breakdown.** M1 grows (absorbs minimal inbound);
+> M2 shrinks (loses 997/824) but still bundles three hard subsystems, so it is re-sized up, not down, from the old
+> 5–7wk underestimate.
 
-**M2 — EDI inbound + order-file generation. ~5–7 dev-weeks.**
-Ranks 3, 5, 6.
-- `edi_inbound.py` poller (X12 parse, `delSL[4]`→site, 997 ack with AK9, 830→forecast, 862/824 server-render,
-  820 report-only), processed-files idempotency ledger.
-- Renban breakdown algorithm (atomic counter), order-file generator (`.ord` byte-exact to supplier/logistics/
-  archive), order worksheet forecast-fill finished (no Excel), hot-call path.
-- **Mode:** inbound can **shadow** (parse + log, write 997 status to a shadow column first, then enable the real
-  `UPDATE_EINStatus`); order files written to a staging dir and byte-diff'd before pointing at the real shares.
-- **Depends on:** M1 (hot-call needs ASN+856); `AD_GetSpecialDate` body (calendar walk, blocks order forecast-
-  fill); the TIRE-logistics config Q; AK9 semantics Q.
-- **Gate:** 997 round-trip flips the right ASN/INV status; `.ord` files byte-diff vs legacy and parse downstream.
+**M1 — The revenue-critical ASN → 856/810 → 997/824 daily loop (parallel-run shadow). ~7–10 dev-weeks.**
+Ranks 1, 2, 4 + the **minimal-inbound (997/824) slice of Rank 3**.
+- **Outbound:** ASN entry (create transaction + sequence check + split-by-ratio review), ASN invoice
+  reconciliation, 856 + 810 builders (Gateway Jython, byte-exact, **built over NEW pure-SELECT NQs** — NOT the
+  self-mutating `REPORT_EDI856`/`810`, BLOCKER-1/NIT-2), **decoupled per-ASN/per-INV status flip on send-commit**
+  (Q2), in-place unsend/recreate-flag (Q5/D3), D6 window-aware pricing shared by 810/856.
+- **Minimal inbound (the loop-closer):** the `poll_edi_in` poller shell — X12 parse honoring ISA separators,
+  DUNS→site routing against ALL `sites` (D1), processed-files idempotency ledger, archive-after-commit — wired to
+  dispatch **only 997 (AK9 ack, site-scoped `ein/ack`) and 824 (auto-flag rejected + home-screen alarm, Q10)**.
+  830/862 dispatch is stubbed/deferred to M2. The poller is built here because M1's TEMA-accept gate requires it.
+- **Mode:** **shadow** — Ignition writes ASN/INV rows + EDI files to a **separate `EDIOut` staging dir**; diff
+  against legacy files; do NOT transmit Ignition's files to TEMA until byte-parity. **Inbound shadow:** ingest a
+  copy of the 997/824 stream and write ack status to a **shadow column** first, then enable the real site-scoped
+  `ein/ack` flip. Legacy stays the system of record. (Critical: never feed the builders from `REPORT_EDI856`/`810`
+  — wrapping them would flip real status in the shared DB and make legacy skip its own send.)
+- **Depends on:** ASN-detail key `(site_id, IN_ASN_ID, manifest)` (Q1); the embedded-UPDATE removal from
+  `REPORT_EDI856`/`810` (BLOCKER-1); site-scoping of `UPDATE_EINStatus` (BLOCKER-2 — needed for the 997 flip);
+  `CalculateASNFRS` body; ALC `AD_*` bodies + the per-site EIN sequence (Q4); AK9 semantics (Q6); the persistent-tx
+  shim (proven). **Resolve the unread proc bodies before locking the estimate** (a hidden write already cost us
+  BLOCKER-1).
+- **Gate:** byte-diff 856/810 vs legacy on a sample day **AND** a real **TEMA test-accept** — an Ignition-built
+  856/810 transmitted in a test exchange, the returned **997 ingested by M1's own poller** flipping the ASN/INV to
+  `'A'`/`'R'` correctly (and an 824 reject auto-flagging its ASN). The loop is gate-able end-to-end within M1.
+
+**M2 — Remaining inbound (830/862 forecast import + forecast-fill) + order-file generation + renban breakdown. ~8–11 dev-weeks.**
+Ranks 5, 6 + the **830/862 + forecast-fill slice of Rank 3**.
+- **Inbound (extends M1's poller):** add the **830 forecast import** (→ shared forecast-ingest service, per-site
+  `auto`/`manual` mode + the home-hub Forecast Import box + ≥8-day staleness alarm, Q11) and **862** server-render;
+  820 stays report-only. The poller, X12 parser, DUNS-routing, and processed-files ledger are reused from M1, not
+  rebuilt.
+- **Order/renban:** renban breakdown algorithm (atomic SERIALIZABLE counter claim, Carry 2), order-file generator
+  (`.ord` byte-exact to supplier/logistics/archive — logistics emitted only when configured, Q8), order worksheet
+  forecast-fill finished via `SIM_OrderSimulation` (no Excel), hot-call path (reuses M1's `create_asn` + `build_856`).
+- **Mode:** inbound can **shadow** (830 parse + log, forecast written to a shadow set first); order files written
+  to a staging dir and byte-diff'd before pointing at the real shares.
+- **Depends on:** M1 (hot-call needs ASN+856; the poller shell + ledger are M1 assets); `AD_GetSpecialDate` body
+  (shared calendar in VehicleOrder, read-only — calendar walk blocks the order forecast-fill, Q9); the TIRE-logistics
+  config (resolved Q8); the unread `CalculateASNFRS`/FRS-renban insert bodies (resolve before locking this estimate).
+- **Gate:** 830 round-trip lands the right per-site forecast; the forecast-fill matches legacy; `.ord` files
+  byte-diff vs legacy and parse downstream.
+- **Why re-sized up to 8–11wk:** even after shedding 997/824 to M1, M2 still bundles **three hard subsystems**
+  (830/862 inbound + forecast-fill, renban breakdown with atomic counter, byte-exact `.ord` generation), several
+  riding on proc bodies flagged "inferred, not fully read." The old 5–7wk estimate was optimistic; this is the
+  honest size.
 
 **M3 — Reporting + Excel-layer retirement. ~3–4 dev-weeks.**
 Rank 7 + §3.
@@ -294,11 +364,17 @@ Rank 7 + §3.
 
 **M4 — Security / multi-site / hardening. ~4–6 dev-weeks.**
 §4.
-- User Source + roles + per-feature gating; `site_id` end-to-end (schema surgery + F1-safe `_HIST` + session
-  scoping + parameterize the hardcoded EIN); **relocate the `sites` table VehicleOrder→Inventory DB + build the
-  Sites master screen (8th master, Admin-gated) + repoint the cross-DB `LINE`/DUNS reads**; native alarming +
-  notification pipelines; secrets/paths to gateway config + secret store; backup runbook; redundancy decision;
-  transactional DATAPURGE scoped by site.
+- **PRE-TASK (verify-before-relocate):** confirm with delphi-architect the real name/DB/schema of the `sites`
+  table David places in VehicleOrder, the exact cross-DB references, and its **sibling readers (GALC/MES)** —
+  before any relocate/retire (SHOULD-FIX-3/4; the table is unverified in the InventorySystem source). If siblings
+  read it, keep-shared/dual-read instead of retiring.
+- User Source + roles + per-feature gating; `site_id` end-to-end (schema surgery + **F1-safe `_HIST`: add `site_id`
+  to the 3 history tables in lockstep with the base tables — the 7 enumerated `SELECT *` triggers at
+  `:2664/3440/3617/4107/4269/5475/7496`, §4** + session scoping + parameterize the hardcoded EIN `6440`);
+  **site-scope every EIN-keyed update (BLOCKER-2 — `UPDATE_EINStatus` → `(site_id, EIN)`)**; relocate the `sites`
+  table VehicleOrder→Inventory DB (pending the pre-task) + build the Sites master screen (8th master, Admin-gated)
+  + repoint the cross-DB `LINE`/DUNS reads; native alarming + notification pipelines; secrets/paths to gateway
+  config + secret store; backup runbook; redundancy decision; transactional DATAPURGE scoped by site.
 - **Mode:** schema surgery (`site_id`) is the riskiest — stage it additively (nullable, default current site)
   during parallel-run, enforce NOT-NULL at cutover. Auth flip is a hard cutover for operators (they get Ignition
   logins).
@@ -314,12 +390,18 @@ Rank 7 + §3.
 - **Gate:** an agreed parallel-run soak passes (every day's EDI accepted by TEMA from Ignition, parity green),
   then flip; legacy retained as fallback for the soak window.
 
-**Rough total: ~18–26 dev-weeks** for a solo dev, foundation reused. M1 is the highest-value, highest-risk chunk
-and should be sequenced first; M3 can slip in parallel with M1/M2 since it's additive read-only.
+**Rough total: ~23–33 dev-weeks** for a solo dev, foundation reused (M1 7–10, M2 8–11, M3 3–4, M4 4–6, M5 1–2 —
+re-sized after the BLOCKER-3 boundary redraw moved minimal inbound into M1 and the reviewer's honest re-estimate of
+M2's bundled subsystems). M1 is the highest-value, highest-risk chunk and should be sequenced first; M3 (reporting)
+is additive read-only and can slip in parallel with M1/M2 — it is the safe thing to defer if the timeline slips,
+never a critical-path blocker.
 
 ### What parallel-runs/shadows vs what is a hard cutover
-- **Parallel-run / shadow (most of it):** ASN/invoice writes (procs dedup), inbound parse-to-shadow, all
-  reporting (read-only), order-file staging, `site_id` additive schema. Both apps share the DB; procs mediate.
+- **Parallel-run / shadow (most of it):** ASN/invoice *insert* writes (the `INSERT_ASN*`/`INSERT_INV*` procs
+  dedup), inbound parse-to-shadow (997/824 ack to a shadow column first), all reporting (read-only), order-file
+  staging, `site_id` additive schema. Both apps share the DB; procs mediate. **Caveat (BLOCKER-1):** shadow is
+  only read-safe because the 856/810 builders feed from **pure-SELECT NQs**, not the self-mutating
+  `REPORT_EDI856`/`810` — wrapping those would flip real status in the shared DB and break parallel-run.
 - **Hard cutover (the few):** (1) **EDI transmission** — only one app transmits 856/810 to TEMA; (2) **the qty-
   trigger drop / seam-as-live-writer** (already designed/rehearsed in Phase C); (3) **operator auth** (they
   switch to Ignition logins). Everything else can shadow until these flip.
@@ -349,7 +431,11 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    `@ASNID` (+ `site_id`) → `WHERE IN_ASN_ID=@ASNID AND VC_ASN_STATUS='C' [AND site_id=@site]`. Couple the
    flip to the send (don't mark `'S'` until that ASN's 856 file write + transmit commits — the at-least-once
    idempotency rule, §4). This is also required for multi-user/multi-site (the bulk flip would send another
-   operator's / another site's open ASNs).
+   operator's / another site's open ASNs). **Implementation note (BLOCKER-1):** this flip is now the *only* place
+   ASN status moves to `'S'`. The 856 data feed is a NEW pure-SELECT NQ (`edi/asn_856_data`), **not** a wrap of
+   `REPORT_EDI856` — that proc's `@EIN<>0` branch self-flips status to `'S'` on read (`/tmp/inv_utf8.sql:3695`),
+   which would corrupt the shared DB during shadow/parallel-run. `REPORT_EDI810` has the identical twin (NIT-2
+   confirmed). Both procs' embedded `UPDATE`s are removed and reimplemented as this decoupled per-row flip.
 3. ✅ **RESOLVED (David 2026-06-19) — inclusive boundaries.** Window is inclusive (`VC_START <= prodDate <=
    VC_END`; `VC_END` = last effective day). Re-confirms the earlier D6 decision (David 2026-06-18, PR #10:
    strict `SELECT_ManifestCost` was the bug, superseded by `fn_ManifestCostAt`; gap convention for
@@ -363,6 +449,12 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    - **`AD_UpdateEIN` → a per-site atomic EIN sequence in the Inventory DB.** Confirmed: **EIN is the
      authoritative outbound control number tracked through the VAN**, so it must be allocated atomically and
      uniquely per site (the per-site sequence replaces the ALC counter; seed lives on the `sites` row).
+   - **BLOCKER-2 — site-scope the EIN-keyed status update.** Keeping per-site EIN sequences creates a collision in
+     the ack path: `UPDATE_EINStatus` keys on `WHERE IN_ASN_EIN=@EIN` / `IN_INV_EIN=@EIN` **alone** (verified
+     `/tmp/inv_utf8.sql:1724/1728`), so site A and site B both holding EIN 9069 means a 997 for site A flips
+     **both** sites. **Add `site_id` to the WHERE** → the flip scopes to `(site_id, EIN)`. The inbound 997/824
+     already resolves to a site by DUNS (Q7/Q11), so the `site_id` is in hand at flip time. **Audit every other
+     EIN-keyed update for the same un-scoped pattern** before per-site EIN goes live.
    - **`CalculateASNFRS` — still a behavior-port item** (date/FRS logic, not site config): confirm the body
      with delphi-architect before porting; decide then whether it moves to Inventory or stays ALC. (The
      calendar proc `AD_GetSpecialDate` is tracked separately in Q9.)
@@ -376,6 +468,12 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    place via `fn_ManifestCostAt`** (D6) rather than delete-and-rebuild. The flag drives the system to
    regenerate + retransmit the 810; the "no ack received" use case is preserved (operator action or an
    unacked-past-threshold alarm, §4). Audit trail of the original send is retained.
+   - **Re-pricing instant pinned (SHOULD-FIX-5).** `fn_ManifestCostAt` is window-aware; the in-place recompute
+     MUST key on the **original production date** (the ASN/line `VC_PRODUCTION_DATE` that priced the first send),
+     **NOT `getdate()`/current.** Otherwise a recreate after a manifest-cost window boundary passes would silently
+     re-price the 810 at the new window's price while TEMA may already hold the original (the "no ack" case is
+     exactly when the 810 reached TEMA but the 997 was lost) → invoice mismatch/dispute. Add a parity test that
+     recreates an 810 **across a cost-window boundary** and asserts the price is unchanged.
 
 **Blocking M2:**
 6. ✅ **RESOLVED (David 2026-06-19) — yes.** Map the AK9 functional-group ack codes (`A` accepted / `E`
@@ -419,9 +517,12 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
 11. ✅ **RESOLVED (David 2026-06-19) — scheduled gateway poll + DUNS guard; forecast import is per-site
     auto/manual with a home-hub box.**
     - **Scheduled gateway poll** (not on-demand). Cadence configurable (TBD interval).
-    - **DUNS guard:** the poller **confirms each inbound file's DUNS matches the gateway's configured site('s)
-      DUNS** before processing; non-matching files are not consumed. (This is how Q7's per-site routing
-      lands — site-scoped processing validated by DUNS, not a blind shared-drop fan-out.)
+    - **DUNS guard + multi-site routing (SHOULD-FIX-1).** The **single** gateway poller (one gateway, Q14)
+      serves **all** sites (D1), so there is no "the gateway's configured site." For each inbound file the poller
+      reads the sender DUNS and **matches it against the DUNS of ALL configured `sites` rows, routing the file to
+      the matching site** and processing it site-scoped. A file whose DUNS matches **no** configured site is
+      **dropped/quarantined** (logged + alarmed), never consumed. (This is how Q7's per-site routing lands — DUNS
+      is the routing key, not a single-site filter; it reconciles with the `delSL[4]→site` routing in §2 Rank 3.)
     - **Exception — forecast import has a per-site `auto`/`manual` config** (new `sites` attribute,
       `forecast_import_mode`): **AUTO** = the poll imports the forecast automatically; **MANUAL** = **leave the
       file in place** and raise a **home-screen alert on the Forecast Import button/box** so the operator runs
