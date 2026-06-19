@@ -52,9 +52,15 @@ docs/test-only, reviewed, and mergeable.
   from-zero reconstruction can't run (receiving history aged out). That check is the cutover-backfill
   validator; it runs if a pre-purge dump ever surfaces. Parity is instead closed by the opening-balance
   seed + the controlled-history proof (`test_ledger_fullhistory_recon.py`).
-- **Seam-runner** now executes the real driver logic for **all producers except Order** (Order's
-  `beginTransaction` spans statements → needs the shim's persistent-sqlcmd-session extension; the one §7
-  item still open).
+- **Seam-runner** now executes the real driver logic for **all producers AND Order** — the last §7 gap is
+  **CLOSED.** Order's `commitOrders` spans statements (begin → N× `INSERT_OpenOrder` →
+  `UPDATE_PartsStockRenban` → commit/rollback); `jython_shim.py` gained a **persistent-sqlcmd-session**
+  extension (`_TxSession`: one long-lived `docker exec -i` connection fed framed batches) so the REAL
+  `commitOrders` runs against a real transaction. `scripts/e2e/test_seam_driver_order.py` (13/13 green)
+  proves the happy path (2 records committed, counter advanced, IN_QTY unmoved, persists after close) AND
+  **mid-transaction rollback atomicity** — the first INSERT is shown visible *inside* the open tx, then a
+  forced failure rolls it back so zero rows persist and the counter is unchanged (the thing an autocommit
+  shim could never prove). Autocommit producers unregressed (`test_seam_driver.py` 23/23).
 - **Infra:** dev gateway Ignition 8.1.52 (`:8088`), docker `mssql-spike` (SQL Server 2019). Prod targets
   8.3 — code is `# IG83-TODO`/`# IG81-COMPAT` annotated.
 
