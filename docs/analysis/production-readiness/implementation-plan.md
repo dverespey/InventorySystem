@@ -340,7 +340,9 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
      `DELETE_ASNItem` key on `VC_MANIFEST_NUMBER` **alone** (`DELETE_ASNItem` takes only `@ManifestNumber`)
      — so a later ASN reusing a manifest would accumulate into the OLD ASN's row, and deleting one ASN's
      line wipes that manifest from every ASN. Scoping both to **`(site_id, IN_ASN_ID, manifest)`** preserves
-     the within-ASN accumulate while removing the cross-ASN/cross-site collision. Final key TBD David.
+     the within-ASN accumulate while removing the cross-ASN/cross-site collision. **Final key (confirmed
+     David 2026-06-19): `(site_id, IN_ASN_ID, manifest)`** — the upsert existence-check and `DELETE_ASNItem`
+     both key on all three.
 2. ✅ **RESOLVED (David 2026-06-19) — per-ASN status flip, not bulk.** Legacy `UPDATE_ASNStatus 'S'` does
    `UPDATE INV_ASN_MST SET VC_ASN_STATUS='S' WHERE VC_ASN_STATUS='C'` (flips EVERY open ASN at once,
    verified). **Rebuild: flip one ASN at a time, immediately after that individual ASN's 856 send.** Add
@@ -376,10 +378,17 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    unacked-past-threshold alarm, §4). Audit trail of the original send is retained.
 
 **Blocking M2:**
-6. **997 AK9 semantics** — map AK9 group codes (`A`/`E`/`P`/`R`) to distinct statuses and tolerate `AK2/AK3/AK4`
-   detail between AK1 and AK9? (Recommend: yes — the legacy is fragile here.)
-7. **`delSL[4]` exact X12 element + DUNS provenance** — confirm against a real inbound ISA which element it lands
-   on (code index is authoritative), and that `AD_GetSiteTMMDUNS` is the allow-list to migrate to `sites`.
+6. ✅ **RESOLVED (David 2026-06-19) — yes.** Map the AK9 functional-group ack codes (`A` accepted / `E`
+   accepted-with-errors / `P` partial / `R` rejected) to **distinct invoice/ASN statuses**, and **tolerate
+   the optional `AK2/AK3/AK4` transaction-set detail** between `AK1` and `AK9` (the legacy parse is fragile
+   here). The 997 processor records the specific outcome per transaction set rather than a binary
+   accepted/not.
+7. ✅ **RESOLVED (David 2026-06-19) — yes, migrate the DUNS allow-list to `sites`.** The legacy
+   `AD_GetSiteTMMDUNS` allow-list becomes per-site DUNS attributes on the relocated `Inventory.sites` table
+   (consistent with Q4); inbound EDI resolves a file to a site by matching its DUNS against `sites`. **Build-
+   time verification (not a decision):** confirm the exact `delSL[4]` X12 element index against a **real
+   inbound ISA** before relying on it (the code index is authoritative; this is the per-site routing key) —
+   pull a sample inbound file at M2 start (delphi-architect / a captured ISA).
 8. **TIRE order-file logistics omission** — is DUNLOP (`07451`) configured `logistics=none` (intended) or is there
    a part-type code branch skipping logistics? Drives the generator's skip-by-config vs skip-by-rule design.
 9. **`AD_GetSpecialDate` body + status domain** (ALC `TireOrder` DB) — needed for the order forecast-fill calendar
