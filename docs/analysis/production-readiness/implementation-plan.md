@@ -397,8 +397,19 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    → no file. The TIRE/WHEEL branch (line 244/255) only selects the Excel *template*, NOT logistics. **Rebuild
    generator: emit supplier + archive files always; emit the logistics file only when the site/supplier has a
    logistics destination configured** (a Logistics-master / `sites`-driven attribute, not a part-type rule).
-9. **`AD_GetSpecialDate` body + status domain** (ALC `TireOrder` DB) — needed for the order forecast-fill calendar
-   walk; do not re-derive the O/X/holiday rules.
+9. ✅ **RESOLVED (David 2026-06-19) — calendar stays SHARED in VehicleOrder; read it, don't relocate.** Body
+   provided + captured at `docs/analysis/production-calendar/AD_GetSpecialDate-shared.sql`. The production
+   calendar (`AD_GetSpecialDate` + `SpecialDate`/`Line`/`ProductionStatus` + `F_ISO_WEEK_OF_YEAR`) lives in
+   **`VehicleOrder` and is shared across ALL apps** (Inventory, GALC, MES) — so, unlike `sites`, it is **NOT
+   relocated** into Inventory. The rebuild reads it **read-only via a Named Query / cross-DB proc wrapper**.
+   **Architectural rule this sets:** app-specific config (`sites`) moves INTO Inventory; genuinely
+   cross-app shared reference data (the plant calendar) STAYS shared in VehicleOrder. Specifics to honor: the
+   **status domain is data-driven** (`ProductionStatus.ProductionStatus` + `ProductionStatusAbv` — do NOT
+   hardcode O/X/holiday); **line resolution** = a specific `@LineName` returns its line-specific dates UNION
+   the all-lines (`LineID IS NULL`) global dates, blank line returns all; week# via `F_ISO_WEEK_OF_YEAR`
+   (ISO), day# via `DATEPART(DW, date + @@DATEFIRST - 1)`. **Reconcile (M2):** the Inventory `sites`/site-line
+   config must reference the shared `VehicleOrder.Line.LineName` values (the calendar is keyed by LineName) —
+   this scopes Q4's "repoint LINE": the calendar's `Line` table stays shared; only SITE config relocates.
 10. **824 application-advice action** — auto-flag/reject the named ASN, or operator report only?
 11. **EDI ingest trigger + cadence** — Gateway scheduled poll (recommend) vs on-demand; cadence; one shared
     inbound drop fanned out by DUNS vs per-site dirs.
