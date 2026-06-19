@@ -437,14 +437,27 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
     `BIT_ADMIN=1 → Admin`, else `User`. Gate Administration (Sites master, user mgmt) to Admin; operational
     views to User. The finer per-feature permission model (EDI-only / receiving-only operators) is **deferred**
     (future, not M4). Keeps the role design simple for a solo dev.
-13. **First-login password reset** — OK to force every user to set a new password at first Ignition login (we will
-    NOT preserve plaintext)?
-14. **Deployment redundancy** — redundant Ignition gateway pair for prod (recommend for revenue-critical EDI), or
-    single gateway?
-15. **Order calc changes (B §7 C1–C6)** — stay deferred behind sign-off (recommend), build faithful (Option A)?
-16. **Parallel-run soak window** — how long must Ignition produce TEMA-accepted EDI alongside legacy before the
-    transmission hard-cutover? (Recommend ≥2 weeks of clean days.)
-17. **DATAPURGE retention scope + per-site** — keep the legacy 3-table scope or extend; per-site or global policy?
+13. ✅ **RESOLVED (David 2026-06-19) — yes.** No plaintext migration; **force a password reset at first
+    Ignition login.** Seed usernames/roles from `INV_USERS` once; users set a new password on first login
+    (legacy plaintext is discarded, never hashed-in).
+14. ✅ **RESOLVED (David 2026-06-19) — single gateway; redundancy is a transparent infra concern.** Build/plan
+    for a **single gateway**. Redundancy will be discussed with the user/IT separately, but Ignition gateway
+    redundancy is **invisible to the application** — so the app architecture does NOT design around it (no
+    app-level failover logic); it's a deployment decision layered on later without code changes.
+15. 🔶 **EXPANSION PROVIDED — awaiting David's decision (2026-06-19).** The Order calc changes are the
+    Option-B MRP proposals C1–C6 (`docs/analysis/order/option-b.md`). **C1 is a defect fix** (silent ≤200-row
+    truncation → remove cap + warn) tracked separately from the MRP candidates. **C2–C6** are cited MRP
+    modernizations (lead-time offset on the working calendar; statistical safety stock; net-requirements
+    trigger; production-calendar forecast bucketing + firm/forecast split) — each KEEP-PROPOSED, none WONTFIX,
+    all needing sign-off. Spike built **Option A (faithful)**; SC1 parity = 19/20. Decision pending: approve C1
+    (recommended — pure defect, no value change), and stay faithful (defer C2–C6) vs adopt specific ones.
+16. ✅ **RESOLVED (David 2026-06-19) — dev mirror compared over a multi-week timeframe.** Rather than a prod
+    parallel-run only, **run a MIRROR in dev** and compare Ignition output against legacy **over a multi-week
+    window** before the transmission cutover. The comparison harness (the existing parity-diff approach +
+    TEMA-accept checks) runs against the mirror; cutover gated on a clean multi-week comparison.
+17. ✅ **RESOLVED (David 2026-06-19) — per-site retention policy.** DATAPURGE retention is configured/applied
+    **per site** (a `sites` attribute, not a global policy); each site sets its own retention horizon. Keep the
+    legacy table scope for now (extend later if needed); the purge runs site-scoped + transactional (Carry).
 
 ---
 
