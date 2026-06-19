@@ -64,6 +64,7 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 DB Schema/OrderSimulation*.xls
 DB Schema/*.bak
+DB Schema/DailyWorkLog*.csv
 # Real TEMA EDI traffic (830/810/856/…) — never commit
 EDI/*.EDI
 EDIIn/*.EDI
