@@ -389,8 +389,14 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    time verification (not a decision):** confirm the exact `delSL[4]` X12 element index against a **real
    inbound ISA** before relying on it (the code index is authoritative; this is the per-site routing key) —
    pull a sample inbound file at M2 start (delphi-architect / a captured ISA).
-8. **TIRE order-file logistics omission** — is DUNLOP (`07451`) configured `logistics=none` (intended) or is there
-   a part-type code branch skipping logistics? Drives the generator's skip-by-config vs skip-by-rule design.
+8. ✅ **RESOLVED (David 2026-06-19) — skip-by-CONFIG (confirmed in code).** "No logistics" is a valid
+   configured option — the supplier delivers on their own. Verified in `OrderFormCreateF.pas`: the logistics
+   `.ord` file is written only `if lastlogisticsdirectory <> 'NONE'` (lines 111/135/147/301), and
+   `lastlogisticsdirectory` is sourced from `SELECT_PartsStockLogistics.LogisticsDirectory` — **NULL → set to
+   `'NONE'` → no logistics file** (lines 217-222). DUNLOP (`07451`) has no logistics directory → self-deliver
+   → no file. The TIRE/WHEEL branch (line 244/255) only selects the Excel *template*, NOT logistics. **Rebuild
+   generator: emit supplier + archive files always; emit the logistics file only when the site/supplier has a
+   logistics destination configured** (a Logistics-master / `sites`-driven attribute, not a part-type rule).
 9. **`AD_GetSpecialDate` body + status domain** (ALC `TireOrder` DB) — needed for the order forecast-fill calendar
    walk; do not re-derive the O/X/holiday rules.
 10. **824 application-advice action** — auto-flag/reject the named ASN, or operator report only?
