@@ -416,8 +416,21 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
     alarm opens the 824 report detail** (the rejection reason per referenced transaction). Not operator-report-
     only. Reinforces §4 (native alarming) + the home hub gets an alarm indicator/banner; the alarm's
     associated data carries the ASN id + 824 detail so the click navigates straight to the report.
-11. **EDI ingest trigger + cadence** — Gateway scheduled poll (recommend) vs on-demand; cadence; one shared
-    inbound drop fanned out by DUNS vs per-site dirs.
+11. ✅ **RESOLVED (David 2026-06-19) — scheduled gateway poll + DUNS guard; forecast import is per-site
+    auto/manual with a home-hub box.**
+    - **Scheduled gateway poll** (not on-demand). Cadence configurable (TBD interval).
+    - **DUNS guard:** the poller **confirms each inbound file's DUNS matches the gateway's configured site('s)
+      DUNS** before processing; non-matching files are not consumed. (This is how Q7's per-site routing
+      lands — site-scoped processing validated by DUNS, not a blind shared-drop fan-out.)
+    - **Exception — forecast import has a per-site `auto`/`manual` config** (new `sites` attribute,
+      `forecast_import_mode`): **AUTO** = the poll imports the forecast automatically; **MANUAL** = **leave the
+      file in place** and raise a **home-screen alert on the Forecast Import button/box** so the operator runs
+      it manually.
+    - **ADDED SCOPE (David 2026-06-19) — a "Forecast Import" box on the home hub:** shows the **last import
+      date/time**, the manual-run action (in manual mode) + a waiting-file alert, and **raises a staleness
+      alert when ≥ 8 days have elapsed since the last forecast import** (native alarm + the box flags). Folds
+      into §4 alarming + the home hub; `forecast_import_mode` + the last-import timestamp are managed/shown via
+      the Sites master and the hub.
 
 **Blocking M4 / M5:**
 12. **Roles granularity** — Admin/User split enough, or a finer per-feature permission set (EDI-only, receiving-
