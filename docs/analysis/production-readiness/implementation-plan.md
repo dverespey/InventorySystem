@@ -410,7 +410,12 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    (ISO), day# via `DATEPART(DW, date + @@DATEFIRST - 1)`. **Reconcile (M2):** the Inventory `sites`/site-line
    config must reference the shared `VehicleOrder.Line.LineName` values (the calendar is keyed by LineName) —
    this scopes Q4's "repoint LINE": the calendar's `Line` table stays shared; only SITE config relocates.
-10. **824 application-advice action** — auto-flag/reject the named ASN, or operator report only?
+10. ✅ **RESOLVED (David 2026-06-19) — auto-flag rejected + main-screen alarm + click-through to detail.** The
+    824 inbound processor **auto-flags the named ASN as rejected** (a recoverable status flag per D3 — flag,
+    don't delete) and **raises a native Ignition alarm surfaced on the main/home screen**; **clicking the
+    alarm opens the 824 report detail** (the rejection reason per referenced transaction). Not operator-report-
+    only. Reinforces §4 (native alarming) + the home hub gets an alarm indicator/banner; the alarm's
+    associated data carries the ASN id + 824 detail so the click navigates straight to the report.
 11. **EDI ingest trigger + cadence** — Gateway scheduled poll (recommend) vs on-demand; cadence; one shared
     inbound drop fanned out by DUNS vs per-site dirs.
 
