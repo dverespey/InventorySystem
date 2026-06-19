@@ -1,10 +1,16 @@
 # Cutover-Readiness Checkpoint — InventorySystem Delphi → Ignition
 
-**Date:** 2026-06-19  ·  **Status:** 🟢 **Build phase COMPLETE.** The whole live InventorySystem is
-analyzed, rebuilt on Ignition Perspective, shadow-wired to the stock ledger, and parity-closed. What
-remains before production is the **cutover flip** (the parallel-run → live switch), whose plan is fully
-designed and adversarially reviewed; it is gated only on a handful of David go-decisions (below), not on
-more build.
+**Date:** 2026-06-19  ·  **Status:** 🟢 **Build phase COMPLETE + cutover package TURNKEY.** The whole live
+InventorySystem is analyzed, rebuilt on Ignition Perspective, shadow-wired to the stock ledger, and
+parity-closed. David's final 4 cutover go-decisions are made and recorded (§4 — all RESOLVED), and the 3
+SQL artifacts those decisions newly required are built + spike-validated (branch `cutover-artifacts`). What
+remains before production is the **cutover flip** itself (the parallel-run → live switch), whose plan is
+fully designed, adversarially reviewed, and now fully artifact-backed.
+
+**The 3 new cutover SQL artifacts (built + spike-validated 2026-06-19):**
+- `docs/analysis/master-data/spike-partsstockinfo-drop-qty-clause.sql` (Carry 10)
+- `docs/analysis/reporting/priceless-lines-diagnostic.sql` (D6 priceless-lines safety net)
+- `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql` (manifest index DROP + no-overlap trigger)
 
 This is the single "where are we" page. Detail lives in the linked docs.
 
@@ -68,18 +74,50 @@ docs/test-only, reviewed, and mergeable.
 
 ---
 
-## 4. Decisions David still owes before the flip
+## 4. Decisions David made — ✅ ALL 4 RESOLVED (2026-06-19); cutover package is now TURNKEY
 
-1. **Carry 10** — accept dropping the `IN_QTY=@QTY` clause from `UPDATE_PartsStockInfo`, and confirm
-   on-hand is never editable on the rebuilt Parts Stock master.
-2. **Carry 11** — confirm the Order worksheet can never emit an already-shipped/arrived order at commit
-   (else the Order commit path needs a ledger post).
-3. **D6 report procs** — CROSS vs OUTER APPLY for priceless report lines (recommend CROSS); final sign-off
-   on the intended forward-divergence rows + the D6 proc diffs against live data.
-4. **`IX_INV_MANIFEST_COST_MST`** — confirm the prod unique index is the one to drop for the no-overlap
-   model.
+David made the final 4 go-decisions on 2026-06-19. Each is recorded in `cutover-architecture.md` (carry
+sections + the "Items needing David's decision" list) and `cutover-runbook.md` (carries 10/11), and each
+that newly required a SQL artifact has one built + **spike-validated** (evidence below).
+
+1. ✅ **Carry 10 — ACCEPTED.** Drop the `IN_QTY=@QTY` clause from `UPDATE_PartsStockInfo`; on-hand is
+   **NEVER** editable on the rebuilt Parts Stock master (all qty change via a ledger transaction — the
+   seam/ledger is the sole `IN_QTY` owner). `UPDATE_PartsStockInfoCount` is DEAD → retired. The `@QTY`
+   param stays in the signature (now unused) so the rebuilt Save's positional 30-param call is unchanged.
+   **Artifact:** `docs/analysis/master-data/spike-partsstockinfo-drop-qty-clause.sql`.
+   **Spike-validated:** baseline legacy proc moved IN_QTY (part 12: 7382→99999); after the ALTER, passing
+   `@QTY=11111` left IN_QTY at 99999 while VC_COMMENTS + other columns still wrote; `UPDATE_PartsStockInfoCount`
+   confirmed dropped; spike restored to as-found (part 12 → 7382, both procs back).
+2. ✅ **Carry 11 — CLOSED, NO WORK.** The Order worksheet only emits NEW orders for the calculated FUTURE
+   FRS date; an already-shipped/arrived order cannot exist on that future FRS date, so the Order-commit path
+   needs NO ledger post. RESOLVED/closed — not a gap. No artifact (no code change).
+3. ✅ **D6 priceless lines — KEEP CROSS APPLY (all 4 procs) + ADD a pre-invoice diagnostic.** CROSS APPLY is
+   faithful to the legacy inner JOIN and never emits a $0 line to Toyota; the diagnostic surfaces the lines
+   CROSS APPLY would drop so gaps are caught BEFORE billing. **Artifact:**
+   `docs/analysis/reporting/priceless-lines-diagnostic.sql` (`REPORT_EDI810_PricelessLines`).
+   **Spike-validated:** returns 0 on current data; a fabricated out-of-window unbilled line
+   (part 42600F261100 @ 20200101, before its 20250404 window) returned EXACTLY that one line; an in-window
+   control line returned 0 (predicate is selective); fabrication rolled back, diagnostic proc cleaned up.
+4. ✅ **Manifest index — DROP + REPLACE.** Drop `IX_INV_MANIFEST_COST_MST` at cutover (it is a UNIQUE
+   *constraint*, not an index — verified, table is a HEAP) so the rebuilt master can hold multiple windows
+   per part; integrity enforced by the app `checkWindowOverlap` guard + a NEW DB trigger
+   `TRG_ManifestCost_NoOverlap`. **Artifact:**
+   `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql` (pre-drop diagnostic + conditional
+   drop + trigger). **Spike-validated:** pre-drop diagnostic = 0 overlaps; gap-window INSERT succeeds (part
+   holds 2 windows); overlapping AND touching-boundary INSERTs rejected with the THROW; self-update succeeds
+   (no false-reject). Confirmed the existing app-guard test (`test_manifestcost_overlap_guard.py`) fails its
+   `OUTPUT`-without-`INTO` anchor INSERT with the trigger ENABLED (SQL Server restriction) and passes 10/0
+   with the trigger absent — exactly as the artifact's WRITER-COMPAT note documents; trigger cleaned up.
 
 (`UPDATE_PartNumber` keep/audit-by-design — **already decided**.)
+
+**Column-name surprise vs the architecture doc's draft (Artifact 3):** the arch-doc draft's guessed names
+were all CORRECT against the live `INV_MANIFEST_COST_MST` — `IN_MANIFEST_COST_ID` (int IDENTITY),
+`VC_ASSY_PART_NUMBER_CODE` (varchar 12), `VC_START_MANIFEST`/`VC_END_MANIFEST` (varchar 8, yyyymmdd STRING).
+The genuine surprise (already captured in the artifact + arch doc) is structural: there is **NO primary key**
+— the table is a HEAP — and `IX_INV_MANIFEST_COST_MST` is a UNIQUE *CONSTRAINT* on `VC_ASSY_MANIFEST_NUMBER`
+(varchar **2**, the 2-char manifest #), so it drops via `ALTER TABLE … DROP CONSTRAINT`, not `DROP INDEX`.
+The artifact's section B handles both forms defensively.
 
 ---
 

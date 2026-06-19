@@ -159,14 +159,16 @@ non-overlap backstop is a trigger, not a CHECK constraint (a constraint can't se
    `REPORT_MonthlyINVOICESSummary`, `REPORT_EDI810`, `REPORT_EDI856`, replacing the window-blind JOIN with
    the `CROSS APPLY fn_ManifestCostAt(..., a.VC_PRODUCTION_DATE)`. It also drops the hardcoded
    `IN_ASN_EIN=6440` site bug in the EDI856 `@EIN!=0` branch.
-3. **The part-blind UNIQUE index.** Live schema (verified, line 867) has
-   `IX_INV_MANIFEST_COST_MST UNIQUE (VC_ASSY_MANIFEST_NUMBER)` — unique on the **2-char manifest number
-   alone**, NOT on the assy part code. That index does NOT block a part from having multiple price windows
-   (windows are recorded under distinct manifest numbers), so the D6 multi-window correctness does not
-   require dropping it — but the spike already dropped it in the ManifestCost master build. **Decision: at
-   cutover, confirm whether prod still carries it; if the rebuilt ManifestCost master relies on it being
-   gone (it does — it lets a part carry >1 manifest number/window), DROP it.** It is not load-bearing for
-   the report fix; it is load-bearing for the multi-window master. (This is a one-line conditional DROP.)
+3. **The part-blind UNIQUE index — ✅ RESOLVED (David 2026-06-19): DROP + REPLACE.** Live schema
+   (verified, line 867) has `IX_INV_MANIFEST_COST_MST UNIQUE (VC_ASSY_MANIFEST_NUMBER)` — unique on the
+   **2-char manifest number alone**, NOT on the assy part code. **SCHEMA SURPRISE (verified on the spike):
+   this is a UNIQUE NONCLUSTERED *CONSTRAINT* (`CONSTRAINT [IX_INV_MANIFEST_COST_MST] UNIQUE NONCLUSTERED`),
+   NOT a standalone `CREATE INDEX`, and the table has NO primary key — it is a HEAP.** So at cutover it must
+   be dropped with `ALTER TABLE … DROP CONSTRAINT`, not `DROP INDEX`. On the spike it was already dropped in
+   the ManifestCost master build (the table is a pure heap now). At cutover, DROP it (conditionally, handling
+   both the constraint and index forms) so the rebuilt master can hold >1 manifest #/window per part; the
+   real integrity (non-overlap) moves to the trigger below. **Artifact:
+   `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql`** (section B = the conditional drop).
 4. **DB-level non-overlap backstop (the app guard's backstop).** The app guard `checkWindowOverlap` (in
    the ManifestCost master Save action, already built + tested) enforces the gap rule at write. The DB
    backstop must catch a write that bypasses the app (Delphi during parallel run, a manual SQL fix, a
@@ -175,17 +177,24 @@ non-overlap backstop is a trigger, not a CHECK constraint (a constraint can't se
    trigger** on `INV_MANIFEST_COST_MST` that rejects a row overlapping any existing window for the same
    part:
 
+   ✅ **RESOLVED (David 2026-06-19) — built + validated. Artifact:
+   `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql`** (section C). The drafted column
+   names below were GUESSES; **all VERIFIED CORRECT against the live spike**:
+   `IN_MANIFEST_COST_ID` (int IDENTITY, no PK — heap), `VC_ASSY_PART_NUMBER_CODE` (varchar 12),
+   `VC_START_MANIFEST`/`VC_END_MANIFEST` (varchar 8, yyyymmdd STRING compares). Final trigger:
+
    ```
-   CREATE TRIGGER TRG_ManifestCost_NoOverlap ON INV_MANIFEST_COST_MST AFTER INSERT, UPDATE AS
+   CREATE TRIGGER dbo.TRG_ManifestCost_NoOverlap ON dbo.INV_MANIFEST_COST_MST AFTER INSERT, UPDATE AS
    BEGIN
+     SET NOCOUNT ON;
      IF EXISTS (
        SELECT 1 FROM inserted i
-       JOIN INV_MANIFEST_COST_MST m
-         ON m.VC_ASSY_PART_NUMBER_CODE = i.VC_ASSY_PART_NUMBER_CODE
-        AND m.IN_MANIFEST_COST_ID <> i.IN_MANIFEST_COST_ID
-        AND NOT (i.VC_END_MANIFEST < m.VC_START_MANIFEST OR i.VC_START_MANIFEST > m.VC_END_MANIFEST))
+       JOIN dbo.INV_MANIFEST_COST_MST m
+         ON  m.VC_ASSY_PART_NUMBER_CODE = i.VC_ASSY_PART_NUMBER_CODE
+         AND m.IN_MANIFEST_COST_ID     <> i.IN_MANIFEST_COST_ID
+         AND NOT (i.VC_END_MANIFEST < m.VC_START_MANIFEST OR i.VC_START_MANIFEST > m.VC_END_MANIFEST))
      BEGIN
-       ROLLBACK TRAN;
+       ROLLBACK TRANSACTION;
        THROW 50010, 'Manifest cost window overlaps an existing window for this part.', 1;
      END
    END
@@ -193,10 +202,15 @@ non-overlap backstop is a trigger, not a CHECK constraint (a constraint can't se
 
    This is the exact predicate the app guard uses (`NOT (:end < VC_START OR :start > VC_END)`), enforced
    server-side. Because the gap convention means adjacent windows differ by ≥1 day, it never false-rejects
-   a legitimate gap window. Run the **overlap diagnostic** (the query at the bottom of
-   `spike-manifest-cost-lookup.sql`) BEFORE creating the trigger — if it returns rows, existing data
-   already overlaps and the trigger would block future edits of those parts; clean them first (David
-   reviews any hits).
+   a legitimate gap window. The **pre-drop overlap diagnostic** is section A of the artifact (run BEFORE the
+   drop/trigger; returned ZERO rows on the spike — if it returns rows, existing data already overlaps and
+   the trigger would block future edits of those parts; clean them first, David reviews any hits).
+   **WRITER-COMPAT NOTE (verified):** SQL Server forbids `INSERT … OUTPUT inserted.col` (no `INTO`) on a
+   triggered table. The rebuilt master Save is SAFE (it uses `INSERT …; SELECT SCOPE_IDENTITY()`, no OUTPUT);
+   the only OUTPUT-without-INTO writer is the headless `test_manifestcost_overlap_guard.py` anchor INSERT,
+   which pins the predicate independently and runs without the trigger present (it still passes, 10/0/0).
+   Spike validation proved: gap window INSERT succeeds; overlapping + touching INSERT and overlap-UPDATE are
+   rejected with the THROW; a row's own self-update succeeds; a part can hold 2 gap windows.
 5. **Repoint the UI lookup.** `SELECT_ManifestCost` (verified live, line 2006) uses STRICT `>`/`<` bounds
    — it drops the first AND last effective day of every window (latent boundary bug) and is window-blind on
    the list branch. It is **SUPERSEDED, not ported.** Repoint the rebuilt master "price on date D" lookup
@@ -215,9 +229,17 @@ sibling rows. Repointing the UI to the same TVF closes the legacy UI-vs-report d
 procs — that proves the migration is faithful EXCEPT on the intended-divergence rows (boundary days,
 multi-window parts, the dropped 6440 site filter). At cutover those diffs become the production behavior;
 **David must review the proc-parity diff once more against live data** and accept the intended divergences
-(same discipline as the ledger parity classes). Flag: **OUTER vs CROSS APPLY** for priceless lines is a
-domain call (CROSS APPLY drops a line with no covering window, matching the legacy inner JOIN) — recommend
-keeping CROSS APPLY; **confirm with David** whether any report must keep priceless lines.
+(same discipline as the ledger parity classes).
+
+✅ **RESOLVED (David 2026-06-19) — CROSS vs OUTER APPLY for priceless lines: KEEP CROSS APPLY (all 4 procs)
++ ADD a pre-invoice diagnostic.** CROSS APPLY is faithful to the legacy inner JOIN and NEVER emits a $0
+line into the EDI 810/856 to Toyota (a priceless line is dropped, not billed at zero). To prevent a dropped
+line becoming a SILENT under-bill, a pre-invoice diagnostic surfaces the lines CROSS APPLY would drop so
+gaps are caught BEFORE billing. **Artifact: `docs/analysis/reporting/priceless-lines-diagnostic.sql`**
+(OUTER APPLY `fn_ManifestCostAt` + `WHERE m.IN_MANIFEST_COST_ID IS NULL`, scoped to the EDI810 @EIN=0
+filter `a.VC_ASN_STATUS='A' AND d.IN_INV_ID IS NULL`; also wrapped as proc
+`REPORT_EDI810_PricelessLines`). Validated on the spike: 0 on current data; fabricating one out-of-window
+unbilled line made it return exactly that line.
 
 ---
 
@@ -466,13 +488,17 @@ ledger parity harness (`test_stock_ledger_parity.py`) is GREEN with every EXPECT
    *Additive; uncalled until phase C. Rollback: drop procs.*
 5. **Deploy the carry-1 `WRITE_*` write-and-post procs** and the carry-2 `RESERVE_RenbanCount`.
    *Additive; the seams that call them are not yet the live writer. Rollback: drop procs.*
-5b. **Neuter the non-trigger `IN_QTY` writers (carry 10).** `ALTER PROCEDURE UPDATE_PartsStockInfo` to
-   DROP the `IN_QTY=@QTY` clause (master-data edit no longer touches on-hand; the rebuilt Save accepts-and-
-   ignores the now-unused param — no Ignition-side change). Retire `UPDATE_PartsStockInfoCount` (dead, no
-   caller — leave dead or `DROP PROCEDURE`). *Safe pre-window: during parallel run the rebuilt master loads
-   and re-writes the same `@QTY` (no-op-in-effect); after the edit it simply stops moving on-hand. Rollback:
-   re-create from `CreateInventory.sql`. **David flags:** accept the clause drop + confirm the on-hand-
-   override policy (recommend: never editable on the master; qty change only via a ledger transaction).*
+5b. **Neuter the non-trigger `IN_QTY` writers (carry 10) — ✅ RESOLVED (David ACCEPTED 2026-06-19).
+   Artifact: `docs/analysis/master-data/spike-partsstockinfo-drop-qty-clause.sql`.** `ALTER PROCEDURE
+   UPDATE_PartsStockInfo` to DROP the `IN_QTY=@QTY` clause (master-data edit no longer touches on-hand; the
+   `@QTY` param is KEPT in the signature but now unused, so the rebuilt Save's positional 30-param call is
+   unchanged — accepted-and-ignored, no Ignition-side change). Retire `UPDATE_PartsStockInfoCount` (dead, no
+   caller — `DROP PROCEDURE`, guarded). David confirmed: on-hand is NEVER editable on the rebuilt Parts Stock
+   master; all qty change goes through a ledger transaction (the seam/ledger is the sole IN_QTY owner). *Safe
+   pre-window: during parallel run the rebuilt master loads and re-writes the same `@QTY` (no-op-in-effect);
+   after the edit it simply stops moving on-hand. Rollback: re-create both procs from `CreateInventory.sql`.
+   Spike-validated: baseline legacy proc moved IN_QTY (7382→17381); after the ALTER, IN_QTY stays 7382 while
+   other columns (comments) still update; spike restored to as-found.*
 6. **Deploy the seam Project Libraries** (stockLedger, receiving, shipping, reject, stocktaking, order)
    to the gateway, **but do NOT wire any screen to them as the live writer yet.** *Code present, not on
    the hot path. Rollback: revert the project.*
@@ -481,15 +507,23 @@ ledger parity harness (`test_stock_ledger_parity.py`) is GREEN with every EXPECT
    > empty shadow. The system runs exactly as before. **Full rollback = drop the new objects.**
 
 ### Phase B — D6 report cutover + non-overlap backstop (low-risk, reversible)
-7. **Run the overlap diagnostic** (bottom of `spike-manifest-cost-lookup.sql`). Expect ZERO rows. If any,
-   David cleans the overlapping windows before step 9. *Read-only check.*
+7. **Run the pre-drop overlap diagnostic** (section A of
+   `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql`, equivalent to the query at the
+   bottom of `spike-manifest-cost-lookup.sql`). Expect ZERO rows. If any, David cleans the overlapping
+   windows before step 9. *Read-only check (returned 0 on the spike).*
 8. **Apply `spike-report-procs-d6.sql`** → replaces the 4 window-blind report procs with the
-   `CROSS APPLY fn_ManifestCostAt` versions (+ drops the EDI856 6440 site bug). *Rollback: re-create the
-   legacy procs from `CreateInventory.sql`.*
-9. **Conditionally DROP `IX_INV_MANIFEST_COST_MST`** if prod still has it and the rebuilt ManifestCost
-   master needs multi-window-per-part (it does). **Create `TRG_ManifestCost_NoOverlap`** (carry 3). *The
-   trigger only blocks future overlapping writes; existing data already passed step 7. Rollback: drop the
-   trigger; re-create the index.*
+   `CROSS APPLY fn_ManifestCostAt` versions (+ drops the EDI856 6440 site bug). **CROSS APPLY kept on all 4
+   (David 2026-06-19) — never emits a $0 line to Toyota.** Also **apply
+   `docs/analysis/reporting/priceless-lines-diagnostic.sql`** (the pre-invoice safety net,
+   `REPORT_EDI810_PricelessLines`) and wire it as a pre-billing check (expect 0 before each EDI810/856 run).
+   *Rollback: re-create the legacy procs from `CreateInventory.sql`; drop the diagnostic proc.*
+9. **Conditionally DROP `IX_INV_MANIFEST_COST_MST`** (it is a UNIQUE *constraint*, not an index — use
+   `ALTER TABLE … DROP CONSTRAINT`; the artifact's section B handles both forms) and **create
+   `TRG_ManifestCost_NoOverlap`** (carry 3) — both in
+   `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql` (sections B + C). *The trigger only
+   blocks future overlapping writes; existing data already passed step 7. Rollback: drop the trigger;
+   re-create the constraint (`ALTER TABLE … ADD CONSTRAINT IX_INV_MANIFEST_COST_MST UNIQUE NONCLUSTERED
+   (VC_ASSY_MANIFEST_NUMBER)`).*
 10. **Repoint the ManifestCost UI lookup** Named Queries to `fn_ManifestCostAt` (`PriceAtDate`) + a plain
     list NQ (`SelectAll`). *UI-only; rollback: re-point to `SELECT_ManifestCost`.*
 
@@ -534,23 +568,30 @@ ledger parity harness (`test_stock_ledger_parity.py`) is GREEN with every EXPECT
 
 ---
 
-## Items needing David's decision (flagged)
+## Items needing David's decision (flagged) — ✅ ALL RESOLVED (2026-06-19)
 1. ✅ **RESOLVED — `UPDATE_PartNumber` disposition** (carry 5): David decided it STAYS (audit trigger,
    complementary to the ledger, does not move stock). No longer an open item; the seam-test DISABLE is test
    isolation, not a cutover step.
-2. **CROSS vs OUTER APPLY for priceless report lines** (carry 3) — recommend CROSS APPLY (drops a line
-   with no covering window, matching the legacy inner JOIN); confirm no report must keep priceless lines.
+2. ✅ **RESOLVED (David 2026-06-19) — CROSS vs OUTER APPLY for priceless report lines** (carry 3): **KEEP
+   CROSS APPLY on all 4 procs** (faithful to legacy; never emits a $0 line to Toyota) **+ ADD a pre-invoice
+   diagnostic** that surfaces the priceless lines CROSS APPLY drops, so gaps are caught before billing.
+   Artifact: `docs/analysis/reporting/priceless-lines-diagnostic.sql` (validated).
 3. **Final acceptance of the intended-divergence rows** at cutover — note these are now FORWARD-behavior
    divergences only. Per BLOCKER 2's resolution the opening balance copies legacy `IN_QTY` verbatim, so the
    D8(3)/D12#3/F3/F5 classes are FROZEN into the seed (not corrected). Going forward the seams diverge from
    the old triggers (intended); the D6 proc diffs (boundary days, multi-window parts, dropped 6440 filter)
-   become production behavior — review the proc-parity diff once against live data and sign off.
-4. **The conditional `IX_INV_MANIFEST_COST_MST` drop** (carry 3 step 9) — confirm prod's current state and
-   that the rebuilt master relies on the index being gone.
-5. **NEW (carry 10) — `UPDATE_PartsStockInfo` qty-leg neuter + on-hand-override policy.** Accept dropping
-   the `IN_QTY=@QTY` clause (recommended; master-data edit, not a stock move) and confirm on-hand is NEVER
-   editable on the PartsStock master (all qty change via a ledger transaction). `UPDATE_PartsStockInfoCount`
-   is dead (no caller) → retired; not a 5th producer.
-6. **NEW (carry 11) — Order-commit ledger gap.** Confirm the Order worksheet can never emit an order
-   already stamped shipped/arrived at creation (effect-0 today). If it can, route those inserts through the
-   receiving seam / add a conditional `stockLedger.post()`. Low likelihood; verify before the window.
+   become production behavior — review the proc-parity diff once against live data and sign off. *(Standing
+   sign-off review, not an open design decision.)*
+4. ✅ **RESOLVED (David 2026-06-19) — the `IX_INV_MANIFEST_COST_MST` drop** (carry 3 step 9): **DROP +
+   REPLACE.** Drop at cutover (it is a UNIQUE *constraint*, not an index — verified) so the rebuilt master
+   can hold multiple windows/part; integrity moves to the app `checkWindowOverlap` guard + the new
+   `TRG_ManifestCost_NoOverlap`. Artifact: `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql`
+   (validated; pre-drop diagnostic returned 0).
+5. ✅ **RESOLVED (David ACCEPTED 2026-06-19) — `UPDATE_PartsStockInfo` qty-leg neuter + on-hand-override
+   policy** (carry 10): drop the `IN_QTY=@QTY` clause; on-hand is NEVER editable on the PartsStock master
+   (all qty change via a ledger transaction). `UPDATE_PartsStockInfoCount` is dead → retired; not a 5th
+   producer. Artifact: `docs/analysis/master-data/spike-partsstockinfo-drop-qty-clause.sql` (validated).
+6. ✅ **RESOLVED/CLOSED (David 2026-06-19) — Order-commit ledger "gap"** (carry 11): **NO WORK — not a gap.**
+   The Order worksheet only emits NEW orders for the calculated FUTURE FRS date; an already-shipped/arrived
+   order cannot exist in the system on that future FRS date, so the Order-commit path needs NO ledger post.
+   The effect-0-at-creation assumption holds by construction. Marked closed; no conditional `stockLedger.post()`.

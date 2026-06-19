@@ -20,12 +20,34 @@ single stored proc per op, or thread a gateway `txId` through `stockLedger.post`
 write that races under concurrent order-creates (two specialists → duplicate renbans). Mirrors the legacy.
 **Fix at cutover:** atomic counter allocation (an `UPDATE … OUTPUT` that reserves N values, or a sequence).
 
-## 3. D6 report-proc cutover apply
+## 3. D6 report-proc cutover apply  — ✅ DECISIONS RESOLVED (David 2026-06-19)
 `docs/analysis/reporting/spike-report-procs-d6.sql` is the CUTOVER artifact — it REPLACES the legacy
 window-blind `REPORT_INVOICESSummary / MonthlyINVOICESSummary / EDI810 / EDI856`. Not applied to the spike
 (legacy kept as the parity baseline). **At cutover:** apply it; confirm the manifest unique-index is
-dropped (done in spike) and add the **DB-level non-overlapping-window constraint** as the backstop to the
+dropped and add the **DB-level non-overlapping-window trigger** as the backstop to the
 app guard (§4). `SELECT_ManifestCost` (UI lookup) is SUPERSEDED by `fn_ManifestCostAt` — repoint the UI.
+
+> ✅ **RESOLVED (David 2026-06-19) — priceless lines: KEEP CROSS APPLY (all 4 procs) + ADD a pre-invoice
+> diagnostic.** CROSS APPLY is faithful to the legacy inner JOIN and never emits a $0 line into the EDI
+> 810/856 to Toyota (a priceless line is DROPPED, not billed at zero). To stop a dropped line becoming a
+> silent under-bill, run a pre-invoice diagnostic that surfaces exactly the lines CROSS APPLY would drop.
+> **Artifact: `docs/analysis/reporting/priceless-lines-diagnostic.sql`** (`REPORT_EDI810_PricelessLines`;
+> OUTER APPLY `fn_ManifestCostAt` + `WHERE m.IN_MANIFEST_COST_ID IS NULL`, scoped to EDI810's
+> `VC_ASN_STATUS='A' AND IN_INV_ID IS NULL`). Spike-validated: 0 on current data; a fabricated out-of-window
+> unbilled line returned exactly that line; an in-window control returned 0. **Wire it as a pre-billing
+> check (expect 0 before each EDI810/856 run).**
+
+> ✅ **RESOLVED (David 2026-06-19) — manifest index: DROP + REPLACE.** Drop `IX_INV_MANIFEST_COST_MST`
+> (verified: a UNIQUE *constraint* on `VC_ASSY_MANIFEST_NUMBER`, varchar 2 — the table is a HEAP, no PK —
+> so it drops via `ALTER TABLE … DROP CONSTRAINT`, not `DROP INDEX`) so the rebuilt master can hold multiple
+> windows per part; integrity moves to the app `checkWindowOverlap` guard + a new DB trigger
+> `TRG_ManifestCost_NoOverlap`. A pre-drop overlap diagnostic flags existing overlaps to clean first.
+> **Artifact: `docs/analysis/master-data/spike-manifestcost-nooverlap-trigger.sql`** (section A diagnostic,
+> section B conditional drop, section C trigger). Spike-validated: pre-drop diagnostic = 0; gap-window INSERT
+> succeeds; overlapping + touching-boundary INSERTs rejected with the THROW; self-update succeeds. WRITER
+> note: a direct writer using `OUTPUT inserted.*` WITHOUT `INTO` is forbidden on a triggered table (verified
+> — the existing `test_manifestcost_overlap_guard.py` anchor INSERT hits this; it runs without the trigger
+> present and the rebuilt master Save uses `SCOPE_IDENTITY`, so it is safe).
 
 ## 4. Opening-balance backfill  (the parity closure)
 Run `stockLedger.seedAllOpeningBalances()` (set-based `SEED_AllOpeningBalances`) ONCE at cutover, **before
@@ -150,7 +172,17 @@ Pre-D9 spec PROSE carries stale claims vs the live dump (e.g. `shipping.md` §2 
 DB HAS `FK_INV_PART_SHIPPING_INF_INV_SHIPPING_INF`; the manifest unique-index framing). The live-truth gate
 catches these at build, but fix-on-touch (or a one-pass sweep) keeps the specs trustworthy.
 
-## 10. NEW — neuter `UPDATE_PartsStockInfo` qty leg + retire `UPDATE_PartsStockInfoCount`  (SHOULD-FIX 3 / 4th-5th-writer hunt)
+## 10. ✅ RESOLVED (David ACCEPTED 2026-06-19) — neuter `UPDATE_PartsStockInfo` qty leg + retire `UPDATE_PartsStockInfoCount`  (SHOULD-FIX 3 / 4th-5th-writer hunt)
+
+> ✅ **RESOLVED (David ACCEPTED 2026-06-19). Artifact:
+> `docs/analysis/master-data/spike-partsstockinfo-drop-qty-clause.sql` (built + spike-validated).**
+> Drop the `IN_QTY=@QTY` clause from `UPDATE_PartsStockInfo` (the `@QTY` param is KEPT in the signature but
+> now unused — the rebuilt Save's positional 30-param call is unchanged); on-hand is **NEVER editable** on
+> the rebuilt Parts Stock master (all qty change via a ledger transaction). `UPDATE_PartsStockInfoCount` is
+> DEAD (zero callers) → **retired (`DROP PROCEDURE`, guarded).** Spike validation: legacy proc moved IN_QTY
+> (7382→17381); after the ALTER, IN_QTY stayed 7382 while other columns still updated; spike restored
+> to as-found.
+
 After the seams own `IN_QTY` (Phase C), any path still doing a direct, non-ledger `IN_QTY` write to
 `INV_PARTS_STOCK_MST` desyncs the materialized balance from `SUM(ledger)` — a lost update with no ledger
 row. The 5b triage found exactly two such procs:
@@ -181,14 +213,15 @@ row. The 5b triage found exactly two such procs:
 > ledger producer — `UPDATE_PartsStockInfoCount` is dead and `UPDATE_PartsStockInfo`'s qty leg is removed,
 > not ledgered.
 
-## 11. NEW — Order-commit posts nothing to the ledger (latent gap if a counted order is ever created)  (NIT 6)
+## 11. ✅ RESOLVED / CLOSED — Order-commit posts nothing to the ledger (NOT a gap)  (NIT 6, David 2026-06-19)
 `order.commitOrders` inserts open-order rows (`INSERT_OpenOrder`) + advances the renban counter but **never
-calls `stockLedger.post()`**. Correct TODAY: a freshly created order is un-shipped/un-arrived (effect 0),
-and the legacy `INSERT_RecConfStatPartsStockMstQTY` trigger also moves 0. The exposure: if the worksheet
-could ever emit an order **already stamped shipped/arrived** (a back-dated entry), the legacy trigger would
-move stock but the rebuilt Order path would not (triggers dropped, no ledger post in this path) — a silent
-gap. The `receiving` seam (`insertOpenOrder`) DOES post; the Order worksheet-commit path does not.
-**ACTION (pre-window verification):** confirm the worksheet can never emit a counted order; if it can,
-route those inserts through the receiving seam (or add a conditional `stockLedger.post()` for the
-shipped/arrived case). Low likelihood — **flag to David** to confirm worksheet orders are always
-effect-0 at creation.
+calls `stockLedger.post()`**. The concern was: if the worksheet could ever emit an order **already stamped
+shipped/arrived** at creation, the legacy `INSERT_RecConfStatPartsStockMstQTY` trigger would move stock but
+the rebuilt Order path would not (triggers dropped, no ledger post in this path) — a silent gap.
+
+> ✅ **RESOLVED — CLOSED, NO WORK (David 2026-06-19).** The Order worksheet only emits NEW orders for the
+> **calculated FUTURE FRS date**. An already-shipped/arrived order **cannot exist in the system on that
+> future FRS date** — so a worksheet-committed order is always effect-0 at creation by construction. The
+> Order-commit path therefore needs **NO ledger post**, and no conditional `stockLedger.post()` is added.
+> This is **RESOLVED/closed, not a gap.** (`order.commitOrders` correctly posts nothing; the receiving seam
+> remains the producer for the later arrival/confirm of that order.)
