@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en" data-theme="a">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inventory — Landing page concepts</title>
+<!--
+  DESIGN MOCKUP (not production code). Three theme directions for the
+  Ignition Perspective landing page. Flip themes with the top toolbar.
+  The whole UI is driven by CSS variables under [data-theme="a|b|c"],
+  mirroring how a Perspective theme (Neutrals / Primary / Functional)
+  carries through every view. Inner forms would reuse the same variables.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* ---------- THEME A : Clean Light (modern office SaaS) ---------- */
+[data-theme="a"]{
+  --bg:#F5F7FB; --surface:#FFFFFF; --surface-2:#F0F4FA; --surface-hover:#F6F9FE;
+  --border:#E3E9F2; --border-strong:#D2DBE8;
+  --text:#0E1B2E; --text-muted:#64748B; --text-faint:#94A3B8;
+  --primary:#1E5BBF; --primary-contrast:#FFFFFF; --primary-soft:#E9F1FD; --primary-strong:#174AA0;
+  --success:#16A34A; --warning:#D97706; --danger:#DC2626; --info:#2563EB;
+  --radius:12px; --radius-sm:9px;
+  --shadow:0 1px 2px rgba(15,27,46,.05), 0 2px 8px rgba(15,27,46,.05);
+  --shadow-hover:0 2px 6px rgba(15,27,46,.08), 0 8px 20px rgba(15,27,46,.10);
+  --ring:rgba(30,91,191,.30);
+  --theme-name:"Clean Light";
+}
+/* ---------- THEME B : Industrial Dark (control-room / floor) ---------- */
+[data-theme="b"]{
+  --bg:#0A111F; --surface:#121C2E; --surface-2:#1A2740; --surface-hover:#1E2D49;
+  --border:#243049; --border-strong:#33425F;
+  --text:#E7EEF9; --text-muted:#93A2BC; --text-faint:#647189;
+  --primary:#2DD4BF; --primary-contrast:#06241F; --primary-soft:#10322E; --primary-strong:#27BBA9;
+  --success:#34D399; --warning:#FBBF24; --danger:#F87171; --info:#60A5FA;
+  --radius:12px; --radius-sm:9px;
+  --shadow:0 1px 0 rgba(255,255,255,.02), 0 6px 18px rgba(0,0,0,.35);
+  --shadow-hover:0 0 0 1px var(--primary), 0 10px 26px rgba(0,0,0,.45);
+  --ring:rgba(45,212,191,.40);
+  --theme-name:"Industrial Dark";
+}
+/* ---------- THEME C : High-Performance HMI (ISA-101 neutral) ---------- */
+[data-theme="c"]{
+  --bg:#C7CBCF; --surface:#DFE2E5; --surface-2:#D2D6DA; --surface-hover:#E7EAEC;
+  --border:#AEB4BA; --border-strong:#9AA1A8;
+  --text:#1E2429; --text-muted:#566069; --text-faint:#79828B;
+  --primary:#3D6E8E; --primary-contrast:#FFFFFF; --primary-soft:#CBD7DF; --primary-strong:#335E79;
+  --success:#2E7D32; --warning:#F57C00; --danger:#D32F2F; --info:#1976D2;
+  --radius:4px; --radius-sm:3px;
+  --shadow:none;
+  --shadow-hover:0 0 0 2px var(--primary);
+  --ring:rgba(61,110,142,.45);
+  --theme-name:"HP-HMI (ISA-101)";
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased;
+  transition:background .18s ease, color .18s ease;
+}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* ---------- mockup chrome (not part of the app) ---------- */
+.chrome{
+  position:sticky; top:0; z-index:50; display:flex; align-items:center; gap:14px;
+  padding:8px 18px; background:#0b0b0c; color:#e8e8ea; border-bottom:1px solid #000;
+  font-size:12px;
+}
+.chrome b{font-weight:600; letter-spacing:.2px}
+.chrome .seg{display:flex; gap:4px; background:#1c1c1f; padding:3px; border-radius:8px}
+.chrome .seg button{
+  font:inherit; cursor:pointer; border:0; color:#b9b9bd; background:transparent;
+  padding:6px 12px; border-radius:6px; transition:.15s;
+}
+.chrome .seg button:hover{color:#fff}
+.chrome .seg button.on{background:#3a3a40; color:#fff}
+.chrome .spacer{flex:1}
+.chrome .hint{color:#8a8a90}
+
+/* ---------- app shell ---------- */
+.app{max-width:1240px; margin:0 auto; padding:0 24px 56px}
+
+/* top bar */
+.topbar{
+  display:flex; align-items:center; gap:16px; padding:16px 0 18px;
+}
+.brand{display:flex; align-items:center; gap:11px; min-width:max-content}
+.logo{
+  width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
+  background:var(--primary); color:var(--primary-contrast);
+  font-weight:700; font-size:15px; letter-spacing:.5px; flex:none;
+}
+[data-theme="c"] .logo{border-radius:4px}
+.brand .name{font-weight:700; font-size:16px; line-height:1.1}
+.brand .sub{font-size:11px; color:var(--text-muted); letter-spacing:.3px}
+
+.site{
+  display:flex; align-items:center; gap:8px; margin-left:6px;
+  padding:8px 13px; background:var(--surface); border:1px solid var(--border);
+  border-radius:999px; cursor:pointer; font-weight:500; box-shadow:var(--shadow);
+}
+[data-theme="c"] .site{border-radius:4px}
+.site .dot{width:7px; height:7px; border-radius:50%; background:var(--success)}
+.site small{color:var(--text-muted); font-weight:400}
+.site .chev{color:var(--text-muted)}
+
+.spacer{flex:1}
+
+.search{
+  display:flex; align-items:center; gap:8px; width:248px; max-width:30vw;
+  padding:9px 13px; background:var(--surface); border:1px solid var(--border);
+  border-radius:10px; color:var(--text-faint); box-shadow:var(--shadow);
+}
+[data-theme="c"] .search{border-radius:4px}
+.search input{border:0; background:transparent; outline:none; color:var(--text); font:inherit; width:100%}
+.search input::placeholder{color:var(--text-faint)}
+
+.iconbtn{
+  width:38px; height:38px; display:grid; place-items:center; cursor:pointer;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  color:var(--text-muted); box-shadow:var(--shadow); position:relative;
+}
+[data-theme="c"] .iconbtn{border-radius:4px}
+.iconbtn:hover{color:var(--text); border-color:var(--border-strong)}
+.badge{
+  position:absolute; top:-5px; right:-5px; min-width:17px; height:17px; padding:0 4px;
+  border-radius:9px; background:var(--danger); color:#fff; font-size:10px; font-weight:700;
+  display:grid; place-items:center; border:2px solid var(--bg);
+}
+.avatar{
+  width:38px; height:38px; border-radius:50%; display:grid; place-items:center;
+  background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+  font-weight:600; cursor:pointer;
+}
+
+/* context line */
+.context{display:flex; align-items:baseline; gap:12px; margin:6px 2px 18px}
+.context h1{margin:0; font-size:21px; font-weight:700; letter-spacing:-.2px}
+.context .meta{color:var(--text-muted); font-size:13px}
+
+/* KPI strip */
+.kpis{display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:22px}
+.kpi{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:15px 16px; box-shadow:var(--shadow); transition:.15s;
+}
+.kpi .k-label{font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:7px; font-weight:500}
+.kpi .k-num{font-size:28px; font-weight:700; margin:8px 0 4px; letter-spacing:-.5px; line-height:1}
+.kpi .k-foot{font-size:11.5px; color:var(--text-faint)}
+.kpi .k-foot.warn{color:var(--warning); font-weight:600}
+.kpi .k-foot.bad{color:var(--danger); font-weight:600}
+.kpi.alert{border-color:color-mix(in srgb, var(--danger) 45%, var(--border))}
+.k-tick{width:8px; height:8px; border-radius:2px; background:var(--text-faint)}
+.k-tick.ok{background:var(--success)} .k-tick.warn{background:var(--warning)} .k-tick.bad{background:var(--danger)} .k-tick.info{background:var(--info)}
+
+/* two-column body */
+.body{display:grid; grid-template-columns:1fr 320px; gap:22px; align-items:start}
+.section-h{display:flex; align-items:center; justify-content:space-between; margin:2px 2px 12px}
+.section-h h2{margin:0; font-size:13px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--text-muted)}
+.section-h a{color:var(--primary); text-decoration:none; font-size:12.5px; font-weight:600}
+
+/* module grid */
+.modules{display:grid; grid-template-columns:repeat(3,1fr); gap:14px}
+.mcard{
+  display:flex; flex-direction:column; gap:11px; padding:17px;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); cursor:pointer; transition:.15s; text-decoration:none; color:inherit;
+}
+.mcard:hover{box-shadow:var(--shadow-hover); border-color:var(--border-strong); transform:translateY(-1px)}
+[data-theme="c"] .mcard:hover{transform:none}
+.mc-ico{
+  width:40px; height:40px; border-radius:10px; display:grid; place-items:center;
+  background:var(--primary-soft); color:var(--primary); flex:none;
+}
+[data-theme="c"] .mc-ico{border-radius:4px}
+.mc-ico svg{width:21px; height:21px; stroke:currentColor; stroke-width:1.8; fill:none}
+.mc-title{font-weight:600; font-size:14.5px}
+.mc-desc{font-size:12.5px; color:var(--text-muted); line-height:1.4}
+.mc-status{display:flex; align-items:center; gap:7px; font-size:11.5px; margin-top:auto; padding-top:4px; color:var(--text-faint)}
+.mc-status .pill{
+  display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:999px;
+  font-weight:600; font-size:11px;
+}
+[data-theme="c"] .mc-status .pill{border-radius:3px}
+.pill.bad{background:color-mix(in srgb,var(--danger) 14%,transparent); color:var(--danger)}
+.pill.warn{background:color-mix(in srgb,var(--warning) 16%,transparent); color:var(--warning)}
+.pill.ok{background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success)}
+
+/* attention rail */
+.rail{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:var(--shadow); overflow:hidden;
+}
+.rail .rail-h{padding:14px 16px; border-bottom:1px solid var(--border); font-weight:600; font-size:13px; display:flex; align-items:center; gap:8px}
+.rail .rail-h .count{margin-left:auto; font-size:11px; color:var(--text-muted); background:var(--surface-2); padding:2px 8px; border-radius:999px}
+.attn{display:flex; gap:11px; padding:13px 16px; border-bottom:1px solid var(--border); cursor:pointer; transition:.12s}
+.attn:last-child{border-bottom:0}
+.attn:hover{background:var(--surface-hover)}
+.attn .lvl{width:8px; height:8px; border-radius:50%; margin-top:6px; flex:none}
+.lvl.bad{background:var(--danger)} .lvl.warn{background:var(--warning)} .lvl.info{background:var(--info)} .lvl.ok{background:var(--success)}
+.attn .a-body{flex:1; min-width:0}
+.attn .a-title{font-size:13px; font-weight:500}
+.attn .a-meta{font-size:11.5px; color:var(--text-faint); margin-top:2px}
+.rail .rail-f{padding:11px 16px; text-align:center}
+.rail .rail-f a{color:var(--primary); text-decoration:none; font-weight:600; font-size:12.5px}
+
+/* footer */
+.foot{display:flex; gap:8px; align-items:center; margin-top:30px; padding-top:16px; border-top:1px solid var(--border); color:var(--text-faint); font-size:12px}
+.foot .sep{opacity:.5}
+.foot .tname{margin-left:auto; font-weight:600; color:var(--text-muted)}
+
+@media (max-width:980px){
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .body{grid-template-columns:1fr}
+  .modules{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+
+<!-- mockup toolbar -->
+<div class="chrome">
+  <b>Landing concepts</b>
+  <div class="seg" id="seg">
+    <button data-t="a" class="on">A · Clean Light</button>
+    <button data-t="b">B · Industrial Dark</button>
+    <button data-t="c">C · HP-HMI</button>
+  </div>
+  <div class="spacer"></div>
+  <span class="hint">Same layout, three Perspective themes — the palette carries through to every form.</span>
+</div>
+
+<div class="app">
+
+  <!-- top bar -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">TT</div>
+      <div>
+        <div class="name">Inventory</div>
+        <div class="sub">Supply &amp; EDI</div>
+      </div>
+    </div>
+
+    <div class="site" title="Switch site (multi-site)">
+      <span class="dot"></span>
+      <span>Tupelo, MS</span>
+      <small>· TT</small>
+      <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+
+    <div class="spacer"></div>
+
+    <label class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input placeholder="Search parts, orders, ASNs…">
+    </label>
+
+    <div class="iconbtn" title="Notifications">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      <span class="badge">4</span>
+    </div>
+    <div class="avatar" title="David">DV</div>
+  </div>
+
+  <!-- context line -->
+  <div class="context">
+    <h1>Home</h1>
+    <span class="meta">Thursday, June 18 · day shift · 4 items need attention</span>
+  </div>
+
+  <!-- KPI strip -->
+  <div class="kpis">
+    <div class="kpi">
+      <div class="k-label"><span class="k-tick info"></span>Open orders</div>
+      <div class="k-num mono">42</div>
+      <div class="k-foot">8 lot-sized · 5 renban</div>
+    </div>
+    <div class="kpi">
+      <div class="k-label"><span class="k-tick warn"></span>ASNs due today</div>
+      <div class="k-num mono">7</div>
+      <div class="k-foot warn">2 due before 10:00</div>
+    </div>
+    <div class="kpi">
+      <div class="k-label"><span class="k-tick ok"></span>Receipts pending</div>
+      <div class="k-num mono">5</div>
+      <div class="k-foot">3 expected today</div>
+    </div>
+    <div class="kpi alert">
+      <div class="k-label"><span class="k-tick bad"></span>Short parts</div>
+      <div class="k-num mono">3</div>
+      <div class="k-foot bad">vs. renban demand</div>
+    </div>
+    <div class="kpi alert">
+      <div class="k-label"><span class="k-tick bad"></span>EDI errors</div>
+      <div class="k-num mono">1</div>
+      <div class="k-foot bad">810 rejected · TMMTX</div>
+    </div>
+  </div>
+
+  <!-- body: modules + attention rail -->
+  <div class="body">
+    <div>
+      <div class="section-h">
+        <h2>Modules</h2>
+        <a href="#">Customize ›</a>
+      </div>
+      <div class="modules">
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h6"/></svg></div>
+          <div>
+            <div class="mc-title">Orders &amp; Renban</div>
+            <div class="mc-desc">Renban worksheet, lot sizing, releases</div>
+          </div>
+          <div class="mc-status"><span class="pill warn">5 to release</span></div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M1 3h13v13H1z"/><path d="M14 8h4l3 3v5h-7"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg></div>
+          <div>
+            <div class="mc-title">Shipping &amp; ASN</div>
+            <div class="mc-desc">Build shipments, EDI 856 advance notices</div>
+          </div>
+          <div class="mc-status"><span class="pill warn">7 due</span></div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M7.5 10.5L12 13l4.5-2.5M12 13v8"/></svg></div>
+          <div>
+            <div class="mc-title">Receiving</div>
+            <div class="mc-desc">Confirm receipts, status &amp; discrepancies</div>
+          </div>
+          <div class="mc-status"><span class="pill ok">5 pending</span></div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+          <div>
+            <div class="mc-title">Stocktaking</div>
+            <div class="mc-desc">Cycle counts, variance approval</div>
+          </div>
+          <div class="mc-status"><span class="pill bad">4 variances</span></div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg></div>
+          <div>
+            <div class="mc-title">Forecast</div>
+            <div class="mc-desc">Demand breakdown &amp; planning horizon</div>
+          </div>
+          <div class="mc-status">Updated 06:00</div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></div>
+          <div>
+            <div class="mc-title">Master Data</div>
+            <div class="mc-desc">Suppliers, sizes, logistics, parts, costs</div>
+          </div>
+          <div class="mc-status">7 datasets</div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg></div>
+          <div>
+            <div class="mc-title">Invoicing &amp; EDI</div>
+            <div class="mc-desc">EDI 810 invoices, uploads &amp; acks</div>
+          </div>
+          <div class="mc-status"><span class="pill bad">1 rejected</span></div>
+        </a>
+
+        <a class="mcard" href="#">
+          <div class="mc-ico"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="7"/><rect x="12.5" y="7" width="3" height="11"/><rect x="18" y="13" width="3" height="5"/></svg></div>
+          <div>
+            <div class="mc-title">Reports</div>
+            <div class="mc-desc">Inventory, ledger &amp; shipment reports</div>
+          </div>
+          <div class="mc-status">23 saved</div>
+        </a>
+
+      </div>
+    </div>
+
+    <!-- attention rail -->
+    <div class="rail">
+      <div class="rail-h">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        Needs attention
+        <span class="count">4</span>
+      </div>
+      <div class="attn">
+        <span class="lvl bad"></span>
+        <div class="a-body">
+          <div class="a-title">EDI 810 rejected — TMMTX</div>
+          <div class="a-meta">Inv #A-20614 · 9:14a · open</div>
+        </div>
+      </div>
+      <div class="attn">
+        <span class="lvl bad"></span>
+        <div class="a-body">
+          <div class="a-title">3 parts short vs. renban demand</div>
+          <div class="a-meta">Tupelo · review &amp; expedite</div>
+        </div>
+      </div>
+      <div class="attn">
+        <span class="lvl warn"></span>
+        <div class="a-body">
+          <div class="a-title">2 ASNs due before 10:00</div>
+          <div class="a-meta">Shipping · build &amp; transmit</div>
+        </div>
+      </div>
+      <div class="attn">
+        <span class="lvl info"></span>
+        <div class="a-body">
+          <div class="a-title">Stocktake variances to approve</div>
+          <div class="a-meta">4 lines · cycle count #338</div>
+        </div>
+      </div>
+      <div class="rail-f"><a href="#">View all activity ›</a></div>
+    </div>
+
+  </div>
+
+  <!-- footer -->
+  <div class="foot">
+    <span>Inventory</span><span class="sep">·</span>
+    <span>Tupelo, MS (TT)</span><span class="sep">·</span>
+    <span>v0.9-dev</span><span class="sep">·</span>
+    <span>Ignition Perspective</span>
+    <span class="tname" id="tname">Theme: Clean Light</span>
+  </div>
+
+</div>
+
+<script>
+  var seg = document.getElementById('seg');
+  var html = document.documentElement;
+  var tname = document.getElementById('tname');
+  var names = {a:'Clean Light', b:'Industrial Dark', c:'HP-HMI (ISA-101)'};
+  seg.addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    var t = b.getAttribute('data-t');
+    html.setAttribute('data-theme', t);
+    tname.textContent = 'Theme: ' + names[t];
+    [].forEach.call(seg.children, function(x){ x.classList.toggle('on', x===b); });
+  });
+</script>
+</body>
+</html>

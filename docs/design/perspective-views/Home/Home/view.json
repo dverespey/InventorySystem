@@ -1,0 +1,2342 @@
+{
+  "custom": {
+    "kpi": {
+      "openOrders_num": "",
+      "openOrders_foot": "",
+      "asns_num": "",
+      "asns_foot": "",
+      "shipments_num": "",
+      "partsShort_num": "",
+      "partsShort_foot": "",
+      "stocktake_num": "",
+      "rail_short_title": "",
+      "rail_short_meta": "",
+      "rail_belowlot_title": "",
+      "rail_belowlot_meta": "",
+      "rail_stocktake_title": "",
+      "rail_stocktake_meta": "",
+      "mod_orders": "",
+      "mod_shipasn": "",
+      "mod_stock": "",
+      "mod_master": ""
+    }
+  },
+  "params": {},
+  "propConfig": {
+    "custom.kpi": {
+      "binding": {
+        "type": "expr",
+        "config": {
+          "expression": "now(60000)"
+        },
+        "transforms": [
+          {
+            "type": "script",
+            "code": "\tsystem.util.getLogger(\"KPI\").info(\"Home KPI load via runNamedQuery\")\n\tdata = system.db.runNamedQuery(\"Home/kpiSummary\", {})\n\ttop  = system.db.runNamedQuery(\"Home/kpiTopShort\", {})\n\tdef g(col): return int(data.getValueAt(0, col))\n\topenOrders=g(\"OpenOrders\"); openSuppliers=g(\"OpenSuppliers\"); asns=g(\"ActiveAsns\")\n\tasnLines=g(\"AsnLines\"); shipments=g(\"Shipments\"); partsTotal=g(\"PartsTotal\")\n\tpartsShort=g(\"PartsShort\"); belowLot=g(\"PartsBelowLot\"); stocktake=g(\"StocktakeEntries\"); suppliers=g(\"Suppliers\")\n\ttopShort = (\"%s (qty %d)\" % (top.getValueAt(0,\"PartName\"), int(top.getValueAt(0,\"Qty\")))) if top.rowCount else \"none\"\n\tdef c(n): return \"{:,}\".format(n)\n\treturn {\n\t\t\"openOrders_num\": c(openOrders), \"openOrders_foot\": \"across %d suppliers\" % openSuppliers,\n\t\t\"asns_num\": c(asns), \"asns_foot\": \"%s ASN lines\" % c(asnLines),\n\t\t\"shipments_num\": c(shipments),\n\t\t\"partsShort_num\": c(partsShort), \"partsShort_foot\": \"of %d parts tracked\" % partsTotal,\n\t\t\"stocktake_num\": c(stocktake),\n\t\t\"rail_short_title\": \"%d parts at/below zero stock\" % partsShort, \"rail_short_meta\": \"Lowest: %s\" % topShort,\n\t\t\"rail_belowlot_title\": \"%d parts below one lot\" % belowLot, \"rail_belowlot_meta\": \"Master Data - review reorder\",\n\t\t\"rail_stocktake_title\": \"%d stocktake entries to review\" % stocktake, \"rail_stocktake_meta\": \"Stocktaking - cycle counts\",\n\t\t\"mod_orders\": \"%s open\" % c(openOrders), \"mod_shipasn\": \"%s ASNs\" % c(asns),\n\t\t\"mod_stock\": \"%d entries\" % stocktake, \"mod_master\": \"%d parts - %d suppliers\" % (partsTotal, suppliers),\n\t}\n"
+          }
+        ]
+      }
+    }
+  },
+  "props": {
+    "defaultSize": {
+      "width": 1300,
+      "height": 1000
+    }
+  },
+  "root": {
+    "type": "ia.container.flex",
+    "meta": {
+      "name": "root",
+      "domId": "home-root"
+    },
+    "props": {
+      "direction": "column",
+      "gap": 22,
+      "style": {
+        "backgroundColor": "var(--tai-bg)",
+        "padding": "8px 24px 40px",
+        "minHeight": "100%"
+      }
+    },
+    "children": [
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "topbar"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 16,
+          "alignItems": "center",
+          "style": {
+            "padding": "16px 0 18px"
+          }
+        },
+        "children": [
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "brand"
+            },
+            "props": {
+              "direction": "row",
+              "gap": 12,
+              "alignItems": "center"
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "logo"
+                },
+                "props": {
+                  "direction": "column",
+                  "justify": "center",
+                  "alignItems": "center",
+                  "style": {
+                    "backgroundColor": "var(--tai-accent)",
+                    "borderRadius": "10px",
+                    "width": "38px",
+                    "height": "38px"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "mark"
+                    },
+                    "props": {
+                      "text": "TT",
+                      "style": {
+                        "color": "var(--tai-on-accent)",
+                        "fontWeight": "700",
+                        "fontSize": "15px"
+                      }
+                    }
+                  }
+                ],
+                "position": {
+                  "shrink": 0,
+                  "basis": "38px"
+                }
+              },
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "brandtext"
+                },
+                "props": {
+                  "direction": "column",
+                  "gap": 1
+                },
+                "children": [
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "name"
+                    },
+                    "props": {
+                      "text": "Inventory",
+                      "style": {
+                        "fontWeight": "700",
+                        "fontSize": "16px",
+                        "color": "var(--tai-text)"
+                      }
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "sub"
+                    },
+                    "props": {
+                      "text": "Supply & EDI",
+                      "style": {
+                        "fontSize": "11px",
+                        "color": "var(--tai-text-muted)"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "auto"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "sitePill"
+            },
+            "props": {
+              "direction": "row",
+              "gap": 8,
+              "alignItems": "center",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "999px",
+                "padding": "7px 14px",
+                "marginLeft": "6px"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "dot"
+                },
+                "props": {
+                  "direction": "column",
+                  "style": {
+                    "backgroundColor": "var(--tai-status-success)",
+                    "width": "7px",
+                    "height": "7px",
+                    "borderRadius": "50%"
+                  }
+                },
+                "children": [],
+                "position": {
+                  "shrink": 0,
+                  "basis": "7px"
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "siteName"
+                },
+                "props": {
+                  "text": "Tupelo, MS",
+                  "style": {
+                    "fontWeight": "500",
+                    "color": "var(--tai-text)",
+                    "fontSize": "13px"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "siteCode"
+                },
+                "props": {
+                  "text": "\u00b7 TT",
+                  "style": {
+                    "color": "var(--tai-text-muted)",
+                    "fontSize": "13px"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "auto"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "tb_sp"
+            },
+            "props": {},
+            "position": {
+              "grow": 1
+            }
+          },
+          {
+            "type": "ia.input.text-field",
+            "meta": {
+              "name": "search",
+              "domId": "home-search"
+            },
+            "props": {
+              "placeholder": "Search parts, orders, ASNs\u2026",
+              "style": {
+                "borderRadius": "var(--tai-radius-control)"
+              }
+            },
+            "position": {
+              "shrink": 0,
+              "basis": "250px"
+            }
+          },
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "themeToggle",
+              "domId": "home-theme-toggle"
+            },
+            "props": {
+              "text": "\u25d0 Theme"
+            },
+            "position": {
+              "shrink": 0,
+              "basis": "104px"
+            },
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "type": "script",
+                  "scope": "G",
+                  "config": {
+                    "script": "\tcur = self.session.props.theme\n\tsystem.perspective.setTheme('tai-light' if cur == 'tai-dark' else 'tai-dark')\n"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "avatar"
+            },
+            "props": {
+              "direction": "column",
+              "justify": "center",
+              "alignItems": "center",
+              "style": {
+                "backgroundColor": "var(--tai-surface-2)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "50%",
+                "width": "38px",
+                "height": "38px"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "ini"
+                },
+                "props": {
+                  "text": "DV",
+                  "style": {
+                    "fontWeight": "600",
+                    "color": "var(--tai-text)",
+                    "fontSize": "13px"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "38px"
+            }
+          }
+        ],
+        "position": {
+          "shrink": 0,
+          "basis": "auto"
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "context"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 12,
+          "alignItems": "baseline",
+          "style": {
+            "padding": "6px 2px 18px"
+          }
+        },
+        "children": [
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "h1"
+            },
+            "props": {
+              "text": "Home",
+              "style": {
+                "fontSize": "21px",
+                "fontWeight": "700",
+                "color": "var(--tai-text)"
+              }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "meta"
+            },
+            "props": {
+              "text": "Thursday, June 18 \u00b7 day shift \u00b7 live counts from Inventory_Spike",
+              "style": {
+                "fontSize": "13px",
+                "color": "var(--tai-text-muted)"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "kpis",
+          "domId": "home-kpis"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 14
+        },
+        "children": [
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "kpi_openOrders"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "16px",
+                "boxShadow": "var(--tai-shadow-card)"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "h"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 7,
+                  "alignItems": "center"
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "tick"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-info)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "2px"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "l"
+                    },
+                    "props": {
+                      "text": "Open orders",
+                      "style": {
+                        "fontSize": "12px",
+                        "color": "var(--tai-text-muted)",
+                        "fontWeight": "500"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "n"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "27px",
+                    "fontWeight": "700",
+                    "fontFamily": "var(--tai-font-mono)",
+                    "color": "var(--tai-text)",
+                    "margin": "8px 0 4px"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.openOrders_num"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "f"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "11.5px",
+                    "color": "var(--tai-text-muted)",
+                    "fontWeight": "400"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.openOrders_foot"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "position": {
+              "grow": 1,
+              "basis": "0px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "kpi_asns"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "16px",
+                "boxShadow": "var(--tai-shadow-card)"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "h"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 7,
+                  "alignItems": "center"
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "tick"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-info)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "2px"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "l"
+                    },
+                    "props": {
+                      "text": "Active ASNs",
+                      "style": {
+                        "fontSize": "12px",
+                        "color": "var(--tai-text-muted)",
+                        "fontWeight": "500"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "n"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "27px",
+                    "fontWeight": "700",
+                    "fontFamily": "var(--tai-font-mono)",
+                    "color": "var(--tai-text)",
+                    "margin": "8px 0 4px"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.asns_num"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "f"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "11.5px",
+                    "color": "var(--tai-text-faint)",
+                    "fontWeight": "400"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.asns_foot"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "position": {
+              "grow": 1,
+              "basis": "0px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "kpi_shipments"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "16px",
+                "boxShadow": "var(--tai-shadow-card)"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "h"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 7,
+                  "alignItems": "center"
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "tick"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-success)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "2px"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "l"
+                    },
+                    "props": {
+                      "text": "Shipments",
+                      "style": {
+                        "fontSize": "12px",
+                        "color": "var(--tai-text-muted)",
+                        "fontWeight": "500"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "n"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "27px",
+                    "fontWeight": "700",
+                    "fontFamily": "var(--tai-font-mono)",
+                    "color": "var(--tai-text)",
+                    "margin": "8px 0 4px"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.shipments_num"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "f"
+                },
+                "props": {
+                  "text": "shipping records",
+                  "style": {
+                    "fontSize": "11.5px",
+                    "color": "var(--tai-text-faint)",
+                    "fontWeight": "400"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "grow": 1,
+              "basis": "0px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "kpi_partsShort"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "16px",
+                "boxShadow": "var(--tai-shadow-card)"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "h"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 7,
+                  "alignItems": "center"
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "tick"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-danger)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "2px"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "l"
+                    },
+                    "props": {
+                      "text": "Parts short",
+                      "style": {
+                        "fontSize": "12px",
+                        "color": "var(--tai-text-muted)",
+                        "fontWeight": "500"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "n"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "27px",
+                    "fontWeight": "700",
+                    "fontFamily": "var(--tai-font-mono)",
+                    "color": "var(--tai-status-danger)",
+                    "margin": "8px 0 4px"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.partsShort_num"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "f"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "11.5px",
+                    "color": "var(--tai-status-danger)",
+                    "fontWeight": "600"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.partsShort_foot"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "position": {
+              "grow": 1,
+              "basis": "0px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "kpi_stocktake"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "16px",
+                "boxShadow": "var(--tai-shadow-card)"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "h"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 7,
+                  "alignItems": "center"
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "tick"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-warning)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "2px"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "l"
+                    },
+                    "props": {
+                      "text": "Stocktake",
+                      "style": {
+                        "fontSize": "12px",
+                        "color": "var(--tai-text-muted)",
+                        "fontWeight": "500"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "n"
+                },
+                "props": {
+                  "text": "\u2014",
+                  "style": {
+                    "fontSize": "27px",
+                    "fontWeight": "700",
+                    "fontFamily": "var(--tai-font-mono)",
+                    "color": "var(--tai-text)",
+                    "margin": "8px 0 4px"
+                  }
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.kpi.stocktake_num"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "f"
+                },
+                "props": {
+                  "text": "entries to review",
+                  "style": {
+                    "fontSize": "11.5px",
+                    "color": "var(--tai-status-warning)",
+                    "fontWeight": "600"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "grow": 1,
+              "basis": "0px"
+            }
+          }
+        ],
+        "position": {
+          "shrink": 0,
+          "basis": "auto"
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "body"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 22
+        },
+        "children": [
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "modules"
+            },
+            "props": {
+              "direction": "column"
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "modhdr"
+                },
+                "props": {
+                  "direction": "row",
+                  "alignItems": "center",
+                  "style": {
+                    "padding": "2px 2px 12px"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "mh"
+                    },
+                    "props": {
+                      "text": "MODULES",
+                      "style": {
+                        "fontSize": "13px",
+                        "fontWeight": "600",
+                        "letterSpacing": ".4px",
+                        "color": "var(--tai-text-muted)"
+                      }
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "mh_sp"
+                    },
+                    "props": {},
+                    "position": {
+                      "grow": 1
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "mh_link"
+                    },
+                    "props": {
+                      "text": "Customize \u203a",
+                      "style": {
+                        "color": "var(--tai-accent)",
+                        "fontWeight": "600",
+                        "fontSize": "12.5px",
+                        "cursor": "pointer"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "modgrid",
+                  "domId": "home-modules"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 14,
+                  "wrap": "wrap"
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card0"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox0"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic0"
+                            },
+                            "props": {
+                              "path": "material/list_alt",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t0"
+                        },
+                        "props": {
+                          "text": "Orders & Renban",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d0"
+                        },
+                        "props": {
+                          "text": "Renban worksheet, lot sizing, releases",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st0"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "600",
+                            "color": "var(--tai-status-warning)",
+                            "margin": "auto 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.mod_orders"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card1"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox1"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic1"
+                            },
+                            "props": {
+                              "path": "material/local_shipping",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t1"
+                        },
+                        "props": {
+                          "text": "Shipping & ASN",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d1"
+                        },
+                        "props": {
+                          "text": "Build shipments, EDI 856 notices",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st1"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "600",
+                            "color": "var(--tai-status-warning)",
+                            "margin": "auto 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.mod_shipasn"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card2"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox2"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic2"
+                            },
+                            "props": {
+                              "path": "material/move_to_inbox",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t2"
+                        },
+                        "props": {
+                          "text": "Receiving",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d2"
+                        },
+                        "props": {
+                          "text": "Confirm receipts, status & variances",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card3"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox3"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic3"
+                            },
+                            "props": {
+                              "path": "material/fact_check",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t3"
+                        },
+                        "props": {
+                          "text": "Stocktaking",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d3"
+                        },
+                        "props": {
+                          "text": "Cycle counts, variance approval",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st3"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "600",
+                            "color": "var(--tai-status-info)",
+                            "margin": "auto 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.mod_stock"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card4"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox4"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic4"
+                            },
+                            "props": {
+                              "path": "material/insights",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t4"
+                        },
+                        "props": {
+                          "text": "Forecast",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d4"
+                        },
+                        "props": {
+                          "text": "Demand breakdown & planning horizon",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st4"
+                        },
+                        "props": {
+                          "text": "Updated 06:00",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "auto 0 0 0"
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card5"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox5"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic5"
+                            },
+                            "props": {
+                              "path": "material/storage",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t5"
+                        },
+                        "props": {
+                          "text": "Master Data",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d5"
+                        },
+                        "props": {
+                          "text": "Suppliers, sizes, logistics, parts",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st5"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text-muted)",
+                            "margin": "auto 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.mod_master"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card6"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox6"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic6"
+                            },
+                            "props": {
+                              "path": "material/receipt_long",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t6"
+                        },
+                        "props": {
+                          "text": "Invoicing & EDI",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d6"
+                        },
+                        "props": {
+                          "text": "EDI 810 invoices, uploads & acks",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st6"
+                        },
+                        "props": {
+                          "text": "EDI 810",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "auto 0 0 0"
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "card7"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "gap": 10,
+                      "style": {
+                        "backgroundColor": "var(--tai-surface)",
+                        "border": "1px solid var(--tai-border)",
+                        "borderRadius": "var(--tai-radius)",
+                        "padding": "16px",
+                        "boxShadow": "var(--tai-shadow-card)",
+                        "minHeight": "150px"
+                      }
+                    },
+                    "children": [
+                      {
+                        "type": "ia.container.flex",
+                        "meta": {
+                          "name": "ibox7"
+                        },
+                        "props": {
+                          "direction": "column",
+                          "justify": "center",
+                          "alignItems": "center",
+                          "style": {
+                            "backgroundColor": "var(--tai-accent-soft)",
+                            "borderRadius": "10px",
+                            "width": "40px",
+                            "height": "40px"
+                          }
+                        },
+                        "children": [
+                          {
+                            "type": "ia.display.icon",
+                            "meta": {
+                              "name": "ic7"
+                            },
+                            "props": {
+                              "path": "material/bar_chart",
+                              "color": "var(--tai-accent)",
+                              "style": {
+                                "width": "22px",
+                                "height": "22px"
+                              }
+                            }
+                          }
+                        ],
+                        "position": {
+                          "shrink": 0,
+                          "basis": "40px"
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "t7"
+                        },
+                        "props": {
+                          "text": "Reports",
+                          "style": {
+                            "fontWeight": "600",
+                            "fontSize": "14.5px",
+                            "color": "var(--tai-text)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "d7"
+                        },
+                        "props": {
+                          "text": "Inventory, ledger & shipment reports",
+                          "style": {
+                            "fontSize": "12.5px",
+                            "color": "var(--tai-text-muted)"
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "st7"
+                        },
+                        "props": {
+                          "text": "23 saved",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "auto 0 0 0"
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "31%"
+                    }
+                  }
+                ]
+              }
+            ],
+            "position": {
+              "grow": 1,
+              "basis": "0px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "rail"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "16px",
+                "boxShadow": "var(--tai-shadow-card)"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "rhead"
+                },
+                "props": {
+                  "direction": "row",
+                  "alignItems": "center",
+                  "style": {
+                    "padding": "0 0 6px"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "rh"
+                    },
+                    "props": {
+                      "text": "Needs attention",
+                      "style": {
+                        "fontWeight": "600",
+                        "fontSize": "13px",
+                        "color": "var(--tai-text)"
+                      }
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "rh_sp"
+                    },
+                    "props": {},
+                    "position": {
+                      "grow": 1
+                    }
+                  },
+                  {
+                    "type": "ia.display.label",
+                    "meta": {
+                      "name": "rc"
+                    },
+                    "props": {
+                      "text": "3",
+                      "style": {
+                        "fontSize": "11px",
+                        "color": "var(--tai-text-muted)"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "attn0"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 11,
+                  "style": {
+                    "padding": "13px 0",
+                    "borderBottom": "1px solid var(--tai-border)"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ad0"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-danger)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "50%",
+                        "margin": "5px 0 0 0"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ab0"
+                    },
+                    "props": {
+                      "direction": "column"
+                    },
+                    "children": [
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "at0"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "13px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text)"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_short_title"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "am0"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "2px 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_short_meta"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "0px"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "attn1"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 11,
+                  "style": {
+                    "padding": "13px 0",
+                    "borderBottom": "1px solid var(--tai-border)"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ad1"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-warning)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "50%",
+                        "margin": "5px 0 0 0"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ab1"
+                    },
+                    "props": {
+                      "direction": "column"
+                    },
+                    "children": [
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "at1"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "13px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text)"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_belowlot_title"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "am1"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "2px 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_belowlot_meta"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "0px"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "attn2"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 11,
+                  "style": {
+                    "padding": "13px 0",
+                    "borderBottom": "1px solid var(--tai-border)"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ad2"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-info)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "50%",
+                        "margin": "5px 0 0 0"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ab2"
+                    },
+                    "props": {
+                      "direction": "column"
+                    },
+                    "children": [
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "at2"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "13px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text)"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_stocktake_title"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "am2"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "2px 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_stocktake_meta"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "0px"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "rf"
+                },
+                "props": {
+                  "text": "View all activity \u203a",
+                  "style": {
+                    "color": "var(--tai-accent)",
+                    "fontWeight": "600",
+                    "fontSize": "12.5px",
+                    "cursor": "pointer",
+                    "margin": "10px 0 0 0"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "320px"
+            }
+          }
+        ],
+        "position": {
+          "shrink": 0,
+          "basis": "auto"
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "footer"
+        },
+        "props": {
+          "direction": "row",
+          "style": {
+            "padding": "24px 0 0",
+            "borderTop": "1px solid var(--tai-border)",
+            "margin": "26px 0 0"
+          }
+        },
+        "children": [
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "ft"
+            },
+            "props": {
+              "text": "Inventory \u00b7 Tupelo, MS (TT) \u00b7 v0.9-dev \u00b7 Ignition Perspective",
+              "style": {
+                "fontSize": "12px",
+                "color": "var(--tai-text-faint)"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
