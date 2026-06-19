@@ -230,3 +230,56 @@ the id→code join. macOS + 8.1 docs for any Designer guidance (panels by name, 
 
 ## Check B — siteScopedQuery() — ⏳ scaffolding ready (sites + site_id seeded)
 ## Check C — EDI re-scope + atomic I/O — ⏳ not started (no DB dependency for the paper re-scope)
+
+## Stock-Ledger Service — ✅ foundation built; ⚠️ reconciliation blocked by purge horizon (2026-06-17)
+- **Built (all verified on the box):** `INV_STOCK_LEDGER` table + UNIQUE `(IN_PART_ID,VC_SOURCE_EVENT)`
+  + FK→parts (`docs/analysis/inventory-stock/spike-stock-ledger-table.sql`); `POST_StockMovement` proc
+  (atomic insert-ledger + additive `IN_QTY+=delta`, idempotent, purge-aware) + `PROC_RebuildStockBalance`
+  (F4 read-then-write under `UPDLOCK,HOLDLOCK`/SERIALIZABLE) (`…/spike-post-stockmovement-proc.sql`);
+  `stockLedger` Project-Library service `post()/rebuildBalance()/resolvePartId()` via `createSProcCall`
+  (`data/projects/spike/ignition/script-python/stockLedger/code.py` — loads clean, gateway re-signed it,
+  no script errors after `gwcmd -r`).
+- **Proc self-test (6/6 PASS):** post bumps IN_QTY by delta; ledger row + balance_after correct; replay
+  same event key does NOT double-post (idempotent); purge=1 posts nothing; rebuildBalance re-stamps
+  absolute SUM; DB restored as found.
+- **⚠️ GO/NO-GO reconciliation — BLOCKED by the snapshot, NOT a rebuild bug.** The restored `Inventory.bak`
+  is **post-`DELETE_AutoPurge`**: **0** of 4238 open orders carry a counting status (all
+  `VC_STATUS_SUPPLIER_SHIPPING`/`VC_ARRIVAL` blank), and all 16 suppliers are add-point **'S'** (no 'A').
+  The receiving IN-movements that BUILT the legacy `IN_QTY` have been aged out (§3.1 purge horizon). A
+  from-zero replay of this snapshot therefore CANNOT reconstruct `IN_QTY` — 36/47 parts diff negative
+  (derived<legacy = purged receipts), 11 reconcile exact, **0 UNEXPLAINED** (no derived>legacy). The §3
+  derivation logic is exercised + correct; the data is the limit. Of the 4 predicted FIX-divergence
+  classes, only **F3** is even reachable here (1 shipping multi-row group), and its part's receiving
+  history is purged too, so it can't show the over-count signature in this snapshot. **D8(3)/D12#3 need
+  'A' add-point (none); F5 needs a re-pointed part-number (not in a static snapshot).**
+- **What a real GO/NO-GO needs:** a **pre-purge event dump** (complete `INV_OPEN_ORDER_INF` history) or
+  the **live cutover backfill window** — the harness IS the backfill validator (design §9). Harness +
+  TSV (`scripts/e2e/artifacts/stock_ledger_parity.tsv`) ready to re-run against that data unchanged.
+- **Verdict:** the SERVICE foundation is GO (mechanics proven). The PARITY adjudication is **deferred to
+  pre-purge/cutover data** — green-on-post-purge-data would be a fixture-fidelity false pass, so the
+  harness SKIPs (not PASSes) that check and reports the horizon explicitly.
+
+## 2026-06-19 — FULL CUTOVER DRESS-REHEARSAL on the spike (backup→flip→restore) — GO
+
+Ran the entire 4-phase cutover sequence (`docs/analysis/cutover-architecture.md`) end-to-end against the
+spike, fenced by a pre-backup + post-restore. Full write-up: `docs/analysis/cutover-dress-rehearsal.md`.
+
+- **GO/NO-GO ZERO-DRIFT GATE: 0 / 47 parts drift** after dropping the 13 qty-triggers and running
+  `SEED_AllOpeningBalances` (47 OPENING_BALANCE rows; IN_QTY checksum unchanged by the seed). `IN_QTY ==
+  SUM(ledger)` for every part. **GO.**
+- **Phase A/B applied idempotently**: fn_ManifestCostAt → D6 procs (all 4 now CROSS APPLY the TVF) →
+  pre-drop overlap diagnostic = **0** → no-overlap trigger created (IX drop no-op'd: already absent on
+  spike) → UPDATE_PartsStockInfo qty-leg dropped + UPDATE_PartsStockInfoCount retired.
+- **Phase C**: exactly **13** triggers dropped, `UPDATE_PartNumber`/`DELETE_PartNumber` KEPT. Forward-post
+  smoke (REAL receiving +60 / shipping −50 wrappers via jython_shim, triggers already gone) → each moved
+  IN_QTY by its exact delta ONCE + wrote its ledger row + invariant held (seams are the SOLE writer, no
+  double-count). **Genesis guard** THROWs `Msg 50001` on a part with a forward row + no opening row.
+- **Restore as-found PROVEN**: IN_QTY per-part `diff`-identical to baseline; 13 triggers back + enabled;
+  ledger back to 0 rows; all 7 touched proc/fn **body MD5 hashes byte-identical** to baseline; gateway
+  re-connected cleanly (handled via SINGLE_USER WITH ROLLBACK IMMEDIATE + same-batch MULTI_USER).
+- **Deviations (honest):** (1) spike already had Phase-A objects + the manifest constraint already dropped,
+  so section B no-op'd — the constraint-DROP path is NOT exercised here; **confirm on prod**. (2) A
+  self-inflicted smoke-script teardown/genesis-probe bug (corrected) — NOT a cutover defect; RESTORE is the
+  authoritative reset. No trigger-name mismatch, no ordering/lock problem.
+- **Verdict:** the cutover sequence is executable and the zero-drift gate is GREEN on the spike. Backup
+  `.bak` left in the container as the proven restore point.
