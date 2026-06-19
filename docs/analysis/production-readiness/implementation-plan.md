@@ -348,9 +348,22 @@ and should be sequenced first; M3 can slip in parallel with M1/M2 since it's add
    flip to the send (don't mark `'S'` until that ASN's 856 file write + transmit commits — the at-least-once
    idempotency rule, §4). This is also required for multi-user/multi-site (the bulk flip would send another
    operator's / another site's open ASNs).
-3. **D6 window boundary inclusivity** — confirm `>=`/`<=` (inclusive), and that 810 must price identically to 856.
-4. **ALC-DB procs** (`AD_GetSite`, `AD_GetSiteTMMDUNS`, `AD_UpdateEIN`, `CalculateASNFRS`): confirm bodies + that
-   the EIN counter is the authoritative outbound control number to replicate as a **per-site sequence**.
+3. ✅ **RESOLVED (David 2026-06-19) — inclusive boundaries.** Window is inclusive (`VC_START <= prodDate <=
+   VC_END`; `VC_END` = last effective day). Re-confirms the earlier D6 decision (David 2026-06-18, PR #10:
+   strict `SELECT_ManifestCost` was the bug, superseded by `fn_ManifestCostAt`; gap convention for
+   no-overlap). **810 prices identically to 856 — already guaranteed by construction:** all four billing
+   procs were migrated to `CROSS APPLY fn_ManifestCostAt` (PR #14), so they share one inclusive window rule.
+   Nothing further to build — already implemented + dress-rehearsed.
+4. ✅ **RESOLVED (David 2026-06-19) — site lookups → Inventory.sites; EIN = the VAN tracking id.**
+   - **`AD_GetSite` / `AD_GetSiteTMMDUNS` are eliminated as cross-DB ALC reads** — per the Q1 relocation,
+     site + TMM DUNS are columns on the new `Inventory.dbo.sites` table, so the ASN/EDI code reads them
+     locally. No ALC cross-DB site/DUNS lookup remains.
+   - **`AD_UpdateEIN` → a per-site atomic EIN sequence in the Inventory DB.** Confirmed: **EIN is the
+     authoritative outbound control number tracked through the VAN**, so it must be allocated atomically and
+     uniquely per site (the per-site sequence replaces the ALC counter; seed lives on the `sites` row).
+   - **`CalculateASNFRS` — still a behavior-port item** (date/FRS logic, not site config): confirm the body
+     with delphi-architect before porting; decide then whether it moves to Inventory or stays ALC. (The
+     calendar proc `AD_GetSpecialDate` is tracked separately in Q9.)
 5. **Unsend semantics** — `UPDATE_INVUnsend` **hard-deletes** the invoice header. Make it a recoverable status
    revert per D3?
 
