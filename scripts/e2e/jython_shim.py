@@ -26,6 +26,23 @@ CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
 SA_PASS = os.environ.get("SA_PASS")
 SQL_DB = "Inventory"   # the SQL Server DB; the wrappers' logical name "Inventory_Spike" maps here
 
+# Logical Ignition connection name -> physical spike DB. The producer/Order seams only ever touch the
+# default Inventory DB; the ASN create driver also READS AD_FRSPULL on the shared ALC datasource, so a
+# query/proc-call can be routed to VehicleOrder by passing db="VehicleOrder" (or its connection name).
+# Unknown names fall through to SQL_DB (the historical behaviour — db was previously ignored entirely).
+_DB_MAP = {
+    None: SQL_DB,
+    "Inventory_Spike": SQL_DB,
+    "Inventory": SQL_DB,
+    "VehicleOrder": "VehicleOrder",
+}
+
+
+def _resolve_db(db):
+    """Map a logical connection name to the physical spike DB; default to SQL_DB for unknown names so
+    the autocommit Inventory path is unchanged for every existing caller."""
+    return _DB_MAP.get(db, SQL_DB)
+
 
 def _sqlcmd_args(db, interactive=False):
     """The shared sqlcmd invocation flags. `interactive=True` adds `-i` stdin streaming for the
@@ -38,12 +55,22 @@ def _sqlcmd_args(db, interactive=False):
     return base
 
 
+# The ANSI SET options the real gateway JDBC connection runs with. sqlcmd's `-Q` default has
+# QUOTED_IDENTIFIER OFF, but the Ignition JDBC driver opens connections with QUOTED_IDENTIFIER ON +
+# ANSI_NULLS ON (the JDBC/SQL-standard default). This matters once a FILTERED INDEX (or an indexed
+# view / computed-column index) exists on a table: SQL Server REQUIRES these options ON for any DML
+# against that table (else Msg 1934). spike-asn-unique-guard.sql adds a filtered unique index to
+# INV_ASN_MST, so the shim must mirror the gateway's session options to faithfully exercise the driver
+# (and to not falsely fail on the harness's own sqlcmd defaults). Prepended to every batch.
+_SESSION_SET = "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; SET NOCOUNT ON; "
+
+
 def _run(sql_text, want_rows, db=SQL_DB):
     """Execute one batch via a fresh (autocommit) sqlcmd. want_rows=True keeps the header row."""
     args = _sqlcmd_args(db)
     if not want_rows:
         args += ["-h", "-1"]
-    out = subprocess.check_output(args + ["-Q", "SET NOCOUNT ON; " + sql_text], text=True)
+    out = subprocess.check_output(args + ["-Q", _SESSION_SET + sql_text], text=True)
     return out
 
 
@@ -162,7 +189,9 @@ class _TxSession(object):
         t = threading.Thread(target=self._pump)
         t.daemon = True
         t.start()
-        self._batch("SET NOCOUNT ON;", want_rows=False)
+        # Mirror the gateway JDBC session options (QUOTED_IDENTIFIER/ANSI_NULLS ON) BEFORE the tx opens
+        # so DML on the filtered-index INV_ASN_MST succeeds (see _SESSION_SET note; else Msg 1934).
+        self._batch("SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; SET NOCOUNT ON;", want_rows=False)
         self._batch("BEGIN TRANSACTION;", want_rows=False)
 
     def _pump(self):
@@ -174,9 +203,25 @@ class _TxSession(object):
         self.proc.stdin.write(text + "\n")
         self.proc.stdin.flush()
 
+    @staticmethod
+    def _is_err_line(line):
+        """True for a sqlcmd error header. Two shapes occur:
+          * `Msg <n>, Level <n>, State <n>, ...`  — the usual T-SQL error (e.g. Msg 2601 duplicate key).
+          * `SqlState NNNNN, ...`                 — a driver/cursor-level error (e.g.
+            `SqlState 24000, Invalid cursor state`) that sqlcmd emits when a batch runs after a
+            statement-terminated error left a pending result. This line is NOT a `Msg` header, so the
+            original detector missed it and the next batch hung waiting for a sentinel that never came.
+        Recognizing both makes a unique-violation (FIX 1) — and the cursor-state fallout it leaves on the
+        very next batch — surface as a catchable SqlError instead of a timeout."""
+        if line.startswith("Msg ") and ", Level " in line and ", State " in line:
+            return True
+        if line.startswith("SqlState "):
+            return True
+        return False
+
     def _batch(self, sql_text, want_rows, timeout=30):
         """Run one batch on the session; return (columns, rows) when want_rows else None.
-        Raises SqlError on any `Msg NNNN` (so the caller's rollback path runs)."""
+        Raises SqlError on any sqlcmd error header (so the caller's rollback path runs)."""
         _TxSession._seq += 1
         nonce = "EOB%d" % _TxSession._seq
         sentinel = "<<<%s>>>" % nonce
@@ -196,19 +241,23 @@ class _TxSession(object):
             line = line.rstrip("\n")
             if sentinel in line:
                 break
-            if line.startswith("Msg ") and ", Level " in line and ", State " in line:
-                # a real sqlcmd error header is "Msg <n>, Level <n>, State <n>, ..." — match that
-                # shape (not a bare "Msg " prefix, which can occur in legitimate SELECT output).
-                # error -> the sentinel PRINT won't run; grab the immediate error text, then raise
+            if self._is_err_line(line):
+                # error -> the sentinel PRINT may or may not run; grab the immediate error text up to
+                # (and consuming) the sentinel if it appears, then raise. Draining to the sentinel here
+                # is what keeps the SESSION clean for the next batch (the rollback) — otherwise leftover
+                # lines from this batch would be misread as the next batch's output.
                 err = [line]
                 while True:
                     try:
                         more = self._q.get(timeout=2)
                     except queue.Empty:
                         break
-                    if more is None or sentinel in more:
+                    if more is None:
                         break
-                    err.append(more.rstrip("\n"))
+                    more = more.rstrip("\n")
+                    if sentinel in more:
+                        break
+                    err.append(more)
                 raise SqlError("; ".join(err))
             captured.append(line)
         if err is not None:
@@ -230,6 +279,16 @@ class _TxSession(object):
         self._batch(stmt, want_rows=False)
         return 1
 
+    def query_scalar(self, stmt):
+        """Run a batch on the live tx session and return the first cell of the LAST result row (the
+        ASN-create captures INSERT_ASNInfo's OUTPUT @id via a trailing SELECT @id on the same tx).
+        Mirrors system.db.runScalarPrepQuery(..., tx=). None when the cell is NULL / no rows."""
+        cols, rows = self._batch(stmt, want_rows=True)
+        if not rows:
+            return None
+        v = rows[-1][0]
+        return None if v == "NULL" else v
+
     def commit(self):
         self._batch("COMMIT TRANSACTION;", want_rows=False)
         self.close()
@@ -241,7 +300,19 @@ class _TxSession(object):
         # makes rollback a no-op when SQL Server already unwound the tx — so commitOrders' real failure
         # propagates. (Real JDBC connection.rollback() is likewise safe on an already-rolled-back tx.)
         if not self._closed:
-            self._batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", want_rows=False)
+            # Best-effort: a statement-terminated error in the PRIOR batch (e.g. a unique violation,
+            # FIX 1) can leave a transient `SqlState 24000, Invalid cursor state` on THIS rollback batch.
+            # Rollback is cleanup of an already-failed tx — swallow such a follow-on error rather than
+            # masking the caller's original exception (which is mid-propagation). Real JDBC rollback()
+            # likewise does not throw the prior statement's error again.
+            try:
+                self._batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", want_rows=False)
+            except SqlError as rbexc:
+                # Only swallow the transient cursor-state follow-on; a GENUINE rollback failure must
+                # surface (NIT-1) — else a real failed ROLLBACK would be masked as clean cleanup.
+                msg = str(rbexc)
+                if "24000" not in msg and "Invalid cursor state" not in msg:
+                    raise
 
     def close(self):
         if self._closed:
@@ -269,7 +340,9 @@ class _DB(object):
     INTEGER = "INTEGER"; VARCHAR = "VARCHAR"; BIT = "BIT"
 
     def runPrepQuery(self, sql, args, db=None):
-        return _PyDataset(*_parse_rows(_run(_bind(sql, args), want_rows=True)))
+        # Route to the named DB (VehicleOrder for AD_FRSPULL); defaults to Inventory for every other
+        # caller. The Inventory autocommit path is byte-for-byte unchanged (db resolves to SQL_DB).
+        return _PyDataset(*_parse_rows(_run(_bind(sql, args), want_rows=True, db=_resolve_db(db))))
 
     def runPrepUpdate(self, sql, args, db=None, getKey=False, tx=None):
         stmt = _bind(sql, args)
@@ -278,13 +351,28 @@ class _DB(object):
         # even though Order doesn't use it — keep it correct for future tx writers.
         if isinstance(tx, _TxSession):
             return tx.exec_update(stmt, get_key=getKey)
-        # autocommit path (tx is None or the "tx-noop" sentinel) — UNCHANGED.
+        # autocommit path (tx is None or the "tx-noop" sentinel) — UNCHANGED behaviour for db=None;
+        # db now resolves through the same map so an explicit name routes correctly.
+        rdb = _resolve_db(db)
         if getKey:
-            out = _run(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True)
+            out = _run(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True, db=rdb)
             cols, rows = _parse_rows(out)
             return int(rows[-1][0]) if rows else None
-        _run(stmt, want_rows=False)
+        _run(stmt, want_rows=False, db=rdb)
         return 1
+
+    def runScalarPrepQuery(self, sql, args, db=None, tx=None):
+        """Real 8.1+ API: run a prepared statement, return the first row/first column (None if no rows).
+        Supports the tx id so the ASN create can read INSERT_ASNInfo's OUTPUT @id inside its BEGIN TRAN.
+        Autocommit path routes through the same db map as runPrepQuery."""
+        stmt = _bind(sql, args)
+        if isinstance(tx, _TxSession):
+            return tx.query_scalar(stmt)
+        cols, rows = _parse_rows(_run(stmt, want_rows=True, db=_resolve_db(db)))
+        if not rows:
+            return None
+        v = rows[-1][0]
+        return None if v == "NULL" else v
 
     def createSProcCall(self, name, db=None):
         return _SProcCall(name)
@@ -298,7 +386,10 @@ class _DB(object):
     # Transactions: open a persistent sqlcmd session that spans statements (Order's commitOrders).
     # The producer seams pass no tx; they keep hitting the autocommit _run path above untouched.
     def beginTransaction(self, db=None, **k):
-        return _TxSession(db or SQL_DB)
+        # Resolve the logical connection name (e.g. "Inventory_Spike") to the physical spike DB so the
+        # persistent sqlcmd -d target is real. Order passed no db (-> SQL_DB); create_asn passes the
+        # Inventory connection name.
+        return _TxSession(_resolve_db(db))
     def commitTransaction(self, tx):
         if isinstance(tx, _TxSession):
             tx.commit()
@@ -311,15 +402,34 @@ class _DB(object):
             tx.close()
 
 
+class _Logger(object):
+    """A quiet stand-in for the gateway's named logger. Swallows info/warn/error/debug/trace so the
+    REAL driver's logging calls run for real (any arg shape) without noise. (Set SHIM_LOG_ECHO=1 to
+    echo to stderr when debugging a driver.)"""
+    _echo = os.environ.get("SHIM_LOG_ECHO") == "1"
+
+    def __init__(self, name):
+        self.name = name
+
+    def _emit(self, level, args):
+        if self._echo:
+            sys.stderr.write("[%s] %s %s\n" % (level, self.name, " ".join(str(a) for a in args)))
+
+    def info(self, *a): self._emit("INFO", a)
+    def warn(self, *a): self._emit("WARN", a)
+    def error(self, *a): self._emit("ERROR", a)
+    def debug(self, *a): self._emit("DEBUG", a)
+    def trace(self, *a): self._emit("TRACE", a)
+
+
+class _Util(object):
+    def getLogger(self, name):
+        return _Logger(name)
+
+
 class _System(object):
     def __init__(self):
         self.db = _DB()
-        class _Util(object):
-            class _Logger(object):
-                def info(self, *a): pass
-                def warn(self, *a): pass
-            def getLogger(self, name):
-                return _System._Util._Logger()
         self.util = _Util()
 
 
