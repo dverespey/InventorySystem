@@ -397,3 +397,48 @@ Branch `m1-asn-creation`.
 - **GO/STAY impact:** the keystone's BLOCKER (concurrency double-insert) is **CLOSED** at the DB level +
   the driver; the No-Ratio nondeterminism is removed (pending David's tiebreak confirm). Remaining
   keystone gate is unchanged: a true row-parity oracle (recipe-vintage drift, §7.5).
+
+## 2026-06-20 — M1 Rank-2: outbound EDI 856 ASN builder (pure + feed SQL + driver) — BUILT
+- **What:** new gateway code porting `EDI856Object.pas` (T856EDI), byte-faithful to the TEMA-accepted
+  legacy 856 (David locked byte parity). Three artifacts:
+  `docs/analysis/edi/856/project-library/edi856/code.py` = PURE `build_856(...)` (ordered segment list)
+  + DRIVER `send_856(...)`; `docs/analysis/edi/856/spike-edi856-feed.sql` = the side-effect-free feed
+  SELECT (the driver inlines it as `_FEED_SQL`). Mirrors the asn keystone pattern (pure logic + thin
+  driver + jython_shim headless seam).
+- **Locked decisions realized:** A=KEEP cost INNER join; B=forecast INNER via `CROSS APPLY (SELECT TOP 1)`
+  (same INNER drop, no fan-out); C=GROUP-BY collapse (no sum); D=CRLF-only (segment terminator read but
+  NEVER emitted); E=filename `856<copy(prodDate,4,5)>.txt`. EIN per-site from `INV_SITES.IN_EIN_SEQ`
+  allocated **at send** (atomic `UPDATE … OUTPUT INSERTED.IN_EIN_SEQ WHERE IN_SITE_ID=?`), `%09d` in all
+  7 control positions + BSN02=`yyyymmdd`+`%09d`; NOT the `6440` literal; NOT EIN-at-create. Status flip
+  per-ASN `C→S` at send, DECOUPLED — never `REPORT_EDI856`'s self-flip, never the blanket
+  `UPDATE_ASNStatus`.
+- **Tests:** `scripts/e2e/test_edi856_build.py` (pure, **46 PASS** — full byte-exact segment list for a
+  multi-manifest/multi-item fixture, EIN in 7 positions, control-number consistency, SE01==actual ST..SE
+  count, CTT01==HL count, ISA widths + ISA09 yymmdd, S→O→I chain, PRF/LIN/SN1, CRLF, filename, Trap-6
+  truncation). `scripts/e2e/test_edi856_e2e.py` (**27 PASS** — real `send_856` via the shim on a copy of
+  Inventory_Live ASN 4721: feed-row parity vs the legacy `REPORT_EDI856 @EIN=0` SELECT 16/16; byte-exact
+  STRUCTURE of the emitted file; EIN from `INV_SITES.IN_EIN_SEQ` 9100→9101 stamped on header; per-ASN flip
+  with a decoy 'C' ASN left untouched). Regression green: asn_fanout 34, create_asn_parity 10,
+  order_commit_integration 6, seam_driver_order 13, receiving_writepost 12.
+- **Honest verification (fixture-fidelity):** NO golden 856 exists → byte-for-byte legacy parity is
+  UNPROVABLE and NOT claimed. PROVEN: feed-row parity vs the legacy SELECT + byte-exact STRUCTURE +
+  self-consistency + EIN provenance + the decoupled flip. Caveat: the spike `Inventory.INV_SITES` holds
+  PLACEHOLDER site identity (DUNS `000000001`, supplier `MAS`, EDI mode `PROD`) — the real legacy values
+  live in `VehicleOrder.Site` (DUNS `969009112`, supplier `71930`, TMM DUNS `808369495`, EDI mode `P`,
+  sub-elem `#`), relocated to INV_SITES at the sites-CRUD step but not yet loaded with real values — so
+  the ISA/GS BYTES emitted on the spike reflect placeholders, not the TEMA wire. Structure assertions are
+  site-value-independent; exact wire bytes await the real INV_SITES values at cutover.
+- **Byte-exact trap hit:** the driver opens a tx, stamps the EIN on the ASN header (X-lock), then must
+  READ that same header (prodDate + feed). An autocommit read on a separate connection BLOCKS on the
+  uncommitted row lock → hang. Fix: route the in-tx reads through `runPrepQuery(..., tx)` (8.1+ accepts a
+  tx arg) so they share the connection. Hardened `jython_shim._DB.runPrepQuery` to honor a `tx` (route to
+  the persistent session); added minimal `system.file.writeFile` + `system.date` shims. All additive /
+  backward-compatible (regressions unchanged).
+- **Spike restored as-found:** Inventory 2550 ASNs (test+decoy swept), `INV_SITES.IN_EIN_SEQ` back to 0,
+  Inventory_Live + VehicleOrder never written.
+- **GO/STAY impact:** the second M1 keystone (outbound 856) builds clean on the spike with the decoupled
+  EIN/flip model — no new blocker. Open item for cutover: load the real site identity into INV_SITES
+  before claiming wire-byte parity (a data task, not a code one); a golden 856 would upgrade the e2e from
+  structure-parity to byte-parity.
+
+---
