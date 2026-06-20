@@ -22,8 +22,9 @@
 -- IDEMPOTENT: guarded DROP+CREATE (re-runnable). Apply on the spike (DB Inventory) to verify the
 --   accumulate-within-one-ASN + per-ASN scoping; the rebuild applies this at cutover anyway.
 --
--- VERIFIED behaviour preserved: @HotCall=0 accumulate; @HotCall=1 always-INSERT; the 14-char
---   yyyymmddHHmmss VC_ADD/VC_LAST_UPDATE stamp; positional VALUES (col2 = IN_ASN_ID).
+-- VERIFIED behaviour preserved: @HotCall=0 accumulate; @HotCall=1 always-INSERT; the 16-char
+--   yyyymmddHHmmssff VC_ADD/VC_LAST_UPDATE stamp (style-114: HHmmss + first 2 ms digits — NOT 14);
+--   positional VALUES (col2 = IN_ASN_ID).
 
 USE [Inventory];
 GO
