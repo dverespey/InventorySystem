@@ -1,36 +1,44 @@
 {
   "pages": {
-    "/order": {
-      "viewPath": "Order/OrderSpike",
-      "title": "Order Spike"
+    "/assemblydetail": {
+      "title": "Assembly Detail",
+      "viewPath": "Master/AssemblyDetail/AssemblyDetail"
     },
-    "/supplier": {
-      "viewPath": "Master/Supplier/Supplier",
-      "title": "Supplier Master"
-    },
-    "/size": {
-      "viewPath": "Master/Size/Size",
-      "title": "Size Master"
+    "/home": {
+      "viewPath": "Home/Home",
+      "title": "Home"
     },
     "/logistics": {
-      "viewPath": "Master/Logistics/Logistics",
-      "title": "Logistics Master"
-    },
-    "/renbangroup": {
-      "viewPath": "Master/RenbanGroup/RenbanGroup",
-      "title": "Renban Group Master"
-    },
-    "/partsstock": {
-      "viewPath": "Master/PartsStock/PartsStock",
-      "title": "Parts Stock Master"
-    },
-    "/assemblydetail": {
-      "viewPath": "Master/AssemblyDetail/AssemblyDetail",
-      "title": "Assembly Detail"
+      "title": "Logistics Master",
+      "viewPath": "Master/Logistics/Logistics"
     },
     "/manifestcost": {
-      "viewPath": "Master/ManifestCost/ManifestCost",
-      "title": "Manifest Cost Master"
+      "title": "Manifest Cost Master",
+      "viewPath": "Master/ManifestCost/ManifestCost"
+    },
+    "/order": {
+      "title": "Order Spike",
+      "viewPath": "Order/OrderSpike"
+    },
+    "/partsstock": {
+      "title": "Parts Stock Master",
+      "viewPath": "Master/PartsStock/PartsStock"
+    },
+    "/renbangroup": {
+      "title": "Renban Group Master",
+      "viewPath": "Master/RenbanGroup/RenbanGroup"
+    },
+    "/sites": {
+      "title": "Sites Master (Admin)",
+      "viewPath": "Master/Sites/Sites"
+    },
+    "/size": {
+      "title": "Size Master",
+      "viewPath": "Master/Size/Size"
+    },
+    "/supplier": {
+      "title": "Supplier Master",
+      "viewPath": "Master/Supplier/Supplier"
     }
   },
   "sharedDocks": {}
