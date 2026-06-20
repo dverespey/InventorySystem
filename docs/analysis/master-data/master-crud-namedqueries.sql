@@ -1384,3 +1384,212 @@ SELECT DISTINCT VC_ASSY_PART_NUMBER_CODE AS id, VC_ASSY_PART_NUMBER_CODE AS labe
 FROM   INV_FORECAST_DETAIL_INF
 WHERE  VC_ASSY_PART_NUMBER_CODE <> ''  /* IG-SITE: AND site_id = :siteId */
 ORDER BY VC_ASSY_PART_NUMBER_CODE;
+
+/* ============================================================================
+   SITES MASTER  —  EIGHTH master-data rebuild module (multi-site config master)
+   ----------------------------------------------------------------------------
+   Status:  build artifact for the Sites master CRUD (replicates the PROVEN Size
+            combined master-detail pattern; widest master — 32 columns).
+   Author:  ignition-developer / 2026-06-19
+   Source:  docs/analysis/master-data/spike-inv-sites-table.sql (the table artifact)
+   View:    Master/Sites/Sites  (combined master-detail, route /sites)
+
+   SAME MECHANISM as the other masters: NOT on-disk NQ resources — this is the
+   canonical SQL, executed at runtime via inline system.db.runPrepQuery inside the
+   view's binding/script transforms (positional '?' placeholders, ordered args).
+   [[reference-headless-ignition-authoring-limits]] #1: NQ data.bin needs the
+   Designer, so the masters keep SQL here + run it inline. Promotable to real NQ
+   resources later.
+
+   GROUND TRUTH (read off live `Inventory` on mssql-spike, 2026-06-19):
+     INV_SITES: PK IN_SITE_ID INT IDENTITY; 32 columns; 2 seed rows (MAS id1, HERO
+       id2). UNIQUE: none beyond the PK (VC_SITE_ABBR is NOT unique-constrained in
+       the table artifact — abbr-dup is allowed by the schema; we do NOT add a
+       uniqueness pre-check the schema doesn't back). NONCLUSTERED IX on VC_DUNS.
+     CHECKs (enforce client-side too, rule #4):
+       CK_INV_SITES_FILL_DAYS        IN_FILL_DAYS IS NULL OR <= 50
+       CK_INV_SITES_DATA_RETENTION   IN_DATA_RETENTION IS NULL OR >= 12
+       CK_INV_SITES_FC_IMPORT_MODE   VC_FORECAST_IMPORT_MODE IN ('AUTO','MANUAL')
+     NOT NULL (must always be supplied/defaulted on insert):
+       VC_SITE_NAME, VC_SITE_ABBR, IN_EIN_SEQ (DEFAULT 0),
+       BIT_ACCEPT_ANY_ORDER_ASN (DF 0), BIT_USE_FIRST_PRODUCTION_DAY (DF 0),
+       VC_FORECAST_IMPORT_MODE (DF 'AUTO'), BIT_ENABLE_DATA_PURGE (DF 0),
+       BIT_PROMPT_DATA_PURGE (DF 1), VC_ADD.
+     Audit: VC_LAST_UPDATE (nullable), VC_ADD (NOT NULL) — same 16-char
+       yyyymmddHHMMSSff recipe every other master uses.
+
+   ================  SITES-MASTER-SPECIFIC RULES (differ from every other master) =
+   RULE #1 — ADMIN-GATED (Q12).  The whole view/page is Admin-only. Enforced
+     view-permissions require an IdP with a mapped "Admin" security level + the
+     Designer's "Configure View Permissions" node — NEITHER exists on this headless
+     spike (anonymous Perspective sessions, no IdP, no security levels). So the
+     view carries an in-view Admin gate driven by session.props.auth roles
+     (custom.isAdmin); when not admin, the form is hidden and Save/Delete refuse.
+     ⚠️ This is a DEFENSE-IN-DEPTH guard, NOT the real access control. The
+     authoritative role-gate (view permissions / page security) MUST be added in
+     the Designer once the prod IdP + Admin role are wired. See the build report.
+
+   RULE #2 — *** NOT SITE-SCOPED — IG-SITE SEAM IS INVERTED HERE. ***
+     Every OTHER master is filtered to the session's site via siteScopedQuery().
+     The Sites master is the EXCEPTION: an Admin manages ALL sites, so the list
+     returns EVERY INV_SITES row with NO site filter. There is deliberately NO
+     `-- IG-SITE: AND site_id = :siteId` predicate on Sites/list or Sites/get.
+     DO NOT "fix" this by adding the site filter — that would hide every site but
+     the current one and break site administration.
+
+   RULE #3 — READ-ONLY / system-maintained fields (shown, never written by the form):
+     IN_SITE_ID               identity (display only)
+     IN_EIN_SEQ               advanced by the EDI send path; Admin EIN reset is a
+                              separate deliberate action, OUT OF SCOPE here.
+     VC_LAST_FORECAST_IMPORT  written by the forecast poller.
+     VC_LAST_UPDATE, VC_ADD   audit, stamped by the save logic.
+     -> insert/update column lists below OMIT all of these (except VC_ADD/
+        VC_LAST_UPDATE which the SAVE stamps, and IN_EIN_SEQ which insert defaults
+        to 0 and update never touches).
+
+   RULE #6 — DELETE-GATE (RESTRICT).  Block deleting a referenced site. TODAY the
+     only wired site reference is the THROWAWAY INV_PARTS_STOCK_MST.site_id (no FK).
+     ⚠️⚠️ THIS GATE MUST BE EXTENDED to EVERY site-scoped table once IN_SITE_ID FKs
+     are wired in M4 schema surgery. Most tables are NOT site-scoped yet, so only
+     the throwaway column is counted now. When M4 adds IN_SITE_ID FKs, add a
+     COUNT(*) term per child table (or switch to an information_schema-driven scan).
+
+   8.1 <-> 8.3:
+     # IG83-TODO: replace the yyyymmddHHMMSSff audit string with a real datetime
+                  DEFAULT/trigger at the Postgres phase.
+     # IG83-TODO: extend the refCount delete-gate to all IN_SITE_ID children (M4).
+     # IG83-TODO: replace the in-view Admin gate with enforced view permissions /
+                  page security mapped to the Admin role once the IdP is configured.
+     # IG81-COMPAT: plain parameterized T-SQL; runs identically on 8.1.52 and 8.3.
+   ============================================================================ */
+
+
+/* ----------------------------------------------------------------------------
+   Sites/list   (Query)  — grid rows for the List view.  *** NO SITE FILTER ***
+   params (ordered):  searchTerm (String) x3  (NO siteId — rule #2)
+   returns: RecordID + key display columns. ALL sites, every row.
+   ---------------------------------------------------------------------------- */
+SELECT  IN_SITE_ID              AS "RecordID",
+        VC_SITE_ABBR            AS "Abbr",
+        VC_SITE_NAME            AS "Site Name",
+        VC_STATE                AS "State",
+        VC_DUNS                 AS "DUNS",
+        VC_FORECAST_IMPORT_MODE AS "FC Mode"
+FROM    INV_SITES
+WHERE  (:searchTerm = '' OR VC_SITE_ABBR LIKE '%' + :searchTerm + '%'
+                        OR VC_SITE_NAME LIKE '%' + :searchTerm + '%'
+                        OR VC_DUNS       LIKE '%' + :searchTerm + '%')
+/* RULE #2: intentionally NO `-- IG-SITE: AND site_id = :siteId` — admin sees ALL sites. */
+ORDER BY VC_SITE_ABBR;
+
+
+/* ----------------------------------------------------------------------------
+   Sites/get   (Query)  — one full row by surrogate id, for the Detail form.
+   params:  recordId (Int).   *** NO siteId filter (rule #2) ***
+   Returns ALL 32 columns incl. the read-only/system-maintained ones (shown
+   disabled in the form, rule #3).
+   ---------------------------------------------------------------------------- */
+SELECT  IN_SITE_ID, VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE,
+        VC_COUNTRY, VC_ZIP, VC_DUNS, VC_SUPPLIER_CODE, VC_DOCK_CODE, IN_EIN_SEQ,
+        VC_EDI_MODE, VC_SEP_SEGMENT, VC_SEP_ELEMENT, VC_SEP_SUBELEMENT,
+        VC_TMM_NAME, VC_TMM_ABBR, VC_TMM_DUNS, IN_MAX_SEQUENCE,
+        BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE,
+        IN_FILL_DAYS, IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY,
+        VC_FORECAST_IMPORT_MODE, VC_LAST_FORECAST_IMPORT,
+        BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE, IN_DATA_RETENTION,
+        VC_LAST_UPDATE, VC_ADD
+FROM    INV_SITES
+WHERE   IN_SITE_ID = :recordId
+/* RULE #2: no site predicate */
+;
+
+
+/* ----------------------------------------------------------------------------
+   Sites/insert   (Update Query, returns identity)
+   params (ordered): siteName, siteAbbr, street, city, state, country, zip, duns,
+     supplierCode, dockCode, ediMode, sepSeg, sepElem, sepSubElem, tmmName,
+     tmmAbbr, tmmDuns, maxSequence, acceptAnyAsn, deliveryMethod, fillDays,
+     forecastUsageCompare, useFirstProdDay, forecastImportMode, enableDataPurge,
+     promptDataPurge, dataRetention
+   RULE #3/#5: IDENTITY assigns IN_SITE_ID. IN_EIN_SEQ defaults to 0 (NOT written
+     by the form). VC_LAST_FORECAST_IMPORT left NULL (poller-owned). VC_LAST_UPDATE
+     left NULL on insert. VC_ADD stamped here (16-char recipe).
+   ---------------------------------------------------------------------------- */
+INSERT INTO INV_SITES
+    (VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE, VC_COUNTRY, VC_ZIP,
+     VC_DUNS, VC_SUPPLIER_CODE, VC_DOCK_CODE, IN_EIN_SEQ, VC_EDI_MODE,
+     VC_SEP_SEGMENT, VC_SEP_ELEMENT, VC_SEP_SUBELEMENT,
+     VC_TMM_NAME, VC_TMM_ABBR, VC_TMM_DUNS, IN_MAX_SEQUENCE,
+     BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE,
+     IN_FILL_DAYS, IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY,
+     VC_FORECAST_IMPORT_MODE, BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE,
+     IN_DATA_RETENTION, VC_ADD)
+VALUES
+    (:siteName, :siteAbbr, :street, :city, :state, :country, :zip,
+     :duns, :supplierCode, :dockCode, 0 /* IN_EIN_SEQ default, rule #3 */, :ediMode,
+     :sepSeg, :sepElem, :sepSubElem,
+     :tmmName, :tmmAbbr, :tmmDuns, :maxSequence,
+     :acceptAnyAsn, :deliveryMethod,
+     :fillDays, :forecastUsageCompare, :useFirstProdDay,
+     :forecastImportMode, :enableDataPurge, :promptDataPurge,
+     :dataRetention,
+     CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2));
+SELECT CAST(SCOPE_IDENTITY() AS int) AS newId;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   Sites/update   (Update Query)  — keyed on the surrogate id.
+   params (ordered): same field list as insert, THEN recordId.
+   RULE #3: does NOT touch IN_SITE_ID, IN_EIN_SEQ, VC_LAST_FORECAST_IMPORT, VC_ADD.
+   audit:   VC_LAST_UPDATE = same 16-char recipe.
+   ---------------------------------------------------------------------------- */
+UPDATE INV_SITES SET
+    VC_SITE_NAME=:siteName, VC_SITE_ABBR=:siteAbbr, VC_STREET=:street, VC_CITY=:city,
+    VC_STATE=:state, VC_COUNTRY=:country, VC_ZIP=:zip, VC_DUNS=:duns,
+    VC_SUPPLIER_CODE=:supplierCode, VC_DOCK_CODE=:dockCode, VC_EDI_MODE=:ediMode,
+    VC_SEP_SEGMENT=:sepSeg, VC_SEP_ELEMENT=:sepElem, VC_SEP_SUBELEMENT=:sepSubElem,
+    VC_TMM_NAME=:tmmName, VC_TMM_ABBR=:tmmAbbr, VC_TMM_DUNS=:tmmDuns,
+    IN_MAX_SEQUENCE=:maxSequence, BIT_ACCEPT_ANY_ORDER_ASN=:acceptAnyAsn,
+    VC_DELIVERY_METHOD_CODE=:deliveryMethod, IN_FILL_DAYS=:fillDays,
+    IN_FORECAST_USAGE_COMPARE=:forecastUsageCompare,
+    BIT_USE_FIRST_PRODUCTION_DAY=:useFirstProdDay,
+    VC_FORECAST_IMPORT_MODE=:forecastImportMode,
+    BIT_ENABLE_DATA_PURGE=:enableDataPurge, BIT_PROMPT_DATA_PURGE=:promptDataPurge,
+    IN_DATA_RETENTION=:dataRetention,
+    VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
+       + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
+WHERE IN_SITE_ID = :recordId
+/* RULE #2: no site predicate */
+;
+-- IG83-TODO: replace the yyyymmddHHMMSSff string with a real datetime default at the Postgres phase.
+
+
+/* ----------------------------------------------------------------------------
+   Sites/refCount   (Query)  — the RESTRICT delete gate (rule #6).
+   param:  recordId (Int)
+   TODAY: only the throwaway INV_PARTS_STOCK_MST.site_id references a site (no FK).
+   ⚠️⚠️ EXTEND this to every IN_SITE_ID child once M4 wires the real FKs. Any
+   non-zero total -> BLOCK the delete.
+   ---------------------------------------------------------------------------- */
+SELECT
+    (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE site_id = :recordId)
+    /* M4-TODO: + (SELECT COUNT(*) FROM <each IN_SITE_ID child> WHERE IN_SITE_ID = :recordId) */
+    AS n;
+
+
+/* ----------------------------------------------------------------------------
+   Sites/delete   (Update Query)  — only reached AFTER refCount = 0.
+   param:  recordId (Int)
+   ---------------------------------------------------------------------------- */
+DELETE FROM INV_SITES WHERE IN_SITE_ID = :recordId
+/* RULE #2: no site predicate */
+;
+
+/* lookups/forecastImportMode — STATIC enum ('AUTO','MANUAL'), built in the view
+   (matches the CK_INV_SITES_FC_IMPORT_MODE check). No DB lookup NQ. */
+/* Sites is NOT a leaf in the FK sense, but it has NO FK-combo lookups of its own
+   (no parent masters) — only the static AUTO/MANUAL enum above. */

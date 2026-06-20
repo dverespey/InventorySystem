@@ -1,0 +1,2303 @@
+{
+ "custom": {
+  "form_abbr": "",
+  "form_acceptasn": 0,
+  "form_add": "",
+  "form_city": "",
+  "form_country": "",
+  "form_delivery": "",
+  "form_dock": "",
+  "form_duns": "",
+  "form_edimode": "",
+  "form_einseq": 0,
+  "form_enpurge": 0,
+  "form_fcmode": "AUTO",
+  "form_fcusage": 0,
+  "form_filldays": 0,
+  "form_id": 0,
+  "form_lastfc": "",
+  "form_lastupd": "",
+  "form_maxseq": 0,
+  "form_name": "",
+  "form_prpurge": 1,
+  "form_retention": 0,
+  "form_sepelem": "",
+  "form_sepseg": "",
+  "form_sepsub": "",
+  "form_state": "",
+  "form_street": "",
+  "form_supcode": "",
+  "form_tmmabbr": "",
+  "form_tmmduns": "",
+  "form_tmmname": "",
+  "form_usefpd": 0,
+  "form_zip": "",
+  "isAdmin": false,
+  "recordId": 0,
+  "runNonce": 0,
+  "searchTerm": "",
+  "statusMsg": ""
+ },
+ "params": {},
+ "propConfig": {
+  "custom.gridModel": {
+   "binding": {
+    "config": {
+     "expression": "{view.custom.searchTerm} + '|' + {view.custom.runNonce}"
+    },
+    "transforms": [
+     {
+      "code": "\t# ---- Master/Sites combined grid builder \u2014 inline runPrepQuery ----\n\t# RULE #2: NOT SITE-SCOPED. Admin manages ALL sites -> NO site filter, every row.\n\t# IG81-COMPAT: plain parameterized T-SQL; identical on 8.1.52 and 8.3.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tparts = unicode(value).split(\"|\")\n\tsearchTerm = parts[0]\n\n\tsql = (\"SELECT  IN_SITE_ID              AS RecordID, \"\n\t       \"        VC_SITE_ABBR            AS Abbr, \"\n\t       \"        VC_SITE_NAME            AS SiteName, \"\n\t       \"        VC_STATE                AS State, \"\n\t       \"        VC_DUNS                 AS DUNS, \"\n\t       \"        VC_FORECAST_IMPORT_MODE AS FCMode \"\n\t       \"FROM    INV_SITES \"\n\t       \"WHERE  (? = '' OR VC_SITE_ABBR LIKE '%' + ? + '%' OR VC_SITE_NAME LIKE '%' + ? + '%' OR VC_DUNS LIKE '%' + ? + '%') \"\n\t       \"ORDER BY VC_SITE_ABBR\")   # RULE #2: deliberately NO site_id predicate\n\tds = system.db.runPrepQuery(sql, [searchTerm, searchTerm, searchTerm, searchTerm], DB)\n\tlog.info(\"SPIKE Sites/list: %d rows (search='%s')\" % (ds.rowCount, searchTerm))\n\n\tcolumns = [\n\t\t{\"field\": \"Abbr\",     \"header\": {\"title\": \"Abbr\"}, \"strictWidth\": 90, \"sort\": \"ascending\"},\n\t\t{\"field\": \"SiteName\", \"header\": {\"title\": \"Site Name\"}},\n\t\t{\"field\": \"State\",    \"header\": {\"title\": \"State\"}, \"strictWidth\": 70},\n\t\t{\"field\": \"DUNS\",     \"header\": {\"title\": \"DUNS\"}, \"strictWidth\": 120},\n\t\t{\"field\": \"FCMode\",   \"header\": {\"title\": \"FC Mode\"}, \"strictWidth\": 90},\n\t\t{\"field\": \"RecordID\", \"header\": {\"title\": \"id\"}, \"visible\": False}\n\t]\n\trows = []\n\tfor r in xrange(ds.rowCount):\n\t\trows.append({\n\t\t\t\"RecordID\": ds.getValueAt(r, \"RecordID\"),\n\t\t\t\"Abbr\":     ds.getValueAt(r, \"Abbr\"),\n\t\t\t\"SiteName\": ds.getValueAt(r, \"SiteName\"),\n\t\t\t\"State\":    ds.getValueAt(r, \"State\"),\n\t\t\t\"DUNS\":     ds.getValueAt(r, \"DUNS\"),\n\t\t\t\"FCMode\":   ds.getValueAt(r, \"FCMode\")\n\t\t})\n\treturn {\"data\": rows, \"columns\": columns}\n",
+      "type": "script"
+     }
+    ],
+    "type": "expr"
+   }
+  },
+  "custom.isAdmin": {
+   "binding": {
+    "config": {
+     "expression": "isAuthorized(false, \"Authenticated/Roles/Admin\") || {page.props.urlParams.qaAdmin} = \"1\""
+    },
+    "type": "expr"
+   }
+  },
+  "custom.recordId": {
+   "onChange": {
+    "enabled": null,
+    "script": "\t# ---- Sites combined view: recordId change -> load detail ----\n\t# Grid onRowClick sets self.view.custom.recordId (same-view prop write, NO\n\t# navigation). recordId==0 -> insert mode. RULE #2: get is NOT site-scoped.\n\t# IG81-COMPAT: plain change script + T-SQL.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tv = self.view if hasattr(self, \"view\") else self\n\tDB = \"Inventory_Spike\"\n\tc = v.custom\n\tcv = getattr(currentValue, \"value\", currentValue)\n\trecId = int(cv or 0)\n\tlog.info(\"SPIKE Sites Detail recordId onChange fired: recId=%s origin=%s\" % (recId, origin))\n\tif recId <= 0:\n\t\tc.statusMsg = \"New site \u2014 enter details and Save.\"\n\t\tlog.info(\"SPIKE Sites Detail: insert mode (recordId=0)\")\n\t\treturn\n\tgetSql = (\"SELECT IN_SITE_ID, VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE, VC_COUNTRY, VC_ZIP, VC_DUNS, VC_SUPPLIER_CODE, VC_DOCK_CODE, IN_EIN_SEQ, VC_EDI_MODE, VC_SEP_SEGMENT, VC_SEP_ELEMENT, VC_SEP_SUBELEMENT, VC_TMM_NAME, VC_TMM_ABBR, VC_TMM_DUNS, IN_MAX_SEQUENCE, BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE, IN_FILL_DAYS, IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY, VC_FORECAST_IMPORT_MODE, VC_LAST_FORECAST_IMPORT, BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE, IN_DATA_RETENTION, VC_LAST_UPDATE, VC_ADD FROM INV_SITES WHERE IN_SITE_ID = ?\")  # RULE #2: no site predicate\n\tds = system.db.runPrepQuery(getSql, [recId], DB)\n\tif ds.rowCount == 0:\n\t\tc.statusMsg = \"Site id %d not found.\" % recId\n\t\tlog.warn(\"SPIKE Sites Detail: id %d not found\" % recId); return\n\tdef g(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn val if val is not None else \"\"\n\t_v = ds.getValueAt(0, \"IN_SITE_ID\")\n\tc.form_id = int(_v) if _v is not None else 0\n\tc.form_name = g(\"VC_SITE_NAME\")\n\tc.form_abbr = g(\"VC_SITE_ABBR\")\n\tc.form_street = g(\"VC_STREET\")\n\tc.form_city = g(\"VC_CITY\")\n\tc.form_state = g(\"VC_STATE\")\n\tc.form_country = g(\"VC_COUNTRY\")\n\tc.form_zip = g(\"VC_ZIP\")\n\tc.form_duns = g(\"VC_DUNS\")\n\tc.form_supcode = g(\"VC_SUPPLIER_CODE\")\n\tc.form_dock = g(\"VC_DOCK_CODE\")\n\t_v = ds.getValueAt(0, \"IN_EIN_SEQ\")\n\tc.form_einseq = int(_v) if _v is not None else 0\n\tc.form_edimode = g(\"VC_EDI_MODE\")\n\tc.form_sepseg = g(\"VC_SEP_SEGMENT\")\n\tc.form_sepelem = g(\"VC_SEP_ELEMENT\")\n\tc.form_sepsub = g(\"VC_SEP_SUBELEMENT\")\n\tc.form_tmmname = g(\"VC_TMM_NAME\")\n\tc.form_tmmabbr = g(\"VC_TMM_ABBR\")\n\tc.form_tmmduns = g(\"VC_TMM_DUNS\")\n\t_v = ds.getValueAt(0, \"IN_MAX_SEQUENCE\")\n\tc.form_maxseq = int(_v) if _v is not None else 0\n\tc.form_acceptasn = 1 if (g(\"BIT_ACCEPT_ANY_ORDER_ASN\") in (1, True, \"1\")) else 0\n\tc.form_delivery = g(\"VC_DELIVERY_METHOD_CODE\")\n\t_v = ds.getValueAt(0, \"IN_FILL_DAYS\")\n\tc.form_filldays = int(_v) if _v is not None else 0\n\t_v = ds.getValueAt(0, \"IN_FORECAST_USAGE_COMPARE\")\n\tc.form_fcusage = int(_v) if _v is not None else 0\n\tc.form_usefpd = 1 if (g(\"BIT_USE_FIRST_PRODUCTION_DAY\") in (1, True, \"1\")) else 0\n\tc.form_fcmode = g(\"VC_FORECAST_IMPORT_MODE\")\n\tc.form_lastfc = g(\"VC_LAST_FORECAST_IMPORT\")\n\tc.form_enpurge = 1 if (g(\"BIT_ENABLE_DATA_PURGE\") in (1, True, \"1\")) else 0\n\tc.form_prpurge = 1 if (g(\"BIT_PROMPT_DATA_PURGE\") in (1, True, \"1\")) else 0\n\t_v = ds.getValueAt(0, \"IN_DATA_RETENTION\")\n\tc.form_retention = int(_v) if _v is not None else 0\n\tc.form_lastupd = g(\"VC_LAST_UPDATE\")\n\tc.form_add = g(\"VC_ADD\")\n\tc.statusMsg = \"Editing site %s (id %d).\" % (c.form_abbr, recId)\n\tlog.info(\"SPIKE Sites Detail loaded id=%d abbr=%s name=%s\" % (recId, c.form_abbr, c.form_name))\n"
+   }
+  }
+ },
+ "props": {
+  "defaultSize": {
+   "height": 900,
+   "width": 1440
+  }
+ },
+ "root": {
+  "children": [
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "Title"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Sites Master \u2014 List + Detail  \u00b7  INV_SITES (Inventory_Spike)  \u00b7  ADMIN-ONLY \u00b7 ALL SITES (not site-scoped)"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "meta": {
+       "domId": "sites-admin-banner",
+       "name": "AdminBanner"
+      },
+      "propConfig": {
+       "meta.visible": {
+        "binding": {
+         "config": {
+          "expression": "!{view.custom.isAdmin}"
+         },
+         "type": "expr"
+        }
+       },
+       "props.text": {
+        "binding": {
+         "config": {
+          "expression": "if({view.custom.isAdmin}, '', 'ADMIN ONLY \u2014 this screen is restricted. (Enforced role-gate pending Designer view permissions + IdP.)')"
+         },
+         "type": "expr"
+        }
+       }
+      },
+      "props": {
+       "style": {
+        "backgroundColor": "#FFF3CD",
+        "border": "1px solid #FFC107",
+        "color": "#7A5C00",
+        "fontSize": "12px",
+        "fontWeight": "bold",
+        "padding": "6px 8px"
+       }
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "SearchCap"
+          },
+          "props": {
+           "style": {
+            "color": "#666666",
+            "fontSize": "11px"
+           },
+           "text": "Search (abbr, name or DUNS)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-search",
+           "name": "SearchField"
+          },
+          "position": {
+           "basis": "240px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.searchTerm"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "SearchWrap"
+        },
+        "props": {
+         "direction": "column",
+         "style": {
+          "gap": "2px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\tself.view.custom.runNonce = (self.view.custom.runNonce or 0) + 1\n\tsystem.util.getLogger(\"SPIKE\").info(\"Sites search -> runNonce=\" + str(self.view.custom.runNonce))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "sites-search-btn",
+         "name": "SearchButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Search"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# New record: same-view prop write (NO navigation). recordId=0 -> insert mode.\n\t# Admin-gate (rule #1, defense-in-depth): non-admins cannot start a new site.\n\tc = self.view.custom\n\tif not c.isAdmin:\n\t\tc.statusMsg = \"Admin only \u2014 you do not have permission to add sites.\"\n\t\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Sites New BLOCKED: not admin\"); return\n\tc.form_name = \"\"\n\tc.form_abbr = \"\"\n\tc.form_street = \"\"\n\tc.form_city = \"\"\n\tc.form_state = \"\"\n\tc.form_country = \"\"\n\tc.form_zip = \"\"\n\tc.form_duns = \"\"\n\tc.form_supcode = \"\"\n\tc.form_dock = \"\"\n\tc.form_edimode = \"\"\n\tc.form_sepseg = \"\"\n\tc.form_sepelem = \"\"\n\tc.form_sepsub = \"\"\n\tc.form_tmmname = \"\"\n\tc.form_tmmabbr = \"\"\n\tc.form_tmmduns = \"\"\n\tc.form_maxseq = 0\n\tc.form_acceptasn = 0\n\tc.form_delivery = \"\"\n\tc.form_filldays = 0\n\tc.form_fcusage = 0\n\tc.form_usefpd = 0\n\tc.form_fcmode = 'AUTO'\n\tc.form_enpurge = 0\n\tc.form_prpurge = 1\n\tc.form_retention = 0\n\tc.recordId = 0\n\tc.statusMsg = \"New site \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Sites New -> recordId=0 (insert mode)\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "sites-new-btn",
+         "name": "NewButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#388E3C",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "New Site"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "FilterBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "flex-end",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "12px",
+        "padding": "10px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "events": {
+       "component": {
+        "onRowClick": {
+         "config": {
+          "script": "\t# Row select -> SAME-VIEW prop write (NO navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\ttry:\n\t\trecId = event.value[\"RecordID\"]\n\texcept Exception:\n\t\trecId = event.value[\"RecordID\"] if hasattr(event, \"value\") else None\n\tif recId is None:\n\t\tlog.warn(\"SPIKE Sites list row click: no RecordID in event\")\n\t\treturn\n\tlog.info(\"SPIKE Sites list -> open Detail recordId=%s\" % recId)\n\tself.view.custom.recordId = int(recId)\n"
+         },
+         "scope": "G",
+         "type": "script"
+        }
+       }
+      },
+      "meta": {
+       "domId": "sites-grid",
+       "name": "SitesGrid"
+      },
+      "position": {
+       "basis": "500px",
+       "grow": 1
+      },
+      "propConfig": {
+       "props.columns": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.columns"
+         },
+         "type": "property"
+        }
+       },
+       "props.data": {
+        "binding": {
+         "config": {
+          "path": "view.custom.gridModel.data"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "filtering": {
+        "enabled": false
+       },
+       "pager": {
+        "activeOption": 1000,
+        "bottom": false,
+        "options": [
+         1000
+        ],
+        "top": false
+       },
+       "selection": {
+        "enabled": true
+       },
+       "sortOrder": [
+        "0:Abbr"
+       ]
+      },
+      "type": "ia.display.table"
+     },
+     {
+      "meta": {
+       "name": "FooterNote"
+      },
+      "props": {
+       "style": {
+        "color": "#37474F",
+        "fontSize": "11px",
+        "fontStyle": "italic"
+       },
+       "text": "Admin-only. NOT site-scoped \u2014 shows ALL sites (inverted IG-SITE seam). Single combined view; row-select is an in-view prop write, no navigation. IN_SITE_ID / IN_EIN_SEQ / last-forecast-import / audit fields are read-only (system-maintained)."
+      },
+      "type": "ia.display.label"
+     }
+    ],
+    "meta": {
+     "name": "LeftPane"
+    },
+    "position": {
+     "basis": "560px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "10px"
+     }
+    },
+    "type": "ia.container.flex"
+   },
+   {
+    "children": [
+     {
+      "meta": {
+       "name": "DetailTitle"
+      },
+      "props": {
+       "style": {
+        "color": "#222222",
+        "fontSize": "15px",
+        "fontWeight": "bold"
+       },
+       "text": "Detail"
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "meta": {
+       "domId": "sites-status",
+       "name": "StatusMsg"
+      },
+      "propConfig": {
+       "props.text": {
+        "binding": {
+         "config": {
+          "path": "view.custom.statusMsg"
+         },
+         "type": "property"
+        }
+       }
+      },
+      "props": {
+       "style": {
+        "color": "#B71C1C",
+        "fontSize": "13px",
+        "fontWeight": "bold",
+        "padding": "6px 8px"
+       }
+      },
+      "type": "ia.display.label"
+     },
+     {
+      "children": [
+       {
+        "meta": {
+         "name": "grp_identity"
+        },
+        "props": {
+         "style": {
+          "borderBottom": "1px solid #D0D4DA",
+          "color": "#1976D2",
+          "fontSize": "12px",
+          "fontWeight": "bold",
+          "marginTop": "4px"
+         },
+         "text": "Identity / Address"
+        },
+        "type": "ia.display.label"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_id"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Site ID (identity)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-id",
+           "name": "fld_form_id"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_id"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "enabled": false
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_id"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_name"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Site Name *"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-name",
+           "name": "fld_form_name"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_name"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_name"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_abbr"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Site Abbr (ISA) *"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-abbr",
+           "name": "fld_form_abbr"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_abbr"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_abbr"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_street"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Street"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-street",
+           "name": "fld_form_street"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_street"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_street"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_city"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "City"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-city",
+           "name": "fld_form_city"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_city"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_city"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_state"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "State"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-state",
+           "name": "fld_form_state"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_state"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 2
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_state"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_country"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Country"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-country",
+           "name": "fld_form_country"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_country"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 3
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_country"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_zip"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Zip"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-zip",
+           "name": "fld_form_zip"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_zip"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_zip"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "meta": {
+         "name": "grp_edi"
+        },
+        "props": {
+         "style": {
+          "borderBottom": "1px solid #D0D4DA",
+          "color": "#1976D2",
+          "fontSize": "12px",
+          "fontWeight": "bold",
+          "marginTop": "4px"
+         },
+         "text": "EDI / Trading Identity"
+        },
+        "type": "ia.display.label"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_duns"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "DUNS"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-duns",
+           "name": "fld_form_duns"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_duns"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 13
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_duns"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_supcode"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Supplier Code"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-supcode",
+           "name": "fld_form_supcode"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_supcode"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 5
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_supcode"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_dock"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Dock Code"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-dock",
+           "name": "fld_form_dock"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_dock"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_dock"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_einseq"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "EIN Seq (system)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-einseq",
+           "name": "fld_form_einseq"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_einseq"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "enabled": false
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_einseq"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_edimode"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "EDI Mode"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-edimode",
+           "name": "fld_form_edimode"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_edimode"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_edimode"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_sepseg"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Sep: Segment"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-sepseg",
+           "name": "fld_form_sepseg"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sepseg"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 1
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_sepseg"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_sepelem"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Sep: Element"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-sepelem",
+           "name": "fld_form_sepelem"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sepelem"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 1
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_sepelem"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_sepsub"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Sep: Sub-element"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-sepsub",
+           "name": "fld_form_sepsub"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_sepsub"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 1
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_sepsub"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_tmmname"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "TMM Name"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-tmmname",
+           "name": "fld_form_tmmname"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_tmmname"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 50
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_tmmname"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_tmmabbr"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "TMM Abbr"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-tmmabbr",
+           "name": "fld_form_tmmabbr"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_tmmabbr"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 10
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_tmmabbr"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_tmmduns"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "TMM DUNS"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-tmmduns",
+           "name": "fld_form_tmmduns"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_tmmduns"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 13
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_tmmduns"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_maxseq"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Max Sequence"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-maxseq",
+           "name": "fld_form_maxseq"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_maxseq"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_maxseq"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_acceptasn"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Accept Any Order ASN"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-acceptasn",
+           "name": "fld_form_acceptasn"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_acceptasn"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "row_form_acceptasn"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_delivery"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Delivery Method (TD5)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-delivery",
+           "name": "fld_form_delivery"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_delivery"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "maxLength": 5
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_delivery"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "meta": {
+         "name": "grp_order"
+        },
+        "props": {
+         "style": {
+          "borderBottom": "1px solid #D0D4DA",
+          "color": "#1976D2",
+          "fontSize": "12px",
+          "fontWeight": "bold",
+          "marginTop": "4px"
+         },
+         "text": "Order / Forecast Config"
+        },
+        "type": "ia.display.label"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_filldays"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Fill Days (<= 50)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-filldays",
+           "name": "fld_form_filldays"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_filldays"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_filldays"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_fcusage"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Forecast Usage Compare"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-fcusage",
+           "name": "fld_form_fcusage"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_fcusage"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_fcusage"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_usefpd"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Use First Production Day"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-usefpd",
+           "name": "fld_form_usefpd"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_usefpd"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "row_form_usefpd"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_fcmode"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Forecast Import Mode"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-fcmode",
+           "name": "fld_form_fcmode"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_fcmode"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "options": [
+            {
+             "label": "AUTO",
+             "value": "AUTO"
+            },
+            {
+             "label": "MANUAL",
+             "value": "MANUAL"
+            }
+           ]
+          },
+          "type": "ia.input.dropdown"
+         }
+        ],
+        "meta": {
+         "name": "row_form_fcmode"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_lastfc"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Last Forecast Import (system)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-lastfc",
+           "name": "fld_form_lastfc"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_lastfc"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "enabled": false
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_lastfc"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "meta": {
+         "name": "grp_purge"
+        },
+        "props": {
+         "style": {
+          "borderBottom": "1px solid #D0D4DA",
+          "color": "#1976D2",
+          "fontSize": "12px",
+          "fontWeight": "bold",
+          "marginTop": "4px"
+         },
+         "text": "Data Purge"
+        },
+        "type": "ia.display.label"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_enpurge"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Enable Data Purge"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-enpurge",
+           "name": "fld_form_enpurge"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_enpurge"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "row_form_enpurge"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_prpurge"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Prompt Data Purge"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-prpurge",
+           "name": "fld_form_prpurge"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.selected": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_prpurge"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.checkbox"
+         }
+        ],
+        "meta": {
+         "name": "row_form_prpurge"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_retention"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Data Retention (>= 12 mo)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-retention",
+           "name": "fld_form_retention"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.value": {
+            "binding": {
+             "config": {
+              "bidirectional": true,
+              "path": "view.custom.form_retention"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "type": "ia.input.numeric-entry-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_retention"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "meta": {
+         "name": "grp_audit"
+        },
+        "props": {
+         "style": {
+          "borderBottom": "1px solid #D0D4DA",
+          "color": "#1976D2",
+          "fontSize": "12px",
+          "fontWeight": "bold",
+          "marginTop": "4px"
+         },
+         "text": "Audit (read-only)"
+        },
+        "type": "ia.display.label"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_lastupd"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Last Update (audit)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-lastupd",
+           "name": "fld_form_lastupd"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_lastupd"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "enabled": false
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_lastupd"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       },
+       {
+        "children": [
+         {
+          "meta": {
+           "name": "lbl_form_add"
+          },
+          "position": {
+           "basis": "200px"
+          },
+          "props": {
+           "style": {
+            "fontSize": "12px"
+           },
+           "text": "Created (audit)"
+          },
+          "type": "ia.display.label"
+         },
+         {
+          "meta": {
+           "domId": "sites-add",
+           "name": "fld_form_add"
+          },
+          "position": {
+           "basis": "320px"
+          },
+          "propConfig": {
+           "props.text": {
+            "binding": {
+             "config": {
+              "path": "view.custom.form_add"
+             },
+             "type": "property"
+            }
+           }
+          },
+          "props": {
+           "enabled": false
+          },
+          "type": "ia.input.text-field"
+         }
+        ],
+        "meta": {
+         "name": "row_form_add"
+        },
+        "props": {
+         "alignItems": "center",
+         "style": {
+          "gap": "10px"
+         }
+        },
+        "type": "ia.container.flex"
+       }
+      ],
+      "meta": {
+       "domId": "sites-form",
+       "name": "Form"
+      },
+      "propConfig": {
+       "meta.visible": {
+        "binding": {
+         "config": {
+          "expression": "{view.custom.isAdmin}"
+         },
+         "type": "expr"
+        }
+       }
+      },
+      "props": {
+       "direction": "column",
+       "style": {
+        "backgroundColor": "#FFFFFF",
+        "border": "1px solid #D0D4DA",
+        "borderRadius": "4px",
+        "gap": "6px",
+        "maxHeight": "640px",
+        "overflow": "auto",
+        "padding": "12px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "children": [
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- Sites Save (insert-or-update) ----\n\t# recordId==0 -> insert (IDENTITY assigns id, VC_ADD stamped); >0 -> update\n\t# (VC_LAST_UPDATE stamped). RULE #3: IN_SITE_ID/IN_EIN_SEQ/VC_LAST_FORECAST_IMPORT\n\t# are NEVER written by the form. RULE #2: no site predicate.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\t# Admin-gate (rule #1, defense-in-depth):\n\tif not c.isAdmin:\n\t\tc.statusMsg = \"Admin only \u2014 you do not have permission to save sites.\"\n\t\tlog.info(\"SPIKE Sites save BLOCKED: not admin\"); return\n\tdef _str(v):\n\t\ts = (unicode(v) if v is not None else u\"\").strip()\n\t\treturn s\n\tdef _int(v):\n\t\ttry:\n\t\t\treturn int(v) if v not in (None, \"\") else 0\n\t\texcept Exception:\n\t\t\treturn 0\n\tdef _bit(v):\n\t\treturn 1 if v in (1, True, \"1\", \"true\", \"True\") else 0\n\tdef _mode(v):\n\t\tm = (_str(v) or \"AUTO\").upper()\n\t\treturn m if m in (\"AUTO\", \"MANUAL\") else \"AUTO\"\n\tname = _str(c.form_name)\n\tabbr = _str(c.form_abbr)\n\t# ---- validation (client-side fast-fail; CHECK constraints are the backstop) ----\n\tif name == \"\":\n\t\tc.statusMsg = \"Site name is required.\"\n\t\tlog.info(\"SPIKE Sites save REJECTED: blank name\"); return\n\tif abbr == \"\":\n\t\tc.statusMsg = \"Site abbr is required.\"\n\t\tlog.info(\"SPIKE Sites save REJECTED: blank abbr\"); return\n\tif len(abbr) > 10:\n\t\tc.statusMsg = \"Site abbr must be 10 characters or fewer.\"\n\t\tlog.info(\"SPIKE Sites save REJECTED: abbr len=%d\" % len(abbr)); return\n\tfillDays = _int(c.form_filldays)\n\tif fillDays > 50:\n\t\tc.statusMsg = \"Fill Days must be 50 or fewer (CK_INV_SITES_FILL_DAYS).\"\n\t\tlog.info(\"SPIKE Sites save REJECTED: fillDays=%d > 50\" % fillDays); return\n\tretention = _int(c.form_retention)\n\tif retention != 0 and retention < 12:\n\t\tc.statusMsg = \"Data Retention must be >= 12 months (CK_INV_SITES_DATA_RETENTION).\"\n\t\tlog.info(\"SPIKE Sites save REJECTED: retention=%d < 12\" % retention); return\n\tmode = _mode(c.form_fcmode)\n\tif mode not in (\"AUTO\", \"MANUAL\"):\n\t\tc.statusMsg = \"Forecast Import Mode must be AUTO or MANUAL.\"\n\t\tlog.info(\"SPIKE Sites save REJECTED: bad mode=%s\" % mode); return\n\ttry:\n\t\tif recId == 0:\n\t\t\tinsSql = (\"INSERT INTO INV_SITES (VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE, VC_COUNTRY, VC_ZIP, VC_DUNS, VC_SUPPLIER_CODE, VC_DOCK_CODE, IN_EIN_SEQ, VC_EDI_MODE, VC_SEP_SEGMENT, VC_SEP_ELEMENT, VC_SEP_SUBELEMENT, VC_TMM_NAME, VC_TMM_ABBR, VC_TMM_DUNS, IN_MAX_SEQUENCE, BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE, IN_FILL_DAYS, IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY, VC_FORECAST_IMPORT_MODE, BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE, IN_DATA_RETENTION, VC_ADD) \"\n\t\t\t          \"VALUES (?,?,?,?,?,?,?, ?,?,?, 0, ?, ?,?,?, ?,?,?,?, ?,?, ?, ?,?,?, ?,?,?, CONVERT(char(8),GETDATE(),112) + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)); \"\n\t\t\t          \"SELECT CAST(SCOPE_IDENTITY() AS int) AS newId\")\n\t\t\trs = system.db.runPrepQuery(insSql, [_str(c.form_name), _str(c.form_abbr), _str(c.form_street), _str(c.form_city), _str(c.form_state), _str(c.form_country), _str(c.form_zip), _str(c.form_duns), _str(c.form_supcode), _str(c.form_dock), _str(c.form_edimode), _str(c.form_sepseg), _str(c.form_sepelem), _str(c.form_sepsub), _str(c.form_tmmname), _str(c.form_tmmabbr), _str(c.form_tmmduns), _int(c.form_maxseq), _bit(c.form_acceptasn), _str(c.form_delivery), _int(c.form_filldays), _int(c.form_fcusage), _bit(c.form_usefpd), _mode(c.form_fcmode), _bit(c.form_enpurge), _bit(c.form_prpurge), _int(c.form_retention)], DB)\n\t\t\tnewId = int(rs.getValueAt(0, 0))\n\t\t\tc.statusMsg = \"Inserted site %s (id %d).\" % (abbr, newId)\n\t\t\tlog.info(\"SPIKE Sites INSERT ok: abbr=%s newId=%d\" % (abbr, newId))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1\n\t\t\tc.recordId = newId\n\t\telse:\n\t\t\tupdSql = (\"UPDATE INV_SITES SET VC_SITE_NAME=?, VC_SITE_ABBR=?, VC_STREET=?, VC_CITY=?, VC_STATE=?, VC_COUNTRY=?, VC_ZIP=?, VC_DUNS=?, VC_SUPPLIER_CODE=?, VC_DOCK_CODE=?, VC_EDI_MODE=?, VC_SEP_SEGMENT=?, VC_SEP_ELEMENT=?, VC_SEP_SUBELEMENT=?, VC_TMM_NAME=?, VC_TMM_ABBR=?, VC_TMM_DUNS=?, IN_MAX_SEQUENCE=?, BIT_ACCEPT_ANY_ORDER_ASN=?, VC_DELIVERY_METHOD_CODE=?, IN_FILL_DAYS=?, IN_FORECAST_USAGE_COMPARE=?, BIT_USE_FIRST_PRODUCTION_DAY=?, VC_FORECAST_IMPORT_MODE=?, BIT_ENABLE_DATA_PURGE=?, BIT_PROMPT_DATA_PURGE=?, IN_DATA_RETENTION=?, VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112) + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2) \"\n\t\t\t          \"WHERE IN_SITE_ID = ?\")  # RULE #2: no site predicate\n\t\t\tn = system.db.runPrepUpdate(updSql, [_str(c.form_name), _str(c.form_abbr), _str(c.form_street), _str(c.form_city), _str(c.form_state), _str(c.form_country), _str(c.form_zip), _str(c.form_duns), _str(c.form_supcode), _str(c.form_dock), _str(c.form_edimode), _str(c.form_sepseg), _str(c.form_sepelem), _str(c.form_sepsub), _str(c.form_tmmname), _str(c.form_tmmabbr), _str(c.form_tmmduns), _int(c.form_maxseq), _bit(c.form_acceptasn), _str(c.form_delivery), _int(c.form_filldays), _int(c.form_fcusage), _bit(c.form_usefpd), _mode(c.form_fcmode), _bit(c.form_enpurge), _bit(c.form_prpurge), _int(c.form_retention), recId], DB)\n\t\t\tc.statusMsg = \"Updated site %s (%d row).\" % (abbr, n)\n\t\t\tlog.info(\"SPIKE Sites UPDATE ok: id=%d abbr=%s rows=%d\" % (recId, abbr, n))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1\n\texcept Exception, e:\n\t\tc.statusMsg = \"Save failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE Sites save FAILED: %s\" % unicode(e))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "sites-save-btn",
+         "name": "SaveButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#1976D2",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Save"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\t# ---- Sites Delete \u2014 RESTRICT gate (rule #6) ----\n\t# refCount counts the THROWAWAY INV_PARTS_STOCK_MST.site_id (no FK yet).\n\t# \u26a0\ufe0f MUST be EXTENDED to every IN_SITE_ID child once M4 wires the FKs.\n\t# Block on any non-zero total; never delete a referenced site.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tabbr = (unicode(c.form_abbr) if c.form_abbr is not None else u\"\").strip()\n\tif not c.isAdmin:\n\t\tc.statusMsg = \"Admin only \u2014 you do not have permission to delete sites.\"\n\t\tlog.info(\"SPIKE Sites DELETE BLOCKED: not admin\"); return\n\tif recId == 0:\n\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n\t\treturn\n\trefSql = \"SELECT (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE site_id = ?) AS n\"\n\trs = system.db.runPrepQuery(refSql, [recId], DB)\n\tn = int(rs.getValueAt(0, 0))\n\tlog.info(\"SPIKE Sites refCount: id=%d abbr=%s n=%d\" % (recId, abbr, n))\n\tif n > 0:\n\t\tc.statusMsg = (\"Cannot delete site %s \u2014 still referenced by %d part(s). \"\n\t\t               \"Reassign or archive those rows first.\") % (abbr, n)\n\t\tlog.info(\"SPIKE Sites DELETE BLOCKED: id=%d abbr=%s refs=%d\" % (recId, abbr, n)); return\n\ttry:\n\t\tdelN = system.db.runPrepUpdate(\"DELETE FROM INV_SITES WHERE IN_SITE_ID = ?\", [recId], DB)\n\t\tlog.info(\"SPIKE Sites DELETE ok: id=%d abbr=%s rows=%d\" % (recId, abbr, delN))\n\t\tc.statusMsg = \"Deleted site %s.\" % abbr\n\t\tc.form_name = \"\"\n\t\tc.form_abbr = \"\"\n\t\tc.form_street = \"\"\n\t\tc.form_city = \"\"\n\t\tc.form_state = \"\"\n\t\tc.form_country = \"\"\n\t\tc.form_zip = \"\"\n\t\tc.form_duns = \"\"\n\t\tc.form_supcode = \"\"\n\t\tc.form_dock = \"\"\n\t\tc.form_edimode = \"\"\n\t\tc.form_sepseg = \"\"\n\t\tc.form_sepelem = \"\"\n\t\tc.form_sepsub = \"\"\n\t\tc.form_tmmname = \"\"\n\t\tc.form_tmmabbr = \"\"\n\t\tc.form_tmmduns = \"\"\n\t\tc.form_maxseq = 0\n\t\tc.form_acceptasn = 0\n\t\tc.form_delivery = \"\"\n\t\tc.form_filldays = 0\n\t\tc.form_fcusage = 0\n\t\tc.form_usefpd = 0\n\t\tc.form_fcmode = 'AUTO'\n\t\tc.form_enpurge = 0\n\t\tc.form_prpurge = 1\n\t\tc.form_retention = 0\n\t\tc.runNonce = (c.runNonce or 0) + 1\n\t\tc.recordId = 0\n\texcept Exception, e:\n\t\tc.statusMsg = \"Delete failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE Sites DELETE FAILED: %s\" % unicode(e))\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "sites-delete-btn",
+         "name": "DeleteButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#C62828",
+          "color": "#FFFFFF",
+          "fontWeight": "bold"
+         },
+         "text": "Delete"
+        },
+        "type": "ia.input.button"
+       },
+       {
+        "events": {
+         "component": {
+          "onActionPerformed": {
+           "config": {
+            "script": "\tc = self.view.custom\n\tc.form_name = \"\"\n\tc.form_abbr = \"\"\n\tc.form_street = \"\"\n\tc.form_city = \"\"\n\tc.form_state = \"\"\n\tc.form_country = \"\"\n\tc.form_zip = \"\"\n\tc.form_duns = \"\"\n\tc.form_supcode = \"\"\n\tc.form_dock = \"\"\n\tc.form_edimode = \"\"\n\tc.form_sepseg = \"\"\n\tc.form_sepelem = \"\"\n\tc.form_sepsub = \"\"\n\tc.form_tmmname = \"\"\n\tc.form_tmmabbr = \"\"\n\tc.form_tmmduns = \"\"\n\tc.form_maxseq = 0\n\tc.form_acceptasn = 0\n\tc.form_delivery = \"\"\n\tc.form_filldays = 0\n\tc.form_fcusage = 0\n\tc.form_usefpd = 0\n\tc.form_fcmode = 'AUTO'\n\tc.form_enpurge = 0\n\tc.form_prpurge = 1\n\tc.form_retention = 0\n\tc.recordId = 0\n\tc.statusMsg = \"Cleared \u2014 ready for a new site.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Sites form cleared\")\n"
+           },
+           "scope": "G",
+           "type": "script"
+          }
+         }
+        },
+        "meta": {
+         "domId": "sites-clear-btn",
+         "name": "ClearButton"
+        },
+        "props": {
+         "style": {
+          "backgroundColor": "#607D8B",
+          "color": "#FFFFFF"
+         },
+         "text": "Clear"
+        },
+        "type": "ia.input.button"
+       }
+      ],
+      "meta": {
+       "name": "ActionBar"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "propConfig": {
+       "meta.visible": {
+        "binding": {
+         "config": {
+          "expression": "{view.custom.isAdmin}"
+         },
+         "type": "expr"
+        }
+       }
+      },
+      "props": {
+       "alignItems": "center",
+       "style": {
+        "gap": "12px",
+        "padding": "8px 0"
+       }
+      },
+      "type": "ia.container.flex"
+     }
+    ],
+    "meta": {
+     "name": "RightPane"
+    },
+    "position": {
+     "basis": "640px",
+     "grow": 1
+    },
+    "props": {
+     "direction": "column",
+     "style": {
+      "gap": "8px"
+     }
+    },
+    "type": "ia.container.flex"
+   }
+  ],
+  "meta": {
+   "name": "root"
+  },
+  "props": {
+   "style": {
+    "backgroundColor": "#F5F6F8",
+    "gap": "12px",
+    "padding": "12px"
+   }
+  },
+  "type": "ia.container.flex"
+ }
+}
