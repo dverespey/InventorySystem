@@ -400,6 +400,15 @@ not a code defect.
 
 ## 7. Open items + David sign-offs needed
 
+> **✅ SIGN-OFF STATUS (David, 2026-06-20):** #1 CONFIRMED (live-backup `AD_FRSPULL` is production-canonical;
+> quarantine the stale 06/10 dump). #2 EIN-at-send CONFIRMED — reader trace done: only `UPDATE_EINStatus`
+> (ack, post-send) + `REPORT_EDI856` (the send) touch `IN_ASN_EIN`; `SELECT_ASNList` only DISPLAYS it (shows
+> 0 pre-send — render as "—"); no break. #3 single-txn all-or-nothing CONFIRMED. #4 No-Ratio tiebreak
+> CONFIRMED = **lowest `ID_FORECAST_DETAIL`** (faithful; reproduces ASN 4721's FEL1000/76061836) — already
+> implemented in `code.py`. #5 true row-parity oracle: APPROACH ACCEPTED (certify total-qty + self-consistency
+> now; a true oracle / the dev-mirror multi-week comparison comes later). The BLOCKER + nondeterminism are
+> FIXED (PR #28). **The ASN-creation keystone is signed off** on the faithful-on-the-live-basis standard.
+
 1. **Confirm the live-backup `AD_FRSPULL` is production-canonical** (char(3) / WHEEL+TIRE / `<> 'M'`)
    and **quarantine the stale 06/10 dump** (`/Users/apple/Documents/FP docs/SQL/VehicleOrder.sql`) so
    no future analysis regresses to the char(21)/reversed/no-`M` version. (§2.9; refutes design-review B1.)

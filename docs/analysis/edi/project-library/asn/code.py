@@ -358,11 +358,10 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 		# FEL1000/m36 vs FEL2000/m37). We do NOT ALTER the shared proc (other callers depend on it);
 		# instead the REBUILD sorts the rows here, in the driver, by ID_FORECAST_DETAIL ascending so the
 		# No-Ratio pick (and the ratio-branch emission order) is deterministic and reproducible.
-		# >>> DAVID-CONFIRM: this makes the No-Ratio single-vehicle case deterministically pick the row
-		#     with the LOWEST ID_FORECAST_DETAIL (= first-configured). That is a stable, defensible
-		#     tiebreak but a DOMAIN choice — confirm "lowest ID_FORECAST_DETAIL wins" is the intended
-		#     assy, or specify a different sort key (e.g. by manifest number or assy part). Deterministic-
-		#     lowest-id is strictly better than the prior nondeterminism regardless.
+		# TIEBREAK = lowest ID_FORECAST_DETAIL (= first-configured assy). CONFIRMED by David 2026-06-20
+		#     (faithful-deterministic: it is the stable proxy for the legacy's undefined "first row" and
+		#     reproduces what production actually shipped for No-Ratio BC PEE in ASN 4721 — manifest
+		#     76061836 / FEL1000). NOT a ratio-based pick (that would be a behavior change vs legacy).
 		fcRows.sort(key=lambda r: r["ID_FORECAST_DETAIL"])
 		forecastByBc[bc] = fcRows
 
