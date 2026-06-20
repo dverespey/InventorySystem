@@ -26,6 +26,23 @@ CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
 SA_PASS = os.environ.get("SA_PASS")
 SQL_DB = "Inventory"   # the SQL Server DB; the wrappers' logical name "Inventory_Spike" maps here
 
+# Logical Ignition connection name -> physical spike DB. The producer/Order seams only ever touch the
+# default Inventory DB; the ASN create driver also READS AD_FRSPULL on the shared ALC datasource, so a
+# query/proc-call can be routed to VehicleOrder by passing db="VehicleOrder" (or its connection name).
+# Unknown names fall through to SQL_DB (the historical behaviour — db was previously ignored entirely).
+_DB_MAP = {
+    None: SQL_DB,
+    "Inventory_Spike": SQL_DB,
+    "Inventory": SQL_DB,
+    "VehicleOrder": "VehicleOrder",
+}
+
+
+def _resolve_db(db):
+    """Map a logical connection name to the physical spike DB; default to SQL_DB for unknown names so
+    the autocommit Inventory path is unchanged for every existing caller."""
+    return _DB_MAP.get(db, SQL_DB)
+
 
 def _sqlcmd_args(db, interactive=False):
     """The shared sqlcmd invocation flags. `interactive=True` adds `-i` stdin streaming for the
@@ -230,6 +247,16 @@ class _TxSession(object):
         self._batch(stmt, want_rows=False)
         return 1
 
+    def query_scalar(self, stmt):
+        """Run a batch on the live tx session and return the first cell of the LAST result row (the
+        ASN-create captures INSERT_ASNInfo's OUTPUT @id via a trailing SELECT @id on the same tx).
+        Mirrors system.db.runScalarPrepQuery(..., tx=). None when the cell is NULL / no rows."""
+        cols, rows = self._batch(stmt, want_rows=True)
+        if not rows:
+            return None
+        v = rows[-1][0]
+        return None if v == "NULL" else v
+
     def commit(self):
         self._batch("COMMIT TRANSACTION;", want_rows=False)
         self.close()
@@ -269,7 +296,9 @@ class _DB(object):
     INTEGER = "INTEGER"; VARCHAR = "VARCHAR"; BIT = "BIT"
 
     def runPrepQuery(self, sql, args, db=None):
-        return _PyDataset(*_parse_rows(_run(_bind(sql, args), want_rows=True)))
+        # Route to the named DB (VehicleOrder for AD_FRSPULL); defaults to Inventory for every other
+        # caller. The Inventory autocommit path is byte-for-byte unchanged (db resolves to SQL_DB).
+        return _PyDataset(*_parse_rows(_run(_bind(sql, args), want_rows=True, db=_resolve_db(db))))
 
     def runPrepUpdate(self, sql, args, db=None, getKey=False, tx=None):
         stmt = _bind(sql, args)
@@ -278,13 +307,28 @@ class _DB(object):
         # even though Order doesn't use it — keep it correct for future tx writers.
         if isinstance(tx, _TxSession):
             return tx.exec_update(stmt, get_key=getKey)
-        # autocommit path (tx is None or the "tx-noop" sentinel) — UNCHANGED.
+        # autocommit path (tx is None or the "tx-noop" sentinel) — UNCHANGED behaviour for db=None;
+        # db now resolves through the same map so an explicit name routes correctly.
+        rdb = _resolve_db(db)
         if getKey:
-            out = _run(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True)
+            out = _run(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True, db=rdb)
             cols, rows = _parse_rows(out)
             return int(rows[-1][0]) if rows else None
-        _run(stmt, want_rows=False)
+        _run(stmt, want_rows=False, db=rdb)
         return 1
+
+    def runScalarPrepQuery(self, sql, args, db=None, tx=None):
+        """Real 8.1+ API: run a prepared statement, return the first row/first column (None if no rows).
+        Supports the tx id so the ASN create can read INSERT_ASNInfo's OUTPUT @id inside its BEGIN TRAN.
+        Autocommit path routes through the same db map as runPrepQuery."""
+        stmt = _bind(sql, args)
+        if isinstance(tx, _TxSession):
+            return tx.query_scalar(stmt)
+        cols, rows = _parse_rows(_run(stmt, want_rows=True, db=_resolve_db(db)))
+        if not rows:
+            return None
+        v = rows[-1][0]
+        return None if v == "NULL" else v
 
     def createSProcCall(self, name, db=None):
         return _SProcCall(name)
@@ -298,7 +342,10 @@ class _DB(object):
     # Transactions: open a persistent sqlcmd session that spans statements (Order's commitOrders).
     # The producer seams pass no tx; they keep hitting the autocommit _run path above untouched.
     def beginTransaction(self, db=None, **k):
-        return _TxSession(db or SQL_DB)
+        # Resolve the logical connection name (e.g. "Inventory_Spike") to the physical spike DB so the
+        # persistent sqlcmd -d target is real. Order passed no db (-> SQL_DB); create_asn passes the
+        # Inventory connection name.
+        return _TxSession(_resolve_db(db))
     def commitTransaction(self, tx):
         if isinstance(tx, _TxSession):
             tx.commit()
@@ -311,15 +358,34 @@ class _DB(object):
             tx.close()
 
 
+class _Logger(object):
+    """A quiet stand-in for the gateway's named logger. Swallows info/warn/error/debug/trace so the
+    REAL driver's logging calls run for real (any arg shape) without noise. (Set SHIM_LOG_ECHO=1 to
+    echo to stderr when debugging a driver.)"""
+    _echo = os.environ.get("SHIM_LOG_ECHO") == "1"
+
+    def __init__(self, name):
+        self.name = name
+
+    def _emit(self, level, args):
+        if self._echo:
+            sys.stderr.write("[%s] %s %s\n" % (level, self.name, " ".join(str(a) for a in args)))
+
+    def info(self, *a): self._emit("INFO", a)
+    def warn(self, *a): self._emit("WARN", a)
+    def error(self, *a): self._emit("ERROR", a)
+    def debug(self, *a): self._emit("DEBUG", a)
+    def trace(self, *a): self._emit("TRACE", a)
+
+
+class _Util(object):
+    def getLogger(self, name):
+        return _Logger(name)
+
+
 class _System(object):
     def __init__(self):
         self.db = _DB()
-        class _Util(object):
-            class _Logger(object):
-                def info(self, *a): pass
-                def warn(self, *a): pass
-            def getLogger(self, name):
-                return _System._Util._Logger()
         self.util = _Util()
 
 
