@@ -364,10 +364,16 @@ Rank 7 + §3.
 
 **M4 — Security / multi-site / hardening. ~4–6 dev-weeks.**
 §4.
-- **PRE-TASK (verify-before-relocate):** confirm with delphi-architect the real name/DB/schema of the `sites`
-  table David places in VehicleOrder, the exact cross-DB references, and its **sibling readers (GALC/MES)** —
-  before any relocate/retire (SHOULD-FIX-3/4; the table is unverified in the InventorySystem source). If siblings
-  read it, keep-shared/dual-read instead of retiring.
+- ✅ **PRE-TASK DONE (verify-before-relocate, 2026-06-19 — see `vehicleorder-sites-verification.md`).**
+  Verified: **InventorySystem reads NO `sites` table** (source grep + the spike VehicleOrder, which holds only
+  `LINE`); its site config comes from the INI (`SiteInfo.pas`). InventorySystem's real VehicleOrder deps are
+  `LINE`, `AD_GetSpecialDate(s)` (calendar — stays shared, Q9), `AD_UpdateEIN` (EIN → per-site `INV_SITES`, Q4),
+  + Reports. **So `INV_SITES` adoption is SAFE — net-new authoritative source, breaks no InventorySystem
+  reader (relocate half already satisfied).** The production `VehicleOrder.sites` + its GALC/MES/Admin readers
+  are **not inspectable here** (spike VehicleOrder is a `LINE`-only stub; no real dump in repo; siblings are
+  separate codebases) → **do NOT retire the shared `VehicleOrder.sites` as part of InventorySystem work**;
+  treat it as a shared external table that stays put. Physical retirement is a cross-system decision needing
+  the real VehicleOrder schema / David's confirmation of readers.
 - User Source + roles + per-feature gating; `site_id` end-to-end (schema surgery + **F1-safe `_HIST`: add `site_id`
   to the 3 history tables in lockstep with the base tables — the 7 enumerated `SELECT *` triggers at
   `:2664/3440/3617/4107/4269/5475/7496`, §4** + session scoping + parameterize the hardcoded EIN `6440`);
