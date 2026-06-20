@@ -47,3 +47,29 @@ table and its readers **before** anything relocates/retires it. Result below.
 To verify the production `VehicleOrder.sites` structure + its GALC/MES/Admin readers, we'd need the **real
 VehicleOrder schema dump** or David's confirmation of which apps read it. Until then, treat `VehicleOrder.sites`
 as a shared external table that stays put.
+
+---
+
+## POST-RESTORE CONFIRMATION (2026-06-19, real VehicleOrder backup restored — corrects Finding 1)
+
+David provided the live `VehicleOrder.bak` (1.7G) + a matched live `Inventory.bak`, restored to the spike
+(VehicleOrder = real; Inventory.bak → separate `Inventory_Live` for parity, working `Inventory` untouched).
+
+- **The real table is `VehicleOrder.dbo.Site`** (capital-S, **singular**; **2 rows**), NOT `sites`. Its columns
+  are **exactly the `TSiteInfo` fields**: `SiteID, SiteName, SiteAbbr, SiteStreet, SiteCity, SiteState,
+  SiteCountry, SiteZip, SiteDUNS, SiteSupplierCode, SiteDockCode, SiteEIN, …`.
+- **Correction to Finding 1:** InventorySystem DOES read it — **indirectly via the `AD_*` procs**: `AD_GetSite`
+  returns the `Site` row (the ASN-create path reads `SiteEIN` from it), and `AD_UpdateEIN` bumps `Site.SiteEIN`.
+  (The earlier "reads no sites table" was literally true for a `FROM sites` grep, but missed the proc-mediated
+  read.) So **`INV_SITES` is precisely the relocation of `VehicleOrder.Site` into Inventory** — same columns,
+  and `INV_SITES.IN_EIN_SEQ` takes over `Site.SiteEIN` (Q4).
+- **Readers of `VehicleOrder.Site`:** InventorySystem (via `AD_GetSite`/`AD_UpdateEIN`) **and** the shared
+  siblings (GALC/MES/Admin — VehicleOrder is the shared ALC DB per Q9). So the retire-the-shared-copy
+  conclusion STANDS: don't drop `VehicleOrder.Site`; InventorySystem repoints to `INV_SITES`, the shared
+  table stays for siblings (cross-system decision, the OTHER repo).
+- **Unblocked:** `AD_FRSPULL` + the GALC tables (Vehicle 2.33M rows, Model, VehicleData, DataItem, Line,
+  SpecialDate, ProductionStatus) are all present → the M1 `create_asn` driver + **end-to-end parity** can now
+  run against the matched live pair (VehicleOrder + `Inventory_Live`, max ASN id 4722 ≈ the daily-log 4721).
+- **Real DUNS/EIN values:** the real `Site` rows carry actual plant DUNS/EIN — load into the spike `INV_SITES`
+  for testing, but KEEP the committed `spike-inv-sites-table.sql` seed as PLACEHOLDERS (don't commit real
+  trading identifiers).
