@@ -94,7 +94,15 @@ def computeAsnDetails(frsRows, forecastByBc, productionDate, asnId):
 	forecastByBc : dict BC -> list of forecast-detail dicts from SELECT_ForecastDetailBCASN for that
 	          BC. Each dict's keys: 'VC_ASSY_PART_NUMBER_CODE', 'VC_ASSY_MANIFEST_NUMBER',
 	          'IN_ASSY_QTY', 'IN_TIRE_RATIO', 'IN_WHEEL_RATIO', 'IN_MANIFEST_COST_ID' (None = missing
-	          cost -> abort). The order of rows matters for the No-Ratio branch (it takes the FIRST).
+	          cost -> abort).
+	          *** ORDER CONTRACT (FIX 2): the caller MUST pass each BC's rows in a DETERMINISTIC order.
+	          The No-Ratio branch (Orders<=5) emits ONE row from fcRows[0] and `break`s — so list order
+	          decides WHICH assy/manifest a small-volume BC ships — and the ratio branch emits in list
+	          order. SELECT_ForecastDetailBCASN has no ORDER BY (two HEAPs), so the DRIVER (create_asn,
+	          step 3) sorts the rows by ID_FORECAST_DETAIL ascending (first-configured) before calling
+	          this. This pure function does NOT re-sort (it would need an extra key + couples ordering
+	          policy here); it RELIES on the caller's deterministic order. Tests must pass rows pre-sorted
+	          the same way. Pass rows in heap/arbitrary order and the No-Ratio pick is nondeterministic.
 	productionDate : 'yyyymmdd' (fProductionDate). Drives the manifest prefix.
 	asnId : the ASN header id (fRecordID from INSERT_ASNInfo OUTPUT). Stamped on every detail so the
 	          re-keyed INSERT_ASNDetail (PART C) accumulates per-ASN.
@@ -195,6 +203,38 @@ def computeAsnDetails(frsRows, forecastByBc, productionDate, asnId):
 DATABASE = "Inventory_Spike"
 ALC_DATABASE = "VehicleOrder"
 
+# FIX 1 (BLOCKER) — the filtered UNIQUE index that backstops the idempotency guard.
+# spike-asn-unique-guard.sql creates UX_INV_ASN_MST_LINE_PDATE_NORMAL on
+# (VC_LINE_NAME, VC_PRODUCTION_DATE) WHERE VC_START_SEQ_NUMBER <> '-1'. The driver's read-back guard
+# (SELECT_ASNSeq) handles the common case; this index catches the concurrent-create RACE the read-back
+# guard cannot see (two gateway sessions both pass the guard, both INSERT). create_asn catches the
+# resulting unique-violation and treats it as the same idempotent "already created" skip.
+ASN_UNIQUE_INDEX = "UX_INV_ASN_MST_LINE_PDATE_NORMAL"
+
+
+def _isUniqueViolation(exc):
+	"""True if `exc` is the SQL-Server unique-constraint violation for the ASN (line, prodDate) key.
+
+	Runtime-portable across BOTH the live gateway and the headless test shim by matching on the error
+	MESSAGE TEXT, which is stable on every path:
+	  * Gateway (real JDBC): the duplicate-key insert surfaces as a java.sql.SQLException whose message
+	    is the SQL-Server text 'Cannot insert duplicate key row ... with unique index
+	    "UX_INV_ASN_MST_LINE_PDATE_NORMAL" ...' (SQL error 2601). Ignition wraps it but preserves the
+	    message in str(exc).
+	  * Shim (jython_shim._TxSession): raises SqlError carrying the same 'Msg 2601 ... Cannot insert
+	    duplicate key row ... unique index 'UX_INV_ASN_MST_LINE_PDATE_NORMAL'' text.
+	We match on EITHER the SQL-Server error number 2601 OR the specific index name — so we never swallow
+	an unrelated error (a different constraint, a deadlock, a connection drop) as an idempotent skip.
+	(SQL 2601 = duplicate key in a unique INDEX; 2627 = unique CONSTRAINT — accept both for safety, but
+	this artifact creates an INDEX so 2601 is the live one, proven by PROBE-A: 'Msg 2601'.)"""
+	msg = str(exc)
+	if ASN_UNIQUE_INDEX in msg:
+		return True
+	if "2601" in msg or "2627" in msg:
+		# guard the bare-number match against a coincidental substring: require the duplicate-key text.
+		return "duplicate key" in msg.lower()
+	return False
+
 
 def _effMonth(productionDate):
 	"""@EffMonth for SELECT_ForecastDetailBCASN = copy(prodDate,1,4)+'/'+copy(prodDate,5,2)
@@ -210,13 +250,20 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 
 	Reproduces the "Create ASN entries only" chain (spec §0/§7):
 	  1. SELECT_ASNSeq idempotency guard  — block if an ASN already exists for (line, prodDate).
+	     (Fast common-path no-op; NOT atomic on its own — the step-5 unique index backstops the race.)
 	  2. AD_FRSPULL on the ALC datasource — per-BC vehicle counts (READ, no tx; VehicleOrder DB).
-	  3. per BC: SELECT_ForecastDetailBCASN on Inventory — parts + ratios (READ, no tx).
+	  3. per BC: SELECT_ForecastDetailBCASN on Inventory — parts + ratios (READ, no tx). Rows are sorted
+	     by ID_FORECAST_DETAIL ascending here (FIX 2 — deterministic No-Ratio pick; the proc has no
+	     ORDER BY). computeAsnDetails relies on this caller-side ordering (see its ORDER CONTRACT).
 	  4. computeAsnDetails — the pure fan-out (branch / banker's round / manifest gen). RAISES
 	     AsnFanoutError on a missing manifest cost or a BC with no forecast detail (the pre-loop
 	     abort) BEFORE the transaction is opened, so nothing is written on abort.
 	  5. ONE Inventory transaction: INSERT_ASNInfo (status 'C', OUTPUT @ASNID) then per detail
 	     INSERT_ASNDetail (the re-keyed accumulate upsert). Commit; rollback + raise on error.
+	     FIX 1 (BLOCKER): the header insert is RACE-SAFE — if a concurrent gateway session won the
+	     create, the filtered UNIQUE index (spike-asn-unique-guard.sql) makes our INSERT fail with the
+	     duplicate-key violation; we catch it and return the idempotent skip (writes nothing), the same
+	     outcome as the step-1 guard. Any OTHER tx error still rolls back + re-raises.
 	  6. post-loop SELECT_ASNMissingCost audit — WARN only (does NOT abort), matching the Delphi
 	     warn-and-continue (DataModule.pas:5285-5308).
 
@@ -244,7 +291,8 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 
 	Returns a dict: {'asnId', 'details', 'qty', 'skipped'(bool), 'missingCost'(list of audit rows)}.
 	If an ASN already exists for (line, prodDate) returns {'skipped': True, ...} and writes nothing
-	(the legacy locks the UI; here we no-op idempotently).
+	(the legacy locks the UI; here we no-op idempotently). The same {'skipped': True} shape is returned
+	if a concurrent session won the create and our header insert lost the unique-index race (FIX 1).
 
 	EIN HANDLING — NOT allocated at create. The legacy stamps SiteEIN+1 onto the header at create and
 	bumps the ALC Site counter inside the create tx (spec §2). The M1 build decision is the cleaner
@@ -290,6 +338,12 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 		fcRows = []
 		for r in fcDs:
 			fcRows.append({
+				# FIX 2 (No-Ratio determinism): capture the PK/identity so the rows can be sorted into a
+				# STABLE order before the fan-out. ID_FORECAST_DETAIL is INV_FORECAST_DETAIL_INF's
+				# IDENTITY(1,1) PK (col 1, verified live) — ascending = first-configured order. The proc
+				# SELECT_ForecastDetailBCASN has NO ORDER BY over two HEAPs, so without this the row order
+				# is nondeterministic heap-scan order; see the sort below + the computeAsnDetails contract.
+				"ID_FORECAST_DETAIL": int(r["ID_FORECAST_DETAIL"]),
 				"VC_ASSY_PART_NUMBER_CODE": r["VC_ASSY_PART_NUMBER_CODE"],
 				"VC_ASSY_MANIFEST_NUMBER": r["VC_ASSY_MANIFEST_NUMBER"],
 				"IN_ASSY_QTY": r["IN_ASSY_QTY"],
@@ -297,6 +351,19 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 				"IN_WHEEL_RATIO": r["IN_WHEEL_RATIO"],
 				"IN_MANIFEST_COST_ID": r["IN_MANIFEST_COST_ID"],
 			})
+		# FIX 2 (SHOULD-FIX, adversary-findings SHOULD-FIX-1): the shared legacy proc
+		# SELECT_ForecastDetailBCASN returns rows in nondeterministic heap order (no ORDER BY over two
+		# HEAPs). The No-Ratio branch in computeAsnDetails takes fcRows[0] and `break`s — so WHICH
+		# assy/manifest a small-volume BC ships was luck-of-allocation (it FIRES on live BC PEE:
+		# FEL1000/m36 vs FEL2000/m37). We do NOT ALTER the shared proc (other callers depend on it);
+		# instead the REBUILD sorts the rows here, in the driver, by ID_FORECAST_DETAIL ascending so the
+		# No-Ratio pick (and the ratio-branch emission order) is deterministic and reproducible.
+		# >>> DAVID-CONFIRM: this makes the No-Ratio single-vehicle case deterministically pick the row
+		#     with the LOWEST ID_FORECAST_DETAIL (= first-configured). That is a stable, defensible
+		#     tiebreak but a DOMAIN choice — confirm "lowest ID_FORECAST_DETAIL wins" is the intended
+		#     assy, or specify a different sort key (e.g. by manifest number or assy part). Deterministic-
+		#     lowest-id is strictly better than the prior nondeterminism regardless.
+		fcRows.sort(key=lambda r: r["ID_FORECAST_DETAIL"])
 		forecastByBc[bc] = fcRows
 
 	# --- 4. pure fan-out. Raises AsnFanoutError (missing cost / no forecast detail) BEFORE we open
@@ -307,6 +374,7 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 	# --- 5. ONE Inventory transaction: header + details (spec §7 — fixes the legacy split where the
 	#        ALC steps ran outside the Inv_Connection tx) -----------------------------------------
 	tx = system.db.beginTransaction(db)
+	raced = False           # set if the header insert lost the concurrent-create race (FIX 1).
 	try:
 		# INSERT_ASNInfo (status 'C', @Ein=0 — EIN allocated at SEND, see docstring). @ASNID is an
 		# OUTPUT param, NOT an auto-generated key: getKey/SCOPE_IDENTITY() after a bare EXEC is NULL
@@ -315,6 +383,16 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 		# EXEC ... @ASNID=@id OUTPUT + SELECT @id, read back via runScalarPrepQuery on the SAME tx — a
 		# real 8.1+ API that accepts the tx id so it shares the open BEGIN TRAN.
 		# @AssyLine: VC_ASSEMBLY_LINE varchar(1); the morning entries-only create uses '' (non-key).
+		#
+		# FIX 1 (BLOCKER) — RACE-SAFE header insert. The step-1 SELECT_ASNSeq guard is non-atomic: a
+		# concurrent gateway session can pass the same guard and reach this INSERT too. The filtered
+		# UNIQUE index UX_INV_ASN_MST_LINE_PDATE_NORMAL (spike-asn-unique-guard.sql) makes the SECOND
+		# committed normal header for (line, prodDate) fail with SQL error 2601 (duplicate key). We catch
+		# THAT specific violation (via _isUniqueViolation) inside the transaction handling and treat it as
+		# the idempotent "already created" skip — matching the guard's intent rather than erroring. Note
+		# this fires on INSERT_ASNInfo (the header carries the unique key); the detail inserts are not
+		# subject to it. Because the violation aborts before any detail is written, the rollback below
+		# leaves nothing behind (all-or-nothing, same as any other tx error).
 		asnId = system.db.runScalarPrepQuery(
 			"DECLARE @id int; "
 			"EXEC INSERT_ASNInfo @ASNID=@id OUTPUT, @LineName=?, @AssyLine=?, @StartSeq=?, "
@@ -336,11 +414,23 @@ def create_asn(line, prodDate, seqStart, seqLast, beginDate, endDate, shipQty,
 			d["asnId"] = asnId
 
 		system.db.commitTransaction(tx)
-	except:
+	except Exception as exc:
+		# Always roll back the partial header (the rollback is safe even if SQL Server already doomed the
+		# tx — the shim/JDBC guard @@TRANCOUNT). Then split: a unique-violation is the concurrent-create
+		# RACE -> idempotent skip; anything else is a real failure -> re-raise (unchanged behaviour).
 		system.db.rollbackTransaction(tx)
-		raise
+		if _isUniqueViolation(exc):
+			raced = True
+			log.warn("ASN concurrent-create race for line=%s prodDate=%s (unique index %s caught the "
+			         "second insert) -> skip (idempotent)" % (line, prodDate, ASN_UNIQUE_INDEX))
+		else:
+			raise
 	finally:
 		system.db.closeTransaction(tx)
+
+	if raced:
+		# The other session already created this ASN; we wrote nothing. Same shape as the step-1 skip.
+		return {"asnId": None, "details": [], "qty": 0, "skipped": True, "missingCost": []}
 
 	# --- 6. post-loop missing-cost audit (SELECT_ASNMissingCost) — WARN, do NOT abort (the abort
 	#        already happened pre-insert in step 4). Read-only; runs after commit, autocommit. --------

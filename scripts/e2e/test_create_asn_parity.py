@@ -100,10 +100,14 @@ ASN_PY = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)
 def sql(db, query):
     if not SA_PASS:
         sys.exit("export SA_PASS first")
+    # SET QUOTED_IDENTIFIER/ANSI_NULLS ON: the gateway JDBC session runs with these ON; once
+    # INV_ASN_MST carries the filtered unique index (spike-asn-unique-guard.sql) ANY DML against it
+    # (e.g. the cleanup DELETE below) REQUIRES them ON or SQL Server raises Msg 1934. sqlcmd's -Q
+    # default has QUOTED_IDENTIFIER OFF, so prepend them to mirror the gateway.
     out = subprocess.check_output([
         "docker", "exec", CONTAINER, "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "localhost",
         "-U", "sa", "-P", SA_PASS, "-d", db, "-h", "-1", "-W", "-s", "\t",
-        "-Q", "SET NOCOUNT ON; " + query], text=True)
+        "-Q", "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; SET NOCOUNT ON; " + query], text=True)
     return [l.split("\t") for l in out.splitlines()
             if l.strip() and not l.startswith("(") and not l.startswith("Msg ")]
 

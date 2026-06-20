@@ -350,3 +350,50 @@ working rebuild `Inventory` (re-keyed ASN-detail procs applied).
   with a clean self-consistency proof and a real (explained) legacy diff. Open item for FULL legacy row-for-row
   parity: a point-in-time GALC snapshot contemporaneous with ASN 4721 (the reload can't reproduce frozen
   build composition). Not a blocker for the driver — the seam is correct against its inputs.
+
+## 2026-06-20 — M1 keystone: two SQL-review MUST/SHOULD-FIXes on `create_asn` (BLOCKER closed)
+
+Closed the two SQL-review fixes on the ASN-creation keystone (architecture doc §6, adversary-findings).
+Branch `m1-asn-creation`.
+
+- **FIX 1 (BLOCKER) — concurrency double-insert.** `create_asn`'s `SELECT_ASNSeq` guard is non-atomic;
+  two concurrent gateway sessions could both pass it and both commit a full ASN (a risk the gateway
+  CREATES vs the single-user Delphi desktop). **Real-data cardinality check FIRST** (the gating
+  question): on `Inventory_Live`, normal ASNs (`VC_START_SEQ_NUMBER <> -1`) have **ZERO** duplicate
+  `(VC_LINE_NAME, VC_PRODUCTION_DATE)` groups (`GROUP BY … HAVING COUNT(*)>1` = 0); including hot-calls
+  there are 206 dup groups — i.e. (line, prodDate) IS unique for normal ASNs and the `-1` exclusion is
+  exactly what hot-calls legitimately repeat on. **So a filtered unique index is the correct key, not
+  wrong.** Artifact `docs/analysis/edi/spike-asn-unique-guard.sql` = filtered `UNIQUE` index
+  `UX_INV_ASN_MST_LINE_PDATE_NORMAL (VC_LINE_NAME, VC_PRODUCTION_DATE) WHERE VC_START_SEQ_NUMBER <> '-1'`
+  (idempotent; `-- M4:` marker to lead with `IN_SITE_ID`). **APPLIED + VERIFIED on Inventory**: CREATE
+  succeeded against all 2550 live rows (no existing violation); a 2nd NORMAL insert for an existing
+  (line,prodDate) → **rejected, Msg 2601**; a hot-call (`'-1'`) insert for the same key → **allowed**
+  (and a 2nd hot-call too). `create_asn` is now **race-safe**: the header insert catches the
+  unique-violation (`_isUniqueViolation`, matches the index name / SQL 2601 + "duplicate key") and
+  returns the idempotent `{'skipped': True}` instead of erroring; any other tx error still rolls back +
+  re-raises.
+- **FIX 2 (SHOULD-FIX) — No-Ratio nondeterministic pick.** `SELECT_ForecastDetailBCASN` has no ORDER BY
+  over two HEAPs; the No-Ratio branch took `fcRows[0]` = luck-of-allocation (FIRES on live BC `PEE`:
+  id 189 `42600FEL1000`/m36 vs id 190 `42600FEL2000`/m37). Did **not** ALTER the shared legacy proc;
+  instead the REBUILD driver sorts each BC's rows by `ID_FORECAST_DETAIL` ascending (the table's
+  `IDENTITY(1,1)` PK = first-configured) before the fan-out, and `computeAsnDetails` documents the
+  caller-side order CONTRACT. ⚠️ **DAVID-CONFIRM flagged in code + return:** deterministic = LOWEST
+  `ID_FORECAST_DETAIL` wins (a domain choice; strictly better than nondeterministic either way).
+- **Harness fidelity finding (worth keeping):** once a FILTERED index exists on a table, **every DML
+  against it requires `SET QUOTED_IDENTIFIER ON` + `ANSI_NULLS ON`** (else **Msg 1934**). The gateway's
+  JDBC connection already runs these ON (production unaffected), but `sqlcmd -Q` defaults
+  QUOTED_IDENTIFIER **OFF** — so the headless shim + the parity test had to prepend the SET options to
+  faithfully mirror the gateway. Also hardened `jython_shim._TxSession` to recognize `SqlState NNNNN`
+  error lines (not just `Msg NNNN`) so a unique-violation inside a tx batch — and the transient
+  `SqlState 24000 Invalid cursor state` it leaves on the next batch — surface as a catchable error
+  instead of hanging; rollback now swallows that follow-on.
+- **Tests:** `scripts/e2e/test_asn_fixes.py` NEW (**22 PASS**: index reject/allow, the race-catch via a
+  guard-blinded `create_asn`, `_isUniqueViolation` specificity, the deterministic PEE pick + end-to-end
+  persisted m36→FEL1000). Regression green: `test_asn_fanout` **34**, `test_create_asn_parity` **10**,
+  seam_driver **23**, seam_driver_order **13**, order_commit_integration **6**.
+- **Spike restored as-found:** Inventory back to 2550 rows (315 hot-calls; all test ASNs swept);
+  `Inventory_Live` (2557) + `VehicleOrder` (2.33M) never written; the unique index retained, matching
+  the existing convention for cutover schema artifacts (the rekey procs/index are likewise left applied).
+- **GO/STAY impact:** the keystone's BLOCKER (concurrency double-insert) is **CLOSED** at the DB level +
+  the driver; the No-Ratio nondeterminism is removed (pending David's tiebreak confirm). Remaining
+  keystone gate is unchanged: a true row-parity oracle (recipe-vintage drift, §7.5).

@@ -55,12 +55,22 @@ def _sqlcmd_args(db, interactive=False):
     return base
 
 
+# The ANSI SET options the real gateway JDBC connection runs with. sqlcmd's `-Q` default has
+# QUOTED_IDENTIFIER OFF, but the Ignition JDBC driver opens connections with QUOTED_IDENTIFIER ON +
+# ANSI_NULLS ON (the JDBC/SQL-standard default). This matters once a FILTERED INDEX (or an indexed
+# view / computed-column index) exists on a table: SQL Server REQUIRES these options ON for any DML
+# against that table (else Msg 1934). spike-asn-unique-guard.sql adds a filtered unique index to
+# INV_ASN_MST, so the shim must mirror the gateway's session options to faithfully exercise the driver
+# (and to not falsely fail on the harness's own sqlcmd defaults). Prepended to every batch.
+_SESSION_SET = "SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; SET NOCOUNT ON; "
+
+
 def _run(sql_text, want_rows, db=SQL_DB):
     """Execute one batch via a fresh (autocommit) sqlcmd. want_rows=True keeps the header row."""
     args = _sqlcmd_args(db)
     if not want_rows:
         args += ["-h", "-1"]
-    out = subprocess.check_output(args + ["-Q", "SET NOCOUNT ON; " + sql_text], text=True)
+    out = subprocess.check_output(args + ["-Q", _SESSION_SET + sql_text], text=True)
     return out
 
 
@@ -179,7 +189,9 @@ class _TxSession(object):
         t = threading.Thread(target=self._pump)
         t.daemon = True
         t.start()
-        self._batch("SET NOCOUNT ON;", want_rows=False)
+        # Mirror the gateway JDBC session options (QUOTED_IDENTIFIER/ANSI_NULLS ON) BEFORE the tx opens
+        # so DML on the filtered-index INV_ASN_MST succeeds (see _SESSION_SET note; else Msg 1934).
+        self._batch("SET QUOTED_IDENTIFIER ON; SET ANSI_NULLS ON; SET NOCOUNT ON;", want_rows=False)
         self._batch("BEGIN TRANSACTION;", want_rows=False)
 
     def _pump(self):
@@ -191,9 +203,25 @@ class _TxSession(object):
         self.proc.stdin.write(text + "\n")
         self.proc.stdin.flush()
 
+    @staticmethod
+    def _is_err_line(line):
+        """True for a sqlcmd error header. Two shapes occur:
+          * `Msg <n>, Level <n>, State <n>, ...`  — the usual T-SQL error (e.g. Msg 2601 duplicate key).
+          * `SqlState NNNNN, ...`                 — a driver/cursor-level error (e.g.
+            `SqlState 24000, Invalid cursor state`) that sqlcmd emits when a batch runs after a
+            statement-terminated error left a pending result. This line is NOT a `Msg` header, so the
+            original detector missed it and the next batch hung waiting for a sentinel that never came.
+        Recognizing both makes a unique-violation (FIX 1) — and the cursor-state fallout it leaves on the
+        very next batch — surface as a catchable SqlError instead of a timeout."""
+        if line.startswith("Msg ") and ", Level " in line and ", State " in line:
+            return True
+        if line.startswith("SqlState "):
+            return True
+        return False
+
     def _batch(self, sql_text, want_rows, timeout=30):
         """Run one batch on the session; return (columns, rows) when want_rows else None.
-        Raises SqlError on any `Msg NNNN` (so the caller's rollback path runs)."""
+        Raises SqlError on any sqlcmd error header (so the caller's rollback path runs)."""
         _TxSession._seq += 1
         nonce = "EOB%d" % _TxSession._seq
         sentinel = "<<<%s>>>" % nonce
@@ -213,19 +241,23 @@ class _TxSession(object):
             line = line.rstrip("\n")
             if sentinel in line:
                 break
-            if line.startswith("Msg ") and ", Level " in line and ", State " in line:
-                # a real sqlcmd error header is "Msg <n>, Level <n>, State <n>, ..." — match that
-                # shape (not a bare "Msg " prefix, which can occur in legitimate SELECT output).
-                # error -> the sentinel PRINT won't run; grab the immediate error text, then raise
+            if self._is_err_line(line):
+                # error -> the sentinel PRINT may or may not run; grab the immediate error text up to
+                # (and consuming) the sentinel if it appears, then raise. Draining to the sentinel here
+                # is what keeps the SESSION clean for the next batch (the rollback) — otherwise leftover
+                # lines from this batch would be misread as the next batch's output.
                 err = [line]
                 while True:
                     try:
                         more = self._q.get(timeout=2)
                     except queue.Empty:
                         break
-                    if more is None or sentinel in more:
+                    if more is None:
                         break
-                    err.append(more.rstrip("\n"))
+                    more = more.rstrip("\n")
+                    if sentinel in more:
+                        break
+                    err.append(more)
                 raise SqlError("; ".join(err))
             captured.append(line)
         if err is not None:
@@ -268,7 +300,19 @@ class _TxSession(object):
         # makes rollback a no-op when SQL Server already unwound the tx — so commitOrders' real failure
         # propagates. (Real JDBC connection.rollback() is likewise safe on an already-rolled-back tx.)
         if not self._closed:
-            self._batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", want_rows=False)
+            # Best-effort: a statement-terminated error in the PRIOR batch (e.g. a unique violation,
+            # FIX 1) can leave a transient `SqlState 24000, Invalid cursor state` on THIS rollback batch.
+            # Rollback is cleanup of an already-failed tx — swallow such a follow-on error rather than
+            # masking the caller's original exception (which is mid-propagation). Real JDBC rollback()
+            # likewise does not throw the prior statement's error again.
+            try:
+                self._batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;", want_rows=False)
+            except SqlError as rbexc:
+                # Only swallow the transient cursor-state follow-on; a GENUINE rollback failure must
+                # surface (NIT-1) — else a real failed ROLLBACK would be masked as clean cleanup.
+                msg = str(rbexc)
+                if "24000" not in msg and "Invalid cursor state" not in msg:
+                    raise
 
     def close(self):
         if self._closed:
