@@ -703,3 +703,70 @@ against the legacy `.pas` algorithm + the live proc bodies + live `Inventory`/`V
 golden file. The ISA `delSL[4]` element index remains the standing pending-golden caveat.
 
 ---
+
+## M2 unit-2 — Order-FILE generator (`.ord` emitter) BUILT + e2e-proven (2026-06-21)
+
+New gateway producer: serializes committed, renban-assigned, not-yet-ordered open orders to the
+sub-supplier `.ord` files. SEPARATE unit from the Order COMMIT path
+(`project-library/order/code.py`) — shares no code, does no order math. Source:
+`OrderFormCreateF.pas:55-707` + the 5 procs (proved on `mssql-spike`). Files:
+`docs/analysis/order/project-library/order_file/{code.py,excel.py,resource.json}`,
+`docs/analysis/order/spike-order-file-feed.sql`, `scripts/e2e/test_order_file_{build,e2e}.py`.
+
+**`.ord` format (byte-faithful to OrderFormCreateF.pas:556-585):** one positional, delimiter-less line
+per row = `VC_SUPPLIER_CODE`(raw) + `VC_FRS_NUMBER`(raw) + `%8s`(renban, right-just min-8) +
+`VC_PART_NUMBER`(raw) + `%05d`(IN_QTY, zero-pad min-5) + ship-date(`yyyymmdd`), CRLF after every line.
+Only renban+qty are padded; supplier/FRS/part are RAW (legacy H3 — a short value shifts following
+fields; reproduced faithfully, NOT silently padded). The phantom `SiteSupplierCode` leading field
+(legacy H4, 14/16 suppliers, BIT_SITE_NUMBER_IN_ORDER=1) is a LATENT CRASH like the 810 — delphi-
+architect adjudicated this session: built the working **non-sendsite 6-field line for ALL suppliers**,
+did NOT reproduce the crash, did NOT invent a leading field. The M4 multi-site leading field =
+`INV_SITES.VC_SUPPLIER_CODE` (marked `_M4`, width pending golden).
+
+**3-destination fan-out + skip-logistics:** `[INIT] LocalFTP` (default False) = supplier dir ONLY;
+True = supplier + logistics + `<supplierDir>/Archive`. Logistics resolved per-supplier via the
+part→supplier→`'NONE'` ladder (`SELECT_PartsStockLogistics` then `SELECT_SupplierInfo`); the `'NONE'`
+string sentinel SKIPS the logistics copy (the three states `'NONE'`/`''`/NULL are distinct — `''` slips
+past the guard, legacy H8, flagged). All 3 copies are byte-identical (proven).
+
+**Bugs FIXED vs legacy (all e2e-proven):**
+- **H1 atomicity** (files-not-transactional): legacy writes `.ord` MID-tx, a rollback leaves the final
+  file → duplicate re-emit. FIXED with the 856 temp-then-rename idiom: write every `.ord` to `.tmp`, run
+  the ONE stamp tx, rename to final ONLY after commit; on any failure delete every `.tmp`. Proven: a
+  stamp-tx failure after the `.tmp` write leaves NO final `.ord`, no orphan `.tmp`, rows un-stamped
+  (a re-run re-emits).
+- **H10 column aliasing**: legacy `SELECT *` (88 cols) duplicates `IN_QTY`/part/supplier/kanban;
+  `fieldbyname` grabs the FIRST. The aliased `_FEED_SQL` (canonical `spike-order-file-feed.sql`) reads
+  every column from `i.` (open-order) — the emitted qty is the ORDER `IN_QTY` (1200), NOT the
+  parts-stock on-hand (proven 1200 emitted, on-hand 0 absent).
+- **H11 emit-then-stamp**: `UPDATE_ORDEROrderDate` keys on part+FRS ONLY (no renban filter) → one stamp
+  marks all same part+FRS rows. Emit from a single SNAPSHOT, then stamp the distinct (part,FRS) pairs
+  once each — proven both same-part+FRS renban rows stamped, a 2nd run emits NOTHING (re-emit guard).
+
+**GetShip CALENDAR-INCONSISTENCY FLAG (FOR REVIEW):** ship-date = `now + GetShip(lead)` where the
+working-day scan (`compute_ship_offset`) skips ONLY weekends + `'H'` holidays — it does NOT skip `'X'`
+(non-prod) or `'W'`, and treats `'O'` (overtime) as a normal day. This is UNLIKE the M2 forecast
+day-spread (which accounts for O/X/W). Reproduced FAITHFULLY (weekend + 'H' only); flagged as a possible
+carry-forward bug for delphi/ignition-architect to adjudicate at cutover. e2e proved the renban-group
+ship-day override path: part in renban group 7 (Mon lead 13) → 18-calendar-day offset off the REAL
+VehicleOrder holiday calendar.
+
+**Excel order-forms (secondary):** data model built byte-faithful to the Pascal `Cells[r,c]` writes
+(Excel order + Wheel/Tire order-sheet, page-fill at o>23, per-renban WHEEL workbooks, FRS→date cell);
+`render_xlsx` is a STUB — the EXACT visual layout of the 3 `.xls` templates is PENDING the template
+files (not confirmed on disk), like the forecast Excel reports. The `.ord` (EDI-critical) is fully
+built + byte-tested.
+
+**Tests:** order_file_build **44 PASS** (exact-byte `.ord`, %8s/%05d/raw-shift edges, GetShip scan,
+LocalFTP fan-out, Excel data model), order_file_e2e **25 PASS** (REAL `generate_order_files` via the
+shim's persistent-session tx: exact bytes, aliasing, 3-dest fan-out + NONE skip, emit-then-stamp,
+H1 atomicity rollback). **All regressions green** (forecast 43/35, edi_inbound 42/41, edi810 61/72,
+edi856 49/51, asn_fanout 34, create_asn_parity 10, seam 23/13, order_commit 16/6). **Spike restored
+as-found** (4238 open orders, 0 not-ordered, 0 synthetic rows/hist, part on-hand unchanged).
+
+**Honest verification / pending golden:** the `.ord` is byte-faithful to the `.pas`; PENDING a golden
+`.ord` are (a) whether the receiving parser expects always-full-width supplier/FRS/part (the raw-concat
+H3); (b) the M4 leading-field width; (c) the Excel template visuals. Ship date uses the REAL
+AD_GetSpecialDate calendar.
+
+---
