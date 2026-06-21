@@ -37,7 +37,7 @@
 ## 2. Data touched
 | Table | Read | Write | Notes |
 |-------|:----:|:-----:|-------|
-| `INV_BREAKDOWN_FC_INF` | ✓ | ✓ | **This module owns it.** Deleted by `DELETE_ForecastInfo` (missing — §3), upserted by `INSERTUPDATE_BreakdownForecastInfo`, read back by `SELECT_ForecastSupplier` |
+| `INV_BREAKDOWN_FC_INF` | ✓ | ✓ | **This module owns it.** Deleted by `DELETE_ForecastInfo` (**CONFIRMED PRESENT** at `CreateInventory.sql:2725` — the earlier "missing" flag was snapshot drift; see §3), upserted by `INSERTUPDATE_BreakdownForecastInfo`, read back by `SELECT_ForecastSupplier` |
 | `INV_FORECAST_DETAIL_INF` | ✓ | | The BOM/ratio master (see `forecast-detail.md`). `SELECT_ForecastDetail` supplies tire/wheel/valve/film/etc part codes + ratios that drive the explosion |
 | `INV_FORECAST_INF` |  | ✓ | The *raw* per-assembly weekly forecast (pre-explosion). Upserted by `INSERTUPDATE_ForecastInfo` |
 | `INV_PARTS_STOCK_MST` | ✓ | | `SELECT_PartsStockInfo` reads Line/Supplier/Size for each component part during day-spread |
@@ -60,7 +60,7 @@
 |------|----|-------------------------------|
 | `INSERTUPDATE_BreakdownForecastInfo` (schema:2608) | UPSERT | **The breakdown writer.** Dedup key = **`(VC_SUPPLIER_CODE, VC_PART_NUMBER, IN_WEEK_NUMBER)`** — *year-blind, date-blind*. On exists → **ADDITIVE** `UPDATE … IN_QTYn = IN_QTYn + @Qtyn` (accumulates, does **not** overwrite). Else INSERT all 7 day-qtys + `VC_WEEK_DATE`, `VC_SIZE_CODE`. **`VC_WEEK_DATE` is written on INSERT only — never refreshed on UPDATE.** |
 | `INSERTUPDATE_ForecastInfo` (schema:2655) | UPSERT | Raw per-assembly forecast into `INV_FORECAST_INF`. Dedup key `(Supplier, PartNumber, Kanban, WeekNumber)`; on exists overwrites `IN_COUNT` + `VC_WEEK_DATE`. **Not additive** (unlike the breakdown). |
-| `DELETE_ForecastInfo;1` | DELETE | **⚠️ DOES NOT EXIST in the schema snapshot.** The form calls `dbo.DELETE_ForecastInfo;1` with `@WeekDate,@HistWeekDate,@PartNumber` (`ForecastBreakdownF.pas:115`). The schema only has `DELETE_ForecastInfoWeekDate` (2 params), `…WeekDatePart` (3: WeekNumber/WeekDate/Part), `…WeekDatePartOld` (2: WeekDate/Part). **None matches the called name or its 3-param `@WeekDate/@HistWeekDate/@PartNumber` signature.** Either a missing/renamed proc (latent runtime failure on every run) or a live proc absent from the snapshot — verify against live. (Analogous to the GALC `VO_DeleteVehicleMove` gap.) Body **unverified** because no proc of that name exists to read. |
+| `DELETE_ForecastInfo;1` | DELETE | **✅ CONFIRMED PRESENT (correction — this was a snapshot-drift artifact).** In the **authoritative live dump** (`DB Schema/CreateInventory.sql:2725`, byte-identical in `Inventory` and `Inventory_Live`) the proc EXISTS with the exact 3-param `@WeekDate/@HistWeekDate/@PartNumber` signature the form calls (`ForecastBreakdownF.pas:115`). The `;1` is a legacy ADO procedure-group number. The earlier "DOES NOT EXIST" flag was written against the *superseded* 2026-06-01 snapshot; per `reference-schema-snapshot-vs-live`, `CreateInventory.sql` (6/12, no space) is authoritative. **The delete path is LIVE and works.** Semantics (verified): four deletes resolving assembly→its 7 component codes via a `CROSS APPLY (VALUES …)` over `INV_FORECAST_DETAIL_INF` — (A) breakdown forward `VC_WEEK_DATE >= @WeekDate`, (B) breakdown history `<= @HistWeekDate`, (C/D) raw `INV_FORECAST_INF` by assembly on the same two windows. Trims both ends, keeps the middle window. The old `DELETE_ForecastInfoWeekDate*` variants (`:2303/2318/2340`) are dead-but-present. See `docs/analysis/edi/inbound/forecast-import-algorithm.md` §E + `forecast-tables-analysis.md` §3.3. |
 | `SELECT_ForecastDetail` (schema:6014) | SELECT | BOM lookup by `@AssyCode` (+ `@ForecastNotZero`, `@EffectiveMonth`). Returns tire/wheel/valve/film part codes, tire/wheel/forecast ratios, broadcast code, kanban, assy qty. With `@ForecastNotZero=1` filters `IN_RATIO<>0`; `@EffectiveMonth` keeps rows `>= month OR blank`. Ordered `assy, effective_month, ratio`. |
 | `SELECT_PartsStockInfo` (schema:7270) | SELECT | Per-component part master read (Line/Supplier/Size). Used in day-spread. Body unverified (large proc; only the returned aliases `Line Name`/`Supplier Code`/`Size Code` are consumed). |
 | `SELECT_FirstProductionDay` (schema:5982) | SELECT | Returns `INT_FIRST_PRODUCTION_WEEK` as **'First Week Number'** for `@ProdYear` (year prefix of the EDI WeekDate). Drives the week offset. |
@@ -102,13 +102,20 @@
 - Cross-checks the other direction (`@AssyCode='', @ForecastNotZero=1, @EffectiveMonth=now`) to list
   DB assemblies **missing from the feed**; prompts the operator (Yes/No) and writes Excel exception
   reports (`ForecastReport`, `ForecastDBError`, `ForecastRecError`) to `fiReportsOutputDir`.
-- `fHistDate := now − (fiHistoricalForecast × 7)` days, `yyyymmdd` (`:318`) — passed to the
-  (missing) delete proc.
+- `fHistDate := now − (fiHistoricalForecast × 7)` days, `yyyymmdd` (`:318`) — passed to the delete proc
+  as `@HistWeekDate` (the history-prune cutoff).
 
 ### 4.3 Delete-then-rebuild
-For every non-skipped entry, `DeleteBreakdown(part)` (`:110`) calls the **missing** `DELETE_ForecastInfo;1`.
-**Intended** semantics (inferred from the existing `…WeekDatePart` proc): delete breakdown rows for
-this part from `fFirstWeekDate` forward, preserving anything before. **Unverified** — proc absent.
+For every non-skipped entry, `DeleteBreakdown(part)` (`:110`) calls `DELETE_ForecastInfo;1`
+(**CONFIRMED PRESENT** at `CreateInventory.sql:2725` — see §3 correction). **Verified** semantics: the
+proc resolves the assembly→its 7 component part codes via a `CROSS APPLY (VALUES …)` over
+`INV_FORECAST_DETAIL_INF` and deletes breakdown rows for those components in **two windows** — forward
+(`VC_WEEK_DATE >= fFirstWeekDate`, the slice about to be rebuilt) AND history
+(`VC_WEEK_DATE <= fHistDate`, aged-out weeks) — plus the matching raw `INV_FORECAST_INF` rows by
+assembly. It keeps only the middle window. Because the breakdown upsert is **additive** (§3), this delete
+running FIRST is what makes a re-import a *replace* not a double-count — proven end-to-end in M2
+(`scripts/e2e/test_forecast_import_e2e.py`: re-import the same 830 → qty NOT doubled). See
+`docs/analysis/edi/inbound/forecast-import-algorithm.md` §E.
 
 ### 4.4 The explosion math (`UpdateForecast` `:1081` + `DoPartNumberForecast` `:1314`)
 Per non-skipped entry, per week `j` in `1..count` (`count=14` if `WQS` else `13`, `:1089`):
@@ -212,9 +219,12 @@ a **gateway Python/Jython service**, not Named-Query-per-screen.
   testable) in Python than T-SQL. Reimplement `UpdateForecast`/`DoPartNumberForecast` as a pure
   function `explode(entry, bom_rows, working_days) -> rows`. Unit-test against the parity vectors in §9.
 - **Persistence → Named Queries / proc-wraps:** keep `INSERTUPDATE_BreakdownForecastInfo` semantics
-  (additive upsert on `supplier+part+week`) and the delete-forward as **idempotent NQs**. The
-  **missing `DELETE_ForecastInfo`** must be defined explicitly in the rebuild (decide the real
-  delete predicate — §8 Q2).
+  (additive upsert on `supplier+part+week`) and the delete-forward as **idempotent NQs**.
+  `DELETE_ForecastInfo` **exists and is reused as-is** (the M2 importer wraps it via a proc-call — the
+  "missing proc" §8 Q2 is RESOLVED, see §3 correction); the rebuild runs it FIRST per assembly in one tx
+  so the additive upsert behaves as a replace. **Built + proven in M2:**
+  `docs/analysis/edi/inbound/project-library/forecast/code.py` (the pure `explode`/`day_spread` +
+  `import_830` driver) and `scripts/e2e/test_forecast_import_build.py` / `test_forecast_import_e2e.py`.
 - **Working-day calendar:** `AD_GetSpecialDateWeek` lives in the ALC DB today; in Ignition model the
   plant calendar as a first-class table/service the breakdown service queries.
 - **Output files:** the per-supplier `.frc`/Excel generation → a gateway report/export step (Perspective
@@ -245,10 +255,13 @@ a **gateway Python/Jython service**, not Named-Query-per-screen.
   offset-subtracted ISO week → the write/read conventions reconcile, and the shipped R1 fix is validated.
   Rebuild: ingest `IN_WEEK_NUMBER` from FST09 verbatim (don't recompute); read with `ISO(date) − offset`.
   See decision **D10**.
-- **Q2 — `DELETE_ForecastInfo` semantics.** The form calls a 3-param `@WeekDate/@HistWeekDate/
-  @PartNumber` proc that is **absent from the snapshot**. What does the live proc actually delete
-  (forward-from-WeekDate? a window between HistWeekDate and WeekDate? per part?). Without it the rebuild
-  can't reproduce the delete-then-rebuild cycle correctly. (Also: is this a live runtime error today?)
+- **Q2 ✅ RESOLVED — `DELETE_ForecastInfo` semantics.** The "absent from the snapshot" flag was
+  snapshot drift — the proc is **CONFIRMED PRESENT** at `CreateInventory.sql:2725` (live-identical in both
+  DBs) with the exact 3-param signature (§3 correction). It deletes, **per assembly** (resolving
+  assembly→its 7 component codes via `CROSS APPLY (VALUES …)` over the recipe): breakdown rows
+  `VC_WEEK_DATE >= @WeekDate` (forward) AND `<= @HistWeekDate` (history-prune), plus the raw forecast by
+  assembly on the same two windows — keeping only the middle window. **Not a live runtime error.** The M2
+  importer reuses it as-is; the delete-then-rebuild is reproduced + proven (`test_forecast_import_e2e.py`).
 - **Q3 — year-blindness.** Is forecasting genuinely intended to be year-agnostic (week 30 = week 30
   forever until overwritten), relying on the delete-forward each cycle to avoid stale carryover? Or
   should the rebuild add a year/effective-date dimension to the breakdown key?
