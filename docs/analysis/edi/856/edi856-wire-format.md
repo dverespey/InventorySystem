@@ -38,7 +38,7 @@ HL(Item) · LIN · SN1] … · CTT · SE · GE · IEA.
 ### HL hierarchy (S → O → I)  `:265-378`
 - **Shipment** (`:285`): `HL*1**S*1` (HL02 empty = no parent). Then `TD1**`, `TD5*B*25*00000*<SiteDeliveryMethodCode>`, `TD3*TL**1234567890` (**trailer id literal `1234567890`** — Trap 5).
 - **Order** per distinct Manifest (`:320`): `HL*<id>*1*O*1` (HL02 hardcoded `1` → always parents the shipment). Then `PRF*<Manifest>-<Manifest>` (the `-` is data).
-- **Item** per detail (`:338`): `HL*<id>*<parent>*I*0`. Then `LIN**BP*<PartNumber>*RC*<Kanban>` and `SN1**<ShipQty>*PC` (qty = `IN_QTY`, no leading zeros, PC = pieces).
+- **Item** per detail (`:338`): `HL*<id>*<parent>*I*0`. Then `LIN**BP*<PartNumber>*RC*<Kanban>*` (note the **TRAILING element separator** after the kanban — `.pas:352` appends `+fSepElement` after the kanban too, so the segment ends in one empty trailing element) and `SN1**<ShipQty>*PC` (SN1 has NO trailing sep — `.pas:358` ends `+'PC'`; qty = `IN_QTY`, no leading zeros, PC = pieces).
 - All HL-loop segments buffered in `HLList`, flushed with `+1 fSegCount` each (`:367`).
 
 ### CTT (`:380`) `CTT*<fHLCount>` — count of **HL segments only** (S + #orders + #items), NOT line count.

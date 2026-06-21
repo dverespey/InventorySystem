@@ -13,15 +13,18 @@
 --   A  KEEP the cost INNER join (filters to cost-covered lines, like legacy REPORT_EDI856). A line whose
 --      part has no covering manifest-cost window silently vanishes from the 856 — that is the legacy
 --      behaviour, reproduced.
---   B  INNER forecast join for Kanban, capped to ONE row via CROSS APPLY (SELECT TOP 1 ...). CROSS APPLY
---      (not OUTER APPLY) keeps the INNER drop: a part with NO forecast row produces no APPLY row, so the
---      detail line drops — exactly like the legacy INNER JOIN INV_FORECAST_DETAIL_INF. The TOP 1 prevents
---      the fan-out the legacy INNER join would suffer if a part had >1 forecast row (no uniqueness on the
---      forecast part code). So: same DROP as legacy, but no DUPLICATION (the latent legacy fan-out is the
---      one thing we tighten — it could only ever have inflated the 856, never matched it).
---   C  GROUP-BY collapse (poor-man's DISTINCT), NO sum. Distinct detail rows that share all projected
---      columns merge into one — matching legacy. (A "correct" ASN might SUM IN_QTY over merged lines, but
---      byte-parity locks the legacy DROP/collapse.)
+--   B  INNER forecast join for Kanban — the SAME `JOIN INV_FORECAST_DETAIL_INF f ON d.VC_ASSY_PART_NUMBER
+--      = f.VC_ASSY_PART_NUMBER_CODE` the legacy proc uses. A part with >1 forecast row FANS OUT to
+--      multiple rows; the GROUP BY then keeps each DISTINCT kanban (so 2 distinct-kanban forecast rows ->
+--      2 LIN lines, exactly like legacy). A part with NO forecast row drops the detail line (INNER drop).
+--      NOTE: this REPLACES the earlier `CROSS APPLY (SELECT TOP 1 ...)` — that TOP 1 had NO ORDER BY over
+--      a HEAP (nondeterministic) AND dropped legacy lines (kept ONE kanban where legacy keeps every
+--      distinct one). The legacy fan-out is NOT pure inflation: GROUP BY collapses same-kanban dupes and
+--      keeps distinct kanbans, which is what the wire requires.
+--   C  GROUP-BY collapse (poor-man's DISTINCT), NO sum. Distinct detail rows that share all GROUP-BY
+--      columns merge into one — matching legacy. The GROUP BY KEEPS m.MO_PRICE (as legacy does): a part
+--      with 2 price-distinct overlapping cost windows emits 2 detail rows. MO_PRICE is NOT in the SELECT
+--      (the 856 carries no price) but it IS a GROUP-BY key — dropping it collapsed legacy's 2 rows to 1.
 --   inclusive cost window  (<= / >=) — the LIVE proc uses inclusive compares (supersedes asn-invoice.md
 --      §4.1's strict-compare note; confirmed against the live REPORT_EDI856 body). String compares on
 --      varchar(8) yyyymmdd are correct because that format sorts lexicographically.
@@ -29,17 +32,21 @@
 -- PROJECTION: the builder (edi856.build_856) consumes only Manifest / PartNumber / ShipQty / Kanban, plus
 -- the header's PickUpDate (for the dates + filename). The legacy 9-col feed also returned UnitPrice (NOT
 -- emitted — the 856 carries no price), SiteEIN, StartSeq, LineName (unused by the segment build). We
--- project the 5 columns the build actually needs; the driver reads PickUpDate from the header row too.
--- (Keeping all 9 would be harmless but adds GROUP BY columns that change the collapse cardinality, so we
--- project exactly what the wire needs.)
+-- project the 5 columns the build needs but KEEP MO_PRICE in the GROUP BY (it changes the collapse
+-- cardinality even though it never reaches the wire). The header-constant legacy GROUP-BY columns
+-- (a.IN_ASN_EIN, VC_START_SEQ_NUMBER, a.VC_LINE_NAME) are per-ASN constant under our `WHERE IN_ASN_ID=?`
+-- scope, so they cannot change the row count and are omitted; MO_PRICE comes from the cost join and CAN.
 --
 -- ORDER BY Manifest, PartNumber — the S->O->I HL grouping needs the rows grouped by manifest. The legacy
 -- proc's GROUP BY emitted in an engine-defined order; the rebuild pins a DETERMINISTIC order so the
 -- Order-HL breaks (and thus the HL ids / SE01 / CTT01 counts) are reproducible. PartNumber is the stable
 -- tiebreak within a manifest.
 --
--- USAGE: the driver (edi856.code.py:_FEED_SQL) inlines this SELECT body verbatim with a ? for @ASNID.
--- This .sql file is the reviewable canonical copy; if you edit one, edit both (a code comment flags it).
+-- CANONICAL COPY + DRIFT GUARD: the driver (edi856.code.py:_FEED_SQL) inlines the SELECT body between the
+-- two markers below. The two are BYTE-IDENTICAL except the single bind: this file declares @ASNID (so it
+-- runs standalone) and the inline uses runPrepQuery's `?`. test_edi856_e2e.py asserts
+--   _FEED_SQL == (the marked block, whitespace-collapsed, with '@ASNID' -> '?')
+-- so they cannot drift. If you edit one, edit both; the test fails if you forget.
 -- Run standalone:  sqlcmd -v ASNID=4721 EIN=0  (or set the vars below for an ad-hoc preview).
 
 -- :setvar ASNID 4721      -- the ASN to read (the driver binds this as ?)
@@ -48,23 +55,20 @@
 DECLARE @ASNID int = $(ASNID);
 DECLARE @EIN   int = $(EIN);     -- carried for parity with the legacy signature; the feed does not filter on it
 
-SELECT  d.VC_MANIFEST_NUMBER    AS Manifest,    -- -> PRF (Order HL)            d.VC_MANIFEST_NUMBER
-        d.VC_ASSY_PART_NUMBER   AS PartNumber,  -- -> LIN BP                    d.VC_ASSY_PART_NUMBER
-        d.IN_QTY                AS ShipQty,     -- -> SN1                       d.IN_QTY (int)
-        a.VC_PRODUCTION_DATE    AS PickUpDate,  -- -> BSN/DTM/filename          a.VC_PRODUCTION_DATE yyyymmdd
-        f.VC_ASSY_KANBAN_NUMBER AS Kanban       -- -> LIN RC                    f.VC_ASSY_KANBAN_NUMBER
-FROM            INV_ASN_MST          a
-JOIN            INV_ASN_DETAIL_MST   d  ON a.IN_ASN_ID = d.IN_ASN_ID
-JOIN            INV_MANIFEST_COST_MST m  ON d.VC_ASSY_PART_NUMBER = m.VC_ASSY_PART_NUMBER_CODE   -- A: INNER cost
-CROSS APPLY (   SELECT TOP 1 f1.VC_ASSY_KANBAN_NUMBER                                            -- B: INNER + TOP 1
-                FROM  INV_FORECAST_DETAIL_INF f1
-                WHERE f1.VC_ASSY_PART_NUMBER_CODE = d.VC_ASSY_PART_NUMBER ) f
-WHERE   a.IN_ASN_ID = @ASNID                                                                     -- @ASNID, NOT 6440
-AND     m.VC_START_MANIFEST <= a.VC_PRODUCTION_DATE                                              -- inclusive window
-AND     m.VC_END_MANIFEST   >= a.VC_PRODUCTION_DATE
-GROUP BY        d.VC_MANIFEST_NUMBER,                                                            -- C: collapse, no sum
-                d.VC_ASSY_PART_NUMBER,
-                d.IN_QTY,
-                a.VC_PRODUCTION_DATE,
-                f.VC_ASSY_KANBAN_NUMBER
-ORDER BY        d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER;                                      -- deterministic HL order
+-- >>> BEGIN FEED SQL (canonical; byte-identical to code.py:_FEED_SQL modulo @ASNID<->?) >>>
+SELECT d.VC_MANIFEST_NUMBER AS Manifest,
+       d.VC_ASSY_PART_NUMBER AS PartNumber,
+       d.IN_QTY AS ShipQty,
+       a.VC_PRODUCTION_DATE AS PickUpDate,
+       f.VC_ASSY_KANBAN_NUMBER AS Kanban
+FROM INV_ASN_MST a
+JOIN INV_ASN_DETAIL_MST d ON a.IN_ASN_ID = d.IN_ASN_ID
+JOIN INV_MANIFEST_COST_MST m ON d.VC_ASSY_PART_NUMBER = m.VC_ASSY_PART_NUMBER_CODE
+JOIN INV_FORECAST_DETAIL_INF f ON d.VC_ASSY_PART_NUMBER = f.VC_ASSY_PART_NUMBER_CODE
+WHERE a.IN_ASN_ID = @ASNID
+AND m.VC_START_MANIFEST <= a.VC_PRODUCTION_DATE
+AND m.VC_END_MANIFEST   >= a.VC_PRODUCTION_DATE
+GROUP BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER, m.MO_PRICE, d.IN_QTY,
+       a.VC_PRODUCTION_DATE, f.VC_ASSY_KANBAN_NUMBER
+ORDER BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER;
+-- <<< END FEED SQL <<<

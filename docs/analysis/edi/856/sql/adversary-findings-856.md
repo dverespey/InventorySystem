@@ -248,3 +248,193 @@ all CONFIRMED correct.
 - **#5 (real-site widths):** built with REAL `VehicleOrder.Site` values — ISA is byte-clean, the
   `_fixed` truncation never fires; truncation is a deliberate, documented divergence that only triggers on
   schema-max pathological input legacy would have mis-emitted anyway.
+
+---
+
+# RE-VERIFY (round 2) — 2026-06-20
+
+Re-attack of the developer's claim that **all** round-1 findings are fixed. Method: rebuilt the legacy byte
+stream INDEPENDENTLY from `EDI856Object.pas` (a hand-transcribed oracle of every `.pas` string concatenation,
+cited per source line — `/tmp/legacy_856_sim.py`), diffed it against `build_856`'s actual output segment-by-
+segment; re-read the LIVE `REPORT_EDI856` body from `Inventory_Live`; re-ran the pure unit test
+(`scripts/e2e/test_edi856_build.py`, 49/0) and the live-data e2e (`scripts/e2e/test_edi856_e2e.py`, 51/0); and
+empirically PATCHED the rebuild back to the old wrong bytes to prove the test is non-vacuous.
+
+Files re-read: `EDI856Object.pas` (the 12,634-byte legacy builder, lines 89-459); `code.py` (the rebuild,
+working-tree modified); `edi856-wire-format.md`; `spike-edi856-feed.sql`; both test files; live
+`REPORT_EDI856`. NOTE: the fixes live in the WORKING TREE (uncommitted) on `m1-edi856-outbound`; HEAD is still
+`18a9963 "...KNOWN BLOCKERS, fix next"`.
+
+## Per-finding resolution
+
+### BLOCKER 1 — TD1 (`TD1*` vs legacy `TD1**`): RESOLVED
+`code.py:222` now emits `sep.join(["TD1", "", ""])` → `TD1**` (two empty trailing elements). My independent
+`.pas` oracle (lines 294-296: `'TD1'+fSepElement` then `+fSepElement`, nothing appended) produces `TD1**`.
+Segment-by-segment diff of rebuild vs oracle: **MATCH** at index [6]. Non-vacuity PROVEN: patched the rebuild
+back to `sep.join(["TD1",""])` → emits `TD1*` → the unit-test assertion `td1 == "TD1**" and td1 != "TD1*"`
+goes False (test FAILS). The fix holds.
+
+### BLOCKER 2 — LIN (no trailing sep vs legacy `…*RC*<kanban>*`): RESOLVED
+`code.py:253-254` now emits `sep.join(["LIN","","BP",part,"RC",kanban,""])` → `LIN**BP*<part>*RC*<kanban>*`
+(trailing element separator after the kanban). My `.pas` oracle (lines 347-352: line 352 appends the kanban
+`+fSepElement`, so the segment ends in a separator) produces the same. Diff vs oracle: **MATCH** at indices
+[12],[15],[20]; all three LINs end in `*`. Non-vacuity PROVEN: patched the rebuild to drop the trailing `""`
+→ emits `LIN**BP*42600FEK5000*RC*JZUX` → the assertion `all(s != "…JZUX" …)` goes False (test FAILS). Holds.
+
+### BLOCKER 3 — feed dropped `MO_PRICE` from GROUP BY: RESOLVED
+`code.py:343` and `spike-edi856-feed.sql:71` both keep `m.MO_PRICE` in the GROUP BY. Live counterexample
+(rolled-back, sentinel-tagged, swept): injected a SECOND price-distinct cost window covering the same prod
+date for part `42600FEK5000` on a single-line probe ASN. Legacy `REPORT_EDI856 @EIN=0` SELECT → 2 rows;
+rebuild feed → **2 rows, identical** (e2e case #5 PASS). Before the inject both return 1; after sweeping the
+2nd window both return 1. The legacy proc body confirms `m.MO_PRICE` is the 4th GROUP-BY column in BOTH
+branches. The MO_PRICE split is reproduced.
+
+### SHOULD-FIX 4 — forecast `CROSS APPLY TOP 1` (nondeterministic, dropped lines): RESOLVED (with a NIT)
+`CROSS APPLY` is GONE; `code.py:339` / `spike-edi856-feed.sql:67` use `JOIN INV_FORECAST_DETAIL_INF f ON
+d.VC_ASSY_PART_NUMBER = f.VC_ASSY_PART_NUMBER_CODE` — the SAME INNER join the live proc uses (verified against
+the live body). Live counterexample (rolled-back): injected a 2nd forecast row for `42600FEK5000` with a
+DISTINCT kanban `ZZZ9`. Legacy SELECT → 2 rows `{JZUX, ZZZ9}`; rebuild feed → **2 rows, both kanbans,
+identical** (e2e case #6 PASS). The drift guard (e2e #8) additionally asserts `"CROSS APPLY" not in _FEED_SQL`.
+The line-dropping + heap-TOP-1 nondeterminism is gone. (Residual ordering NIT below.)
+
+### SHOULD-FIX 5 (== BLOCKER 3) — MO_PRICE: see BLOCKER 3. RESOLVED.
+
+### #6 full feed parity on real data: CONFIRMED on this snapshot
+E2E (1) ran the legacy `REPORT_EDI856 @EIN=0` SELECT vs the rebuild `_FEED_SQL` on real ASN 4721's 16 detail
+rows (copied into the rebuild DB): **16 == 16 rows, row-for-row identical** on Manifest/Part/Qty/Kanban. The
+4-table INNER join, inclusive cost window (`<=`/`>=`), and 6-col GROUP BY all match. PROVEN that the rebuild's
+6-col GROUP BY is equivalent to legacy's 9-col GROUP BY: `IN_ASN_EIN`, `VC_START_SEQ_NUMBER`, `VC_LINE_NAME`
+all come from table `a` filtered to `IN_ASN_ID = ?`, and `IN_ASN_ID` is the PK of `INV_ASN_MST` (verified:
+`PK_INV_ASN_MST`), so those three are single-valued per ASN → dropping them is provably cardinality-neutral.
+
+### #5 the unit test is genuinely legacy-derived + non-vacuous: CONFIRMED
+The `expected[]` array (`test_edi856_build.py:111-140`) now encodes the LEGACY bytes (`TD1**`, `LIN…*`), and I
+independently re-derived the same 26 segments straight from the `.pas` — they match `expected[]` exactly.
+Non-vacuity PROVEN twice: (a) the anti-regression block (`:259-265`) rejects the old `TD1*` / `LIN…JZUX`
+forms; (b) I patched the live rebuild back to the old bytes and the assertions flip to False (test FAILS).
+This is no longer self-referential on these segments.
+
+### #7a ISA15 single-char + the `_FEED_SQL`==.sql drift guard: CONFIRMED
+INV_SITES seed is now `VC_EDI_MODE='P'` (was the 4-char `'PROD'` defect) and `VC_SEP_SUBELEMENT='>'` (1 char)
+— verified on the spike. ISA15 emits a valid 1-char `P`. The drift guard (e2e #8) PASSES and is real: the
+inline `_FEED_SQL` is char-identical to the `.sql` marked body (modulo `@ASNID`→`?`); mutating either (e.g.
+dropping `m.MO_PRICE`) makes the compare fail.
+
+## Remaining divergences / caveats (none are byte-defects vs legacy on real data)
+
+- **NIT — residual fan-out ordering (qualifies the "NO nondeterminism" claim for #4).** The feed
+  `ORDER BY Manifest, PartNumber` does NOT tie-break sibling fan-out rows that share the same
+  (Manifest, PartNumber) — e.g. the two kanbans `JZUX`/`ZZZ9` for one manifest+part have IDENTICAL ORDER BY
+  keys (shown on the spike), so their relative order (and thus the HL-id-to-LIN assignment) is engine-defined.
+  This is NOT worse than legacy (the proc has NO ORDER BY at all), and the 856 wire is indifferent to which
+  sibling gets which HL id as long as each LIN/SN1 carries the right part/kanban/qty — but the developer's
+  "with NO nondeterminism" wording is slightly overstated: cross-manifest order is now pinned, intra-tie order
+  is not. Code-precision NIT, not a code defect.
+- **NIT — `_one_char` / `_fixed` are defensive deviations, not faithful ports, on PATHOLOGICAL input.** Legacy
+  `.pas:161` emits `SiteEDIMode` raw; on a 4-char `'PROD'` legacy would emit `PROD` (malformed), the rebuild
+  emits `P`. Likewise `_fixed` hard-truncates over-wide ISA fields legacy would have over-run. On REAL data
+  (1-char mode, in-range DUNS/abbr) both are byte-identical; these only diverge on input legacy would have
+  mis-emitted anyway. Documented in the code as Trap-6 / defect-#7. Acceptable, but it means the port is
+  "byte-faithful on real data," not "a literal transcription on all input."
+- **DATA-VINTAGE GAP (unchanged from round 1) — full LEGACY BYTE parity remains UNPROVABLE.** No golden 856
+  exists for any ASN, and the spike `INV_SITES` carries PLACEHOLDER identity (abbr `MAS`, DUNS `000000001`,
+  supplier `MAS`, TMM `000000011`, sub-elem `>`) — NOT the real TEMA wire values (DUNS `969009112`, supplier
+  `71930`, TMM `808369495`, sub-elem `#`). So the ISA/GS IDENTITY bytes the spike emits are NOT the TEMA wire.
+  The STRUCTURE is value-independent and faithful; the exact identity bytes can only be confirmed once the
+  real site row is loaded at cutover and diffed against a captured legacy 856. This is an honest, documented
+  gap (test docstrings state it plainly), not a defect.
+
+---
+
+## VERDICT (round 2)
+
+All four round-1 byte/feed findings are **RESOLVED**, each with a counterexample-grade proof:
+
+- **BLOCKER 1 (TD1):** RESOLVED — `TD1**` matches the `.pas` oracle; reverting fails the test.
+- **BLOCKER 2 (LIN):** RESOLVED — `LIN…*RC*<kanban>*` matches the `.pas` oracle; reverting fails the test.
+- **BLOCKER 3 / SHOULD-FIX 5 (MO_PRICE):** RESOLVED — `m.MO_PRICE` back in GROUP BY; live 2-cost-window probe
+  yields 2 rows in BOTH legacy and rebuild.
+- **SHOULD-FIX 4 (forecast TOP-1):** RESOLVED — INNER `JOIN INV_FORECAST_DETAIL_INF` (matches the live proc);
+  live 2-kanban probe yields 2 rows / both kanbans in BOTH; CROSS APPLY gone; drift-guarded.
+
+The rebuild is now **byte-faithful to the legacy 856 in STRUCTURE + every segment + the data feed, on real
+data, MODULO the documented byte-parity-pending-golden gap** (no golden file + placeholder site identity on
+the spike). I attempted to refute byte-faithfulness with an independent `.pas`-derived oracle (26/26 segments
+match), a non-vacuity patch (old bytes now fail the test), the live proc body (feed joins/GROUP-BY/window all
+match), and rolled-back fan-out/split counterexamples (legacy == rebuild row-for-row) — and could NOT.
+
+Two NITs remain, neither a byte-defect vs legacy on real data: (1) the "NO nondeterminism" claim is slightly
+overstated — intra-(manifest,part) fan-out sibling order is still engine-defined (no worse than legacy);
+(2) `_one_char`/`_fixed` are defensive deviations on pathological input legacy would have mis-emitted.
+
+**Bottom line:** the specific fixes HOLD. Equivalence is PROVEN for structure + segments + feed on real data;
+true end-to-end LEGACY BYTE parity stays UNPROVABLE until a golden 856 + real site values are loaded at
+cutover — say so; do not call the green spike tests "TEMA byte parity."
+
+---
+
+## RE-VERIFY (round 2) — INDEPENDENT SECOND-ADVERSARY CORROBORATION — 2026-06-20
+
+A second adversary pass re-attacked the four findings by a DIFFERENT method than the harness above (raw
+`sqlcmd` rolled-back probes + direct `.pas` line reads, not the Python test fixtures), to guard against the
+test and the code agreeing with each other vacuously. Result: every round-1 finding independently RESOLVED;
+no new divergence found. New corroborating evidence:
+
+### Segment bytes (BLOCKER 1/2 + the full envelope) — re-read the `.pas` directly
+Read the legacy emitters line-by-line and matched them to `build_856`'s `sep.join` arguments:
+- TD1 `EDI856Object.pas:294-296` (`'TD1'+fSepElement` then `+fSepElement`, nothing appended) -> `TD1**`;
+  rebuild `code.py:222` `sep.join(["TD1","",""])` -> `TD1**`. MATCH.
+- LIN `:347-352` (line 352 appends `Kanban+fSepElement`, trailing sep) -> `...*RC*<kanban>*`; rebuild
+  `code.py:253-254` appends a trailing `""` -> same. MATCH.
+- Envelope cross-checked against the `.pas` too (not just the harness): ISA `:144-162` (ISA09 `copy(,3,6)`
+  yymmdd; ISA16 `:162 fSepSubElement`, NO trailing sep), GS `:179-187` (`+'004010'`, no trailing), ST
+  `:204-206`, BSN `:225-229` (`:229` hhmm with `//+fSepElement` COMMENTED OUT -> no trailing sep), DTM
+  `:248-252` (`+'ET'`), CTT `:386-387`, SE `:406-409` (`INC(fSegCount)` at `:407` BEFORE the append -> SE
+  counts itself), GE `:427-429`, IEA `:447-449`. Emission order `Execute:116-126` == the rebuild's `segs`
+  order, and the legacy `RecordCount>0` guard (`:113`) == the driver's `if not detailRows: raise`. No envelope
+  segment diverges. Non-vacuity re-confirmed independently: patched a throwaway copy of `code.py` back to
+  `["TD1",""]` / LIN-without-trailing-`""` and the unit test's anti-regression assertions
+  (`test_edi856_build.py:261-265`) evaluate to False (i.e. would FAIL).
+
+### Feed MO_PRICE + forecast join (BLOCKER 3 / SHOULD-FIX 4) — raw sqlcmd fan-out probe, NOT the harness
+Ran ONE rolled-back `sqlcmd` transaction on `Inventory` (single-line probe ASN, prodDate `20260618`, part
+`42600FEK5000`) injecting BOTH a 2nd price-distinct cost window AND a 2nd distinct-kanban (`ZZK9`) forecast
+row, then counted rows four ways:
+- legacy proc-body **9-col** GROUP BY (transcribed from the LIVE `REPORT_EDI856` `@EIN=0` branch) -> **4 rows**
+- rebuild feed **6-col** GROUP BY (`m.MO_PRICE` kept, INNER forecast join) -> **4 rows** (MATCH: 2 prices x 2 kanbans)
+- OLD bug A (MO_PRICE dropped from GROUP BY) -> **2 rows** (collapses the price split)
+- OLD bug B (`CROSS APPLY (SELECT TOP 1 ...)`, no ORDER BY) -> **2 rows** (drops the kanban fan-out)
+
+Against the legacy truth of 4, the fixed feed = 4 while BOTH old bugs = 2 — the fixes are the difference,
+proven OUTSIDE the test harness. Tran rolled back; sentinel rows swept; verified 0 leftover and
+`INV_SITES.IN_EIN_SEQ` restored to its as-found value (0).
+
+### Structural facts the GROUP-BY-equivalence + nondeterminism arguments rest on — verified live
+- `PK_INV_ASN_MST` is on `IN_ASN_ID` ALONE (queried `sys.indexes`/`sys.index_columns`). So under
+  `WHERE IN_ASN_ID = ?` table `a` is exactly one row -> `IN_ASN_EIN`/`VC_START_SEQ_NUMBER`/`VC_LINE_NAME` are
+  single-valued -> dropping them from the rebuild's GROUP BY is provably cardinality-neutral (legacy 9-col ==
+  rebuild 6-col). The round-1 BLOCKER-3 collapse came ONLY from dropping `m.MO_PRICE` (from the cost join,
+  which CAN multi-value), never from these three header columns.
+- `INV_FORECAST_DETAIL_INF` is a **HEAP** (no clustered index) on `Inventory_Live` — confirming the retired
+  `CROSS APPLY (SELECT TOP 1 ...)` had genuinely engine-defined ("nondeterministic") row choice, the round-1
+  SHOULD-FIX-4 hazard. The INNER join removes the TOP-1 choice entirely.
+
+### Harness re-run (independent invocation)
+`test_edi856_build.py` -> **49 PASS / 0 FAIL**; `test_edi856_e2e.py` -> **51 PASS / 0 FAIL** (feed-row parity
+16==16 on real ASN 4721; multi-price #5 and multi-kanban #6 fan-out parity; EIN-from-`INV_SITES`; per-ASN
+decoupled C->S flip; temp-then-rename atomicity). The e2e's "legacy SELECT" oracle (`:230-242`, `:398-413`) was
+checked column-for-column against the LIVE `REPORT_EDI856 @EIN=0` body and is a faithful transcription (same 4
+INNER joins, same inclusive `<=`/`>=` window, same 9-col GROUP BY) — the parity is a real legacy-vs-rebuild
+diff, not self-comparison.
+
+### Verdict (independent corroboration)
+I tried to refute byte-faithfulness a second time, by hand off the `.pas` and by raw rolled-back SQL against
+the live proc, and **could not**. All four round-1 findings are RESOLVED; the two NITs above stand (intra-tie
+fan-out order engine-defined — no worse than the legacy proc, which has NO `ORDER BY` at all;
+`_one_char`/`_fixed` defensive on pathological input legacy would have mis-emitted). RECOMMENDATION: the
+byte/feed logic is sound to SHIP — with the explicit, unchanged caveat that **TRUE end-to-end legacy BYTE
+parity is still UNPROVABLE** until (a) a captured golden 856 and (b) the REAL `INV_SITES` identity values
+(DUNS/supplier/TMM/sub-elem `#`, EDI mode) replace the spike placeholders at cutover. The green tests prove
+structure + segments + feed equivalence ON REAL DATA; they do NOT prove "TEMA byte parity" and must not be
+labeled as such. Housekeeping note (not a code defect): the fixes are UNCOMMITTED working-tree changes; HEAD is
+still `18a9963 "...KNOWN BLOCKERS, fix next"` — commit them so the SHIP state is the recorded state.

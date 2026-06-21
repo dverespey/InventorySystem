@@ -77,9 +77,45 @@ SEED_EIN_SEQ = 9100             # a known starting IN_EIN_SEQ -> allocation must
 # a sentinel line name for the copied/decoy ASNs so cleanup is exact and nothing real is touched.
 TEST_LINE = "ZZ856E2E"
 DECOY_LINE = "ZZ856DEC"
+# the latent-divergence probe ASN gets its OWN line name: INV_ASN_MST has a filtered UNIQUE index
+# UX_INV_ASN_MST_LINE_PDATE_NORMAL on (VC_LINE_NAME, VC_PRODUCTION_DATE) WHERE VC_START_SEQ_NUMBER<>'-1'
+# (spike-asn-unique-guard.sql), so the probe MUST differ from testAsn on line-or-date or the INSERT is
+# rejected as a duplicate. A distinct line keeps cleanup exact.
+PROBE_LINE = "ZZ856PRB"
+# sentinel VC_ADD stamps tagging the cost/forecast rows the latent-divergence cases inject, so cleanup is
+# exact (delete WHERE VC_ADD = sentinel) and the spike is left as-found even though these are real rows.
+COST_SENTINEL = "ZZ856COST0000000"      # 16-char VC_ADD stamp on injected INV_MANIFEST_COST_MST rows
+FC_SENTINEL = "ZZ856FCST0000000"        # 16-char VC_ADD stamp on injected INV_FORECAST_DETAIL_INF rows
 
 EDI856_PY = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
                              "docs", "analysis", "edi", "856", "project-library", "edi856", "code.py"))
+FEED_SQL_FILE = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                 "docs", "analysis", "edi", "856", "spike-edi856-feed.sql"))
+
+
+def _marked_feed_body(path):
+    """Extract the canonical SELECT body between the BEGIN/END FEED SQL markers in spike-edi856-feed.sql,
+    drop line-comments + collapse all whitespace runs to single spaces, strip the trailing ';'. Used to
+    prove code.py:_FEED_SQL is byte-identical to the .sql (modulo the @ASNID<->? bind)."""
+    with open(path) as fh:
+        lines = fh.read().splitlines()
+    out, grab = [], False
+    for ln in lines:
+        if ">>> BEGIN FEED SQL" in ln:
+            grab = True
+            continue
+        if "<<< END FEED SQL" in ln:
+            break
+        if grab:
+            out.append(ln)
+    body = " ".join(out)
+    body = " ".join(body.split())           # collapse whitespace
+    return body.rstrip(";").strip()
+
+
+def _normalize_sql(s):
+    """Collapse whitespace runs to single spaces for a whitespace-insensitive char compare."""
+    return " ".join(s.split())
 
 
 def sql(db, query):
@@ -101,9 +137,12 @@ def scalar(db, q):
 def cleanup(testAsn, decoyAsn, origSeq):
     """Restore Inventory + INV_SITES as-found."""
     sql(INV, "DELETE FROM INV_ASN_DETAIL_MST WHERE IN_ASN_ID IN "
-             "(SELECT IN_ASN_ID FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s')); "
-             "DELETE FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s')"
-             % (TEST_LINE, DECOY_LINE, TEST_LINE, DECOY_LINE))
+             "(SELECT IN_ASN_ID FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')); "
+             "DELETE FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')"
+             % (TEST_LINE, DECOY_LINE, PROBE_LINE, TEST_LINE, DECOY_LINE, PROBE_LINE))
+    # sweep any cost/forecast rows the latent-divergence cases injected (tagged by sentinel VC_ADD).
+    sql(INV, "DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ADD = '%s'" % COST_SENTINEL)
+    sql(INV, "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD = '%s'" % FC_SENTINEL)
     if origSeq is not None:
         sql(INV, "UPDATE INV_SITES SET IN_EIN_SEQ = %s WHERE IN_SITE_ID = %d"
                  % (origSeq, SITE_ID))
@@ -120,9 +159,26 @@ def main():
 
     # --- pre-clean any leftovers from a prior aborted run ---------------------------------------
     sql(INV, "DELETE FROM INV_ASN_DETAIL_MST WHERE IN_ASN_ID IN "
-             "(SELECT IN_ASN_ID FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s')); "
-             "DELETE FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s')"
-             % (TEST_LINE, DECOY_LINE, TEST_LINE, DECOY_LINE))
+             "(SELECT IN_ASN_ID FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')); "
+             "DELETE FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')"
+             % (TEST_LINE, DECOY_LINE, PROBE_LINE, TEST_LINE, DECOY_LINE, PROBE_LINE))
+    sql(INV, "DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ADD = '%s'" % COST_SENTINEL)
+    sql(INV, "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD = '%s'" % FC_SENTINEL)
+
+    # --- (#8) DRIFT GUARD: code.py:_FEED_SQL is byte-identical to the .sql's marked SELECT body --
+    # (modulo the single @ASNID<->? bind). If either is edited without the other, this fails.
+    print("\n--- (#8) _FEED_SQL == spike-edi856-feed.sql marked body (modulo @ASNID<->?) ---")
+    sql_body = _marked_feed_body(FEED_SQL_FILE).replace("@ASNID", "?")
+    inline_body = _normalize_sql(edi856._FEED_SQL)
+    rep.check("_FEED_SQL char-identical to spike-edi856-feed.sql SELECT body (@ASNID -> ?)",
+              inline_body == sql_body,
+              "match" if inline_body == sql_body else
+              "\n      inline=%r\n      .sql  =%r" % (inline_body, sql_body))
+    rep.check("the feed now uses an INNER forecast JOIN (not CROSS APPLY TOP 1)",
+              "JOIN INV_FORECAST_DETAIL_INF" in inline_body and "CROSS APPLY" not in inline_body,
+              "INNER join present, CROSS APPLY absent")
+    rep.check("the feed GROUP BY keeps m.MO_PRICE (legacy splits rows on it)",
+              "m.MO_PRICE" in inline_body, "MO_PRICE in GROUP BY")
 
     # --- 0. legacy ground truth present ---------------------------------------------------------
     lcount = scalar(LIVE, "SELECT COUNT(*) FROM INV_ASN_DETAIL_MST WHERE IN_ASN_ID=%d" % LEGACY_ASN)
@@ -186,8 +242,9 @@ def main():
             "ORDER BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER" % testAsn)
         # legacy emits the 9-col GROUP BY; the rebuild reads Manifest/Part/Qty/Kanban (+ prodDate from
         # the header). Compare on the 4 wire columns the builder consumes — the price isn't emitted, and
-        # the CROSS APPLY TOP 1 must reproduce the SAME Kanban the legacy INNER join's GROUP BY produced
-        # (for these parts there is exactly one forecast row, so TOP 1 == the unique row).
+        # the rebuild's INNER forecast JOIN + 9-key GROUP BY (incl. MO_PRICE) must reproduce the legacy
+        # rows row-for-row. On THIS ASN every part has 1 cost row + 1 forecast row, so the count is 16==16;
+        # the >1-row fan-out/split is exercised separately by cases #5 (multi-price) and #6 (multi-kanban).
         legacy_wire = sorted((r[0], r[1], int(r[3]), r[5]) for r in legacy_feed)
 
         feedDs = edi856.system.db.runPrepQuery(edi856._FEED_SQL, [testAsn], "Inventory_Spike")
@@ -281,6 +338,19 @@ def main():
                   "I=%d LIN=%d SN1=%d rows=%d" % (len(itemHls), len(lins), len(sn1s), result["rowCount"]))
         rep.check("ISA09 == yymmdd '260618' (century dropped) while GS04 == yyyymmdd",
                   isa[9] == "260618" and gs[4] == PDATE, "ISA09=%s GS04=%s" % (isa[9], gs[4]))
+        # (#7) ISA15 = the X12 usage indicator, EXACTLY ONE char. INV_SITES.VC_EDI_MODE is now seeded 'P'
+        # (was 'PROD', which emitted a malformed 4-char ISA15). The builder also enforces single-char.
+        rep.check("ISA15 (usage indicator) is exactly one char (was 'PROD' -> now 'P')",
+                  len(isa[15]) == 1 and isa[15] in ("P", "T"),
+                  "ISA15=%r len=%d" % (isa[15], len(isa[15])))
+        rep.check("ISA16 (component-element separator) is exactly one char",
+                  len(isa[16]) == 1, "ISA16=%r" % isa[16])
+        # the TD1/LIN byte fixes appear in the REAL emitted file too (not just the unit test).
+        rep.check("TD1 segment == 'TD1**' (two empty elements, .pas:294-296)",
+                  next(s for s in segs if s.startswith("TD1*")) == "TD1**",
+                  next(s for s in segs if s.startswith("TD1*")))
+        rep.check("every LIN ends with the trailing element separator (.pas:352)",
+                  all(s.endswith("*") for s in lins), "%d LINs all trailing-sep" % len(lins))
         rep.check("filename == decision-E pattern '85660618.txt'",
                   result["filename"] == "85660618.txt", result["filename"])
 
@@ -292,12 +362,200 @@ def main():
         rep.check("decoy 'C' ASN UNTOUCHED (still 'C') — flip is per-ASN, NOT WHERE status='C'",
                   decStatus == "C", decStatus)
 
+        # ========================================================================================
+        # LATENT FEED-DIVERGENCE CASES — these prove the feed reproduces the LEGACY fan-out/split
+        # that the prior build collapsed, by INJECTING the >1-row shape the sparse snapshot lacks.
+        # Each compares the rebuild feed against the legacy 9-col GROUP-BY SELECT (the byte-faithful
+        # REPORT_EDI856 @EIN=0 read, scoped by ASN id), row-for-row. Injected cost/forecast rows are
+        # sentinel-tagged (VC_ADD) and swept in cleanup() so the spike is left as-found.
+        #
+        # The probe ASN ships a SINGLE detail line for part PROBE_PART (which has exactly ONE cost row
+        # and ONE forecast row in the snapshot), so a 2nd cost window / 2nd forecast row makes the row
+        # count jump 1 -> 2 unambiguously.
+        PROBE_PART = "42600FEK5000"     # ASN-4721 part; 1 cost row + 1 forecast row in the snapshot
+        PROBE_KANBAN = "JZUX"           # its existing forecast kanban (the snapshot's single row)
+        PROBE_MANIFEST = "76061857"
+
+        # a single-line probe ASN (status 'C', EIN 0, prodDate within the cost window). Its OWN line name
+        # (PROBE_LINE) so it does not collide with testAsn on the (line, prodDate) filtered unique index.
+        sql(INV,
+            "INSERT INTO INV_ASN_MST (IN_ASN_EIN, VC_ASN_STATUS, VC_LINE_NAME, VC_ASSEMBLY_LINE, "
+            "VC_START_SEQ_NUMBER, VC_END_SEQ_NUMBER, IN_QTY, VC_PRODUCTION_DATE, VC_LAST_UPDATE, VC_ADD) "
+            "VALUES (0, 'C', '%s', '', '0001', '0002', 0, '%s', '0000000000000000', '0000000000000000')"
+            % (PROBE_LINE, PDATE))
+        probeAsn = int(scalar(INV, "SELECT MAX(IN_ASN_ID) FROM INV_ASN_MST WHERE VC_LINE_NAME='%s'"
+                                   % PROBE_LINE))
+        rep.check("probe ASN created under its own line (distinct from testAsn on the unique index)",
+                  probeAsn != testAsn, "probe=%d testAsn=%d" % (probeAsn, testAsn))
+        sql(INV,
+            "INSERT INTO INV_ASN_DETAIL_MST (IN_ASN_ID, IN_INV_ID, IN_ASN_EIN, VC_MANIFEST_NUMBER, "
+            "VC_ASSY_PART_NUMBER, IN_QTY, VC_LAST_UPDATE, VC_ADD) "
+            "VALUES (%d, NULL, 0, '%s', '%s', 80, '0000000000000000', '0000000000000000')"
+            % (probeAsn, PROBE_MANIFEST, PROBE_PART))
+
+        # the legacy 9-col GROUP-BY SELECT (REPORT_EDI856 @EIN=0 body), scoped by ASN id (status drop —
+        # we compare the feed READ, not the status branch). Returns the 4 wire cols sorted.
+        def legacy_wire_for(asn):
+            rows = sql(INV,
+                "SELECT d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER, m.MO_PRICE, d.IN_QTY, "
+                "a.VC_PRODUCTION_DATE, f.VC_ASSY_KANBAN_NUMBER "
+                "FROM INV_ASN_MST a "
+                "JOIN INV_ASN_DETAIL_MST d ON a.IN_ASN_ID=d.IN_ASN_ID "
+                "JOIN INV_MANIFEST_COST_MST m ON d.VC_ASSY_PART_NUMBER=m.VC_ASSY_PART_NUMBER_CODE "
+                "JOIN INV_FORECAST_DETAIL_INF f ON d.VC_ASSY_PART_NUMBER=f.VC_ASSY_PART_NUMBER_CODE "
+                "WHERE a.IN_ASN_ID=%d "
+                "AND m.VC_START_MANIFEST <= a.VC_PRODUCTION_DATE "
+                "AND m.VC_END_MANIFEST   >= a.VC_PRODUCTION_DATE "
+                "GROUP BY a.IN_ASN_EIN, d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER, m.MO_PRICE, "
+                "d.IN_QTY, a.VC_PRODUCTION_DATE, f.VC_ASSY_KANBAN_NUMBER, a.VC_START_SEQ_NUMBER, "
+                "a.VC_LINE_NAME "
+                "ORDER BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER" % asn)
+            return sorted((r[0], r[1], int(r[3]), r[5]) for r in rows)
+
+        def rebuild_wire_for(asn):
+            ds = edi856.system.db.runPrepQuery(edi856._FEED_SQL, [asn], "Inventory_Spike")
+            return sorted((r["Manifest"], r["PartNumber"], int(r["ShipQty"]), r["Kanban"]) for r in ds)
+
+        # --- (#5) MULTI-PRICE: MO_PRICE in the GROUP BY splits a 2-cost-window part into 2 rows ----
+        # The snapshot part has one cost window covering PDATE. Inject a SECOND, price-distinct window
+        # that ALSO covers PDATE. Legacy keeps m.MO_PRICE in the GROUP BY -> 2 rows; the rebuild must
+        # too (dropping MO_PRICE would collapse to 1, BLOCKER-3). The 856 never carries the price, but
+        # MO_PRICE changes the ROW COUNT the wire DOES carry (2 LIN/SN1 lines vs 1).
+        print("\n--- (#5) MULTI-PRICE: a 2nd price-distinct overlapping cost window -> 2 feed rows ---")
+        base1 = rebuild_wire_for(probeAsn)
+        rep.check("probe ASN feeds exactly 1 row BEFORE the 2nd cost window (single line)",
+                  len(base1) == 1, "%d rows: %r" % (len(base1), base1))
+        # clone the existing covering cost row's window, but with a DIFFERENT price + the sentinel VC_ADD.
+        sql(INV,
+            "INSERT INTO INV_MANIFEST_COST_MST (VC_ASSY_PART_NUMBER_CODE, VC_ASSY_MANIFEST_NUMBER, "
+            "VC_START_MANIFEST, VC_END_MANIFEST, MO_PRICE, VC_LAST_UPDATE, VC_ADD) "
+            "SELECT TOP 1 VC_ASSY_PART_NUMBER_CODE, VC_ASSY_MANIFEST_NUMBER, VC_START_MANIFEST, "
+            "VC_END_MANIFEST, MO_PRICE + 11.11, VC_LAST_UPDATE, '%s' "
+            "FROM INV_MANIFEST_COST_MST WHERE VC_ASSY_PART_NUMBER_CODE='%s' "
+            "AND VC_START_MANIFEST <= '%s' AND VC_END_MANIFEST >= '%s'"
+            % (COST_SENTINEL, PROBE_PART, PDATE, PDATE))
+        legP = legacy_wire_for(probeAsn)
+        rebP = rebuild_wire_for(probeAsn)
+        rep.check("legacy SELECT now emits 2 rows for the 2-cost-window part (MO_PRICE split)",
+                  len(legP) == 2, "%d rows: %r" % (len(legP), legP))
+        rep.check("rebuild feed MATCHES legacy: 2 rows (KEEPS MO_PRICE in GROUP BY — BLOCKER-3 fixed)",
+                  rebP == legP and len(rebP) == 2,
+                  "rebuild=%r legacy=%r" % (rebP, legP))
+        # sweep the injected cost row so case #6 starts clean.
+        sql(INV, "DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ADD='%s'" % COST_SENTINEL)
+        afterP = rebuild_wire_for(probeAsn)
+        rep.check("after sweeping the 2nd cost window the feed is back to 1 row", len(afterP) == 1,
+                  "%d rows" % len(afterP))
+
+        # --- (#6) MULTI-KANBAN: the INNER forecast JOIN fans out 2 distinct-kanban rows -> 2 lines -
+        # The snapshot part has one forecast row (kanban PROBE_KANBAN). Inject a SECOND forecast row
+        # for the SAME part with a DISTINCT kanban. The legacy INNER JOIN INV_FORECAST_DETAIL_INF fans
+        # the detail line to 2 rows; the 9-col GROUP BY keeps each distinct kanban -> 2 LIN lines. The
+        # prior CROSS APPLY (SELECT TOP 1 ...) kept ONE (nondeterministically) — SHOULD-FIX 4. The
+        # rebuild's INNER join must now keep BOTH.
+        print("\n--- (#6) MULTI-KANBAN: a 2nd distinct-kanban forecast row -> 2 feed rows (fan-out) ---")
+        base6 = rebuild_wire_for(probeAsn)
+        rep.check("probe ASN feeds exactly 1 row BEFORE the 2nd forecast row", len(base6) == 1,
+                  "%d rows: %r" % (len(base6), base6))
+        NEW_KANBAN = "ZZZ9"
+        rep.check("the injected kanban %r differs from the snapshot kanban %r" % (NEW_KANBAN, PROBE_KANBAN),
+                  NEW_KANBAN != PROBE_KANBAN, "%s != %s" % (NEW_KANBAN, PROBE_KANBAN))
+        # clone the existing forecast row but with a DISTINCT kanban + the sentinel VC_ADD (all other
+        # NOT-NULL columns copied verbatim so the row is schema-valid).
+        sql(INV,
+            "INSERT INTO INV_FORECAST_DETAIL_INF (VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH, "
+            "VC_ASSY_KANBAN_NUMBER, VC_TIRE_PART_NUMBER_CODE, IN_TIRE_RATIO, VC_WHEEL_PART_NUMBER_CODE, "
+            "IN_WHEEL_RATIO, IN_RATIO, IN_ASSY_QTY, VC_BROADCAST_CODE, VC_LAST_UPDATE, VC_ADD) "
+            "SELECT TOP 1 VC_ASSY_PART_NUMBER_CODE, VC_EFFECTIVE_MONTH, '%s', VC_TIRE_PART_NUMBER_CODE, "
+            "IN_TIRE_RATIO, VC_WHEEL_PART_NUMBER_CODE, IN_WHEEL_RATIO, IN_RATIO, IN_ASSY_QTY, "
+            "VC_BROADCAST_CODE, VC_LAST_UPDATE, '%s' "
+            "FROM INV_FORECAST_DETAIL_INF WHERE VC_ASSY_PART_NUMBER_CODE='%s'"
+            % (NEW_KANBAN, FC_SENTINEL, PROBE_PART))
+        legK = legacy_wire_for(probeAsn)
+        rebK = rebuild_wire_for(probeAsn)
+        rep.check("legacy SELECT now emits 2 rows for the 2-forecast-row part (distinct kanbans)",
+                  len(legK) == 2, "%d rows: %r" % (len(legK), legK))
+        rep.check("both kanbans present in the legacy rows (%r + %r)" % (PROBE_KANBAN, NEW_KANBAN),
+                  set(r[3] for r in legK) == {PROBE_KANBAN, NEW_KANBAN},
+                  str([r[3] for r in legK]))
+        rep.check("rebuild feed MATCHES legacy: 2 rows, BOTH kanbans (INNER join fan-out, not TOP 1)",
+                  rebK == legK and len(rebK) == 2,
+                  "rebuild=%r legacy=%r" % (rebK, legK))
+        sql(INV, "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD='%s'" % FC_SENTINEL)
+        afterK = rebuild_wire_for(probeAsn)
+        rep.check("after sweeping the 2nd forecast row the feed is back to 1 row", len(afterK) == 1,
+                  "%d rows" % len(afterK))
+
+        # --- (#4) ATOMICITY: a post-write DB failure must leave NO final 856 file on disk ---------
+        # send_856 writes the EDI to <name>.tmp INSIDE the tx, flips C->S, COMMITs, and ONLY THEN
+        # renames .tmp -> final. Force the flip (step 6, AFTER the .tmp write) to raise -> the driver
+        # rolls back, deletes the orphan .tmp, and never renames -> the final 856 must NOT exist. (If
+        # the final file were written before the commit, a rolled-back send would leave a phantom ASN
+        # on disk under an uncommitted EIN — the adversary blocker.)
+        print("\n--- (#4) ATOMICITY: post-write DB failure -> rollback -> NO final 856 file ---")
+        atomdir = tempfile.mkdtemp(prefix="edi856_atom_")
+        try:
+            # re-arm the probe ASN to 'C' (untouched here) and snapshot the EIN seq so we can prove the
+            # bump unwound too. Inject a fault into the REAL driver's flip UPDATE via the shim.
+            preSeq = int(scalar(INV, "SELECT IN_EIN_SEQ FROM INV_SITES WHERE IN_SITE_ID=%d" % SITE_ID))
+            realUpdate = edi856.system.db.runPrepUpdate
+            realWrite = edi856.system.file.writeFile
+            wroteTmp = {"path": None}      # spy: record that the .tmp WAS actually written (step 5)
+
+            def faulting_update(sqlText, args, db=None, getKey=False, tx=None):
+                # fail ONLY on the C->S flip (step 6), AFTER the .tmp has been written (step 5). The EIN
+                # stamp UPDATE (step 2) must still run so the driver reaches the .tmp write.
+                if "VC_ASN_STATUS" in sqlText and "= 'S'" in sqlText:
+                    raise RuntimeError("INJECTED post-write DB failure (C->S flip)")
+                return realUpdate(sqlText, args, db=db, getKey=getKey, tx=tx)
+
+            def spying_write(path, data, append=False):
+                # confirm the driver DID write the .tmp before the failure — so the cleanup proof below
+                # is non-vacuous (a real file was created then removed, not a skipped write path).
+                wroteTmp["path"] = path
+                return realWrite(path, data, append)
+
+            edi856.system.db.runPrepUpdate = faulting_update
+            edi856.system.file.writeFile = spying_write
+            raised = False
+            try:
+                edi856.send_856(probeAsn, SITE_ID, database="Inventory_Spike", outDir=atomdir,
+                                fileTime="1430")
+            except Exception as e:
+                raised = True
+                print("    (expected) send_856 raised: %s" % e)
+            finally:
+                edi856.system.db.runPrepUpdate = realUpdate     # un-inject
+                edi856.system.file.writeFile = realWrite
+
+            rep.check("send_856 re-raised on the post-write DB failure (did not swallow it)", raised,
+                      "raised=%s" % raised)
+            # NON-VACUOUS: the .tmp WAS written (step 5 ran) AND it targeted the .tmp, not the final name.
+            rep.check("driver wrote the EDI to a .tmp (NOT the final name) before the failure",
+                      wroteTmp["path"] is not None and wroteTmp["path"].endswith(".tmp"),
+                      "wrote=%r" % wroteTmp["path"])
+            files = sorted(os.listdir(atomdir))
+            finalName = edi856._filename_856(PDATE)             # '85660618.txt'
+            rep.check("NO final 856 file exists after the rolled-back send (atomicity)",
+                      finalName not in files, "dir=%r" % files)
+            rep.check("the orphan .tmp was cleaned up too (the .tmp that WAS written is now gone)",
+                      (finalName + ".tmp") not in files and files == [], "dir=%r" % files)
+            # the DB unwound: status stayed 'C', EIN seq NOT bumped, header EIN not left stamped+committed.
+            stAtom = scalar(INV, "SELECT VC_ASN_STATUS FROM INV_ASN_MST WHERE IN_ASN_ID=%d" % probeAsn)
+            rep.check("probe ASN status stayed 'C' (flip rolled back)", stAtom == "C", stAtom)
+            postSeqAtom = int(scalar(INV, "SELECT IN_EIN_SEQ FROM INV_SITES WHERE IN_SITE_ID=%d"
+                                         % SITE_ID))
+            rep.check("INV_SITES.IN_EIN_SEQ NOT bumped (EIN alloc rolled back with the tx)",
+                      postSeqAtom == preSeq, "pre=%d post=%d" % (preSeq, postSeqAtom))
+        finally:
+            shutil.rmtree(atomdir, ignore_errors=True)
+
     finally:
         cleanup(testAsn, decoyAsn, origSeq)
         shutil.rmtree(tmpdir, ignore_errors=True)
         # confirm restoration
-        left = scalar(INV, "SELECT COUNT(*) FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s')"
-                           % (TEST_LINE, DECOY_LINE))
+        left = scalar(INV, "SELECT COUNT(*) FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')"
+                           % (TEST_LINE, DECOY_LINE, PROBE_LINE))
         rep.check("Inventory restored as-found (test + decoy ASNs swept)", int(left) == 0,
                   "%s remaining" % left)
         if origSeq is not None:

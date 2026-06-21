@@ -29,8 +29,10 @@
 #
 # LOCKED DECISIONS realized here (byte-faithful — David locked byte parity with the TEMA-accepted output):
 #   A  KEEP the cost INNER join (feed filters to cost-covered lines, like legacy) — feed SQL.
-#   B  INNER forecast join for Kanban, capped to one row (CROSS APPLY (SELECT TOP 1 ...)) — feed SQL.
-#   C  GROUP-BY collapse (NO sum) — feed SQL.
+#   B  INNER forecast join for Kanban — the SAME JOIN INV_FORECAST_DETAIL_INF the legacy proc uses (a part
+#      with >1 forecast row fans out, GROUP-BY keeps every distinct kanban). NOT a CROSS APPLY TOP 1 — feed SQL.
+#   C  GROUP-BY collapse (NO sum), KEEPING m.MO_PRICE as a GROUP-BY key (legacy splits rows on it even
+#      though the 856 never carries a price) — feed SQL.
 #   D  emit CRLF ONLY (NO '~' segment terminator) — the driver joins with "\r\n"; the segment terminator
 #      VC_SEP_SEGMENT is READ into the site dict but NEVER emitted (legacy Trap 1 / EDI856Object.pas:13).
 #   E  filename = the CREATE pattern  856<copy(prodDate,4,5)>.txt  — _filename_856() below.
@@ -72,6 +74,20 @@ def _fixed(s, width):
     if len(s) > width:
         s = s[:width]                      # hard-truncate (Trap 6 fix; never fires on real data)
     return s + (" " * (width - len(s)))    # left-justify, space-pad to exactly `width`
+
+
+def _one_char(s, field):
+    """X12 ISA15 (usage indicator) and ISA16 (component-element separator) are single-character fields.
+    Legacy ISA15 = Site.SiteEDIMode (a 1-char 'P'/'T'); ISA16 = the sub-element separator char. The
+    spike INV_SITES placeholder carries VC_EDI_MODE='PROD' (4 chars) which would emit a MALFORMED 4-char
+    ISA15 (X12 mandates exactly one char) — so enforce single-char here, taking the FIRST char (legacy
+    intent: 'P'). Raise on empty (a missing usage indicator is a hard X12 error, not something to widen).
+    Real loaded data ('P'/'T', '#'/'>') is already 1 char so this never alters it; it only catches a bad
+    load (defect #7 — placeholder VC_EDI_MODE='PROD')."""
+    s = "" if s is None else str(s)
+    if len(s) < 1:
+        raise Edi856BuildError("edi856: ISA %s must be a single character, got empty" % (field,))
+    return s[0]
 
 
 def _yymmdd(prodDate):
@@ -158,8 +174,8 @@ def build_856(header, detailRows, site, ein, fileTime, trailerId="1234567890"):
         "00400",                            # :157 ISA12 interchange control-version
         einStr,                             # :159 ISA13 interchange control # = EIN
         "0",                                # :160 ISA14 ack-requested
-        str(site["ediMode"]),               # :161 ISA15 usage indicator (T/P)
-        subSep,                             # :162 ISA16 component-element separator
+        _one_char(site["ediMode"], "ISA15 (usage indicator)"),   # :161 ISA15 (T/P) — single char
+        _one_char(subSep, "ISA16 (sub-element separator)"),      # :162 ISA16 — single char
     ]))
 
     # --- GS (EDI856Object.pas:174-189) — GS06 = EIN (group control #). NO trailing element sep. -----
@@ -200,7 +216,10 @@ def build_856(header, detailRows, site, ein, fileTime, trailerId="1234567890"):
     hl.append(sep.join(["HL", str(hid), "", "S", "1"]))   # HL02 empty (two seps -> '')
     hid += 1
     hlCount += 1
-    hl.append(sep.join(["TD1", ""]))                       # :294 TD1** (empty)
+    # TD1 (:294-296): 'TD1'+sep THEN +sep -> 'TD1**' (TWO empty trailing elements). The .pas builds
+    # 'TD1'+fSepElement (line 294) then +fSepElement (line 295) with NO field appended after either, so
+    # the segment ends with two separators. join(["TD1","",""]) == 'TD1**'.
+    hl.append(sep.join(["TD1", "", ""]))                   # :294-296 TD1** (two empty elements)
     hl.append(sep.join(["TD5", "B", "25", "00000",
                         str(site["deliveryMethodCode"])])) # :298 TD5*B*25*00000*<deliveryMethodCode>
     hl.append(sep.join(["TD3", "TL", "", str(trailerId)])) # :305 TD3*TL**<trailerId> (Trap 2)
@@ -227,8 +246,12 @@ def build_856(header, detailRows, site, ein, fileTime, trailerId="1234567890"):
         hl.append(sep.join(["HL", str(hid), str(orderParent), "I", "0"]))
         hid += 1
         hlCount += 1
-        # LIN**BP*<PartNumber>*RC*<Kanban>  (:347 — LIN01 empty)
-        hl.append(sep.join(["LIN", "", "BP", str(row["PartNumber"]), "RC", str(row["Kanban"])]))
+        # LIN**BP*<PartNumber>*RC*<Kanban>*  (:347-352 — LIN01 empty; TRAILING sep after the kanban).
+        # The .pas appends +fSepElement after EVERY field INCLUDING the kanban (line 352 ends with
+        # '...Kanban...+fSepElement'), so the segment ends in a trailing separator (one empty trailing
+        # element). join([...,"RC",kanban]) drops it; append a trailing "" to reproduce the byte.
+        hl.append(sep.join(
+            ["LIN", "", "BP", str(row["PartNumber"]), "RC", str(row["Kanban"]), ""]))
         # SN1**<ShipQty>*PC  (:355 — SN101 empty; qty = IN_QTY, no leading zeros; PC = pieces)
         hl.append(sep.join(["SN1", "", str(int(row["ShipQty"])), "PC"]))
 
@@ -267,6 +290,18 @@ def _filename_856(prodDate):
     return "856" + prodDate[3:8] + ".txt"   # copy(s,4,5) = [3:8] 0-based
 
 
+def _cleanup_tmp(tmpPath):
+    """Best-effort delete of the orphan .tmp on a rolled-back send (atomicity). Never raises — the caller
+    is mid-propagation of the REAL failure; we must not mask it. (If the .tmp can't be removed it is at
+    worst a harmless leftover the mailer ignores — never a FINAL 856 the DB didn't commit.)"""
+    import os as _os
+    try:
+        if _os.path.exists(tmpPath):
+            _os.remove(tmpPath)
+    except Exception:
+        pass
+
+
 # =================================================================================================
 # send_856 — the GATEWAY DRIVER. ONE transaction.
 # =================================================================================================
@@ -278,11 +313,20 @@ def _filename_856(prodDate):
 DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
 
 # The feed SQL (spike-edi856-feed.sql) inlined here so the driver carries no external-file dependency at
-# runtime (the .sql file is the reviewable canonical copy; this string MUST stay byte-identical to its
-# SELECT body). Parameterized by @ASNID (NOT the 6440 literal); NO self-flip; INNER cost (A) + CROSS
-# APPLY TOP 1 forecast (B) + inclusive cost window + GROUP-BY collapse (C). 5-col projection (the 856
-# emits no price; the legacy 9-col feed's UnitPrice/SiteEIN/StartSeq/LineName are not consumed by the
-# builder — we read only what build_856 needs, and read the header prodDate from the header row).
+# runtime (the .sql file is the reviewable canonical copy). This string is BYTE-IDENTICAL to the .sql
+# file's SELECT body EXCEPT the single bind: the .sql declares @ASNID and the inline uses runPrepQuery's
+# `?`. test_edi856_e2e.py enforces `_FEED_SQL == <.sql SELECT body with '@ASNID' -> '?'>` so the two
+# cannot drift. Reproduces legacy REPORT_EDI856 @EIN=0 (NOT the 6440 literal; NO self-flip):
+#   A  INNER cost join (feed filters to cost-covered lines, like legacy).
+#   B  INNER forecast join — the SAME JOIN INV_FORECAST_DETAIL_INF f ON ... the legacy proc uses (fan-out
+#      a part with >1 forecast row to multiple rows, then GROUP-BY keeps each distinct kanban). NOT a
+#      CROSS APPLY TOP 1 (which dropped legacy lines + was nondeterministic over a heap).
+#   C  GROUP-BY collapse (no sum) — and the GROUP BY KEEPS m.MO_PRICE exactly as legacy does, so a part
+#      with 2 price-distinct overlapping cost windows emits 2 detail rows (legacy splits on MO_PRICE even
+#      though the 856 never carries the price). Dropping it collapsed legacy's 2 rows to 1.
+#   inclusive cost window (<= / >=) — matches the live proc.
+# 5-col projection (the 856 emits no price; legacy's UnitPrice/SiteEIN/StartSeq/LineName are unused by
+# the builder). MO_PRICE is in the GROUP BY but NOT the SELECT — it changes cardinality, not the wire.
 _FEED_SQL = (
     "SELECT d.VC_MANIFEST_NUMBER AS Manifest, "
     "d.VC_ASSY_PART_NUMBER AS PartNumber, "
@@ -292,13 +336,11 @@ _FEED_SQL = (
     "FROM INV_ASN_MST a "
     "JOIN INV_ASN_DETAIL_MST d ON a.IN_ASN_ID = d.IN_ASN_ID "
     "JOIN INV_MANIFEST_COST_MST m ON d.VC_ASSY_PART_NUMBER = m.VC_ASSY_PART_NUMBER_CODE "
-    "CROSS APPLY (SELECT TOP 1 f1.VC_ASSY_KANBAN_NUMBER "
-    "            FROM INV_FORECAST_DETAIL_INF f1 "
-    "            WHERE f1.VC_ASSY_PART_NUMBER_CODE = d.VC_ASSY_PART_NUMBER) f "
+    "JOIN INV_FORECAST_DETAIL_INF f ON d.VC_ASSY_PART_NUMBER = f.VC_ASSY_PART_NUMBER_CODE "
     "WHERE a.IN_ASN_ID = ? "
     "AND m.VC_START_MANIFEST <= a.VC_PRODUCTION_DATE "
     "AND m.VC_END_MANIFEST   >= a.VC_PRODUCTION_DATE "
-    "GROUP BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER, d.IN_QTY, "
+    "GROUP BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER, m.MO_PRICE, d.IN_QTY, "
     "a.VC_PRODUCTION_DATE, f.VC_ASSY_KANBAN_NUMBER "
     "ORDER BY d.VC_MANIFEST_NUMBER, d.VC_ASSY_PART_NUMBER"
 )
@@ -362,17 +404,19 @@ def send_856(asnId, site, database=None, outDir=None, trailerId="1234567890", fi
 
     Returns a dict: {'asnId', 'ein', 'filename', 'path', 'segments'(list), 'text'(str), 'rowCount'}.
 
-    Transaction order (ONE tx):
+    Transaction order (ONE tx) + temp-then-rename file atomicity:
       1. allocate EIN atomically from INV_SITES.IN_EIN_SEQ (site-scoped UPDATE ... OUTPUT the bumped
          value) — the at-send increment. NEVER the 6440 literal.
       2. stamp IN_ASN_EIN on the ASN header.
       3. read the feed (pure SELECT, @ASNID-parameterized; NO self-flip) + the header prodDate.
       4. build_856(...) (pure).
-      5. write the file (temp-then-rename atomic on the gateway path; here a single writeFile to outDir).
+      5. write the file TO A .tmp (NOT the final name).
       6. flip the ASN VC_ASN_STATUS C->S, per-ASN (WHERE IN_ASN_ID = @asnId) — DECOUPLED.
-      commit; rollback + re-raise on any error (nothing partially sent — the EIN bump, the stamp, and
-      the flip all unwind together; the file write is the only non-transactional step, ordered LAST
-      before the flip so a write failure rolls the DB back).
+      commit.
+      7. ONLY after the commit succeeds: rename <name>.tmp -> <name>.
+      On ANY error: rollback + delete the orphan .tmp + re-raise (the EIN bump, the stamp, and the flip
+      all unwind together AND the final 856 file never appears — so a rolled-back send can never leave a
+      phantom ASN on disk under an uncommitted EIN).
     """
     db = database if database is not None else DATABASE
     log = system.util.getLogger("SPIKE.send_856")
@@ -381,6 +425,8 @@ def send_856(asnId, site, database=None, outDir=None, trailerId="1234567890", fi
         # referenced at CALL time so import stays runtime-free.
         fileTime = system.date.format(system.date.now(), "HHmm")
 
+    tmpPath = None          # the <name>.tmp written inside the tx; renamed to the final name post-commit
+    committed = False        # only after a successful commitTransaction do we expose the final 856 file
     tx = system.db.beginTransaction(db)
     try:
         # --- 1. allocate the per-site EIN atomically (INV_SITES.IN_EIN_SEQ) ------------------------
@@ -434,18 +480,22 @@ def send_856(asnId, site, database=None, outDir=None, trailerId="1234567890", fi
         text = "\r\n".join(segments) + "\r\n"
         filename = _filename_856(prodDate)
 
-        # --- 5. write the file (LAST non-DB step before the flip) ---------------------------------
+        # --- 5. write the file to a .tmp (NOT the final name) — temp-then-rename atomicity --------
+        # ATOMICITY (adversary blocker): the FINAL 856 file must NOT exist unless the DB committed. If
+        # we wrote the final name here (step 5) and the C->S flip (step 6) or the commit then FAILED, a
+        # rollback would unwind the EIN bump / stamp / flip but leave a REAL 856 on disk under an EIN the
+        # DB never committed — a dispatcher would send a phantom ASN. So we write to <name>.tmp inside
+        # the tx, flip + COMMIT, and only AFTER the commit succeeds do we rename <name>.tmp -> <name>.
+        # A DB failure (flip/commit) rolls back AND the finally-clause deletes the orphan .tmp, so the
+        # final name never appears. (A crash between commit and rename leaves only a harmless .tmp the
+        # mailer ignores — never a final file the DB didn't commit.)
         path = None
+        tmpPath = None
         if outDir is not None:
-            # gateway path is [DIRECTORIES] EDIOut. system.file.writeFile is 8.1+ safe. We write the
-            # final name directly here; the production gateway path should temp-then-rename + archive-
-            # on-success for atomic file I/O (IG83-TODO below).
-            # IG83-TODO: on 8.3, prefer the temp-then-rename + archive-on-success atomic pattern (write
-            #            <name>.tmp, fsync, rename to <name>) so a partial file is never picked up by the
-            #            mailer. Kept a single writeFile here for the 8.1-safe spike.
             import os as _os
             path = _os.path.join(outDir, filename)
-            system.file.writeFile(path, text)
+            tmpPath = path + ".tmp"
+            system.file.writeFile(tmpPath, text)        # write the TEMP file only (8.1+ safe)
 
         # --- 6. flip the ASN C->S, per-ASN, DECOUPLED ---------------------------------------------
         # NEVER REPORT_EDI856's self-flip (WHERE IN_ASN_EIN=@EIN over the wrong rows); NEVER the blanket
@@ -454,11 +504,24 @@ def send_856(asnId, site, database=None, outDir=None, trailerId="1234567890", fi
             "UPDATE INV_ASN_MST SET VC_ASN_STATUS = 'S' WHERE IN_ASN_ID = ?", [int(asnId)], db, tx=tx)
 
         system.db.commitTransaction(tx)
+        committed = True
     except Exception:
         system.db.rollbackTransaction(tx)
+        # the DB unwound — make sure no orphan .tmp (and definitely no final file) survives.
+        if tmpPath is not None:
+            _cleanup_tmp(tmpPath)
         raise
     finally:
         system.db.closeTransaction(tx)
+
+    # --- 7. POST-COMMIT: rename <name>.tmp -> <name>. The final 856 exists ONLY now (DB committed). ---
+    # IG83-TODO: on 8.3, prefer system.file move/rename + archive-on-success; here we use os.rename which
+    #            is atomic on a single filesystem (the EDIOut dir is one volume). 8.1-safe.
+    if committed and tmpPath is not None:
+        import os as _os
+        # os.rename replaces an existing target on POSIX; on the gateway the final name is unique per
+        # send (filename carries the prod date), so no collision is expected.
+        _os.rename(tmpPath, path)
 
     log.info("send_856 asn=%s site=%s -> EIN %09d, %d feed rows, %d segments, file=%s"
              % (asnId, site, ein, len(detailRows), len(segments), filename))

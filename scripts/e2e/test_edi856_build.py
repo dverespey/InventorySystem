@@ -84,7 +84,27 @@ def main():
     ]
     segs = edi856.build_856({"prodDate": PDATE}, detail, SITE, EIN, HHMM)
 
-    # --- BYTE-EXACT expected segment list (hand-computed from EDI856Object.pas) ------------------
+    # --- BYTE-EXACT expected segment list — RE-DERIVED FROM EDI856Object.pas (the LEGACY bytes) -----
+    # This array is computed BY READING THE .pas Write/format calls, NOT from the rebuild's sep.join — so
+    # the test catches the rebuild DIVERGING from legacy, never blesses it. Per-segment .pas derivation:
+    #   ISA  :145-162 — 16 elements each +fSepElement EXCEPT ISA16(:162 fSepSubElement, no trailing sep).
+    #                   ISA09(:154) = copy(prodDate,3,6)=yymmdd; ISA15(:161)=ediMode 'P'; ISA16(:162)='>'.
+    #   GS   :179-187 — ends +'004010', NO trailing sep.
+    #   ST   :204-206 — ends +Format('%9.9d'), NO trailing sep.
+    #   BSN  :225-229 — :229 hhmm with '//+fSepElement' commented -> NO trailing sep.
+    #   DTM  :248-252 — ends +'ET', NO trailing sep.
+    #   HL(S):285-290 — :286 IntToStr(fHID)+fSepElement+fSepElement -> HL02 empty -> 'HL*1**S*1'.
+    #   TD1  :294-296 — 'TD1'+fSepElement(:294) THEN +fSepElement(:295), nothing after -> 'TD1**'
+    #                   (TWO empty trailing elements). NOT 'TD1*'.
+    #   TD5  :298-302 — ends +SiteDeliveryMethodCode('CV'), NO trailing sep.
+    #   TD3  :305-308 — ends +'1234567890', NO trailing sep.
+    #   HL(O):320-324 — :322 HL02 hardcoded '1' (always parents shipment); ends +'1', NO trailing sep.
+    #   PRF  :330-331 — 'PRF'+fSepElement+Manifest+'-'+Manifest, NO trailing sep.
+    #   HL(I):338-343 — ends +'0', NO trailing sep.
+    #   LIN  :347-352 — :352 appends Kanban +fSepElement -> 'LIN**BP*<part>*RC*<kanban>*' (TRAILING sep,
+    #                   one empty trailing element). NOT '...*RC*<kanban>'.
+    #   SN1  :355-358 — ends +'PC', NO trailing sep -> 'SN1**<qty>*PC'.
+    #   CTT  :386-387 / SE :406-409 / GE :427-429 / IEA :447-449 — all end on the value, NO trailing sep.
     # HL ids: S=1, O(57)=2, I(A)=3, I(B)=4, O(58)=5, I(C)=6.  HL count = 6 -> CTT01.
     # ST..SE: ST,BSN,DTM (3) + [HL(S),TD1,TD5,TD3]=4 + [HL O57,PRF]=2 + 2*[HL I,LIN,SN1]=6
     #         + [HL O58,PRF]=2 + 1*[HL I,LIN,SN1]=3 + CTT(1) + SE(1) = 22 -> SE01.
@@ -97,21 +117,21 @@ def main():
         "DTM*011*20260618*1430*ET",
         # HL hierarchy
         "HL*1**S*1",
-        "TD1*",
+        "TD1**",                                       # :294-296 — TWO empty elements (legacy)
         "TD5*B*25*00000*CV",
         "TD3*TL**1234567890",
         "HL*2*1*O*1",
         "PRF*76061857-76061857",
         "HL*3*2*I*0",
-        "LIN**BP*42600FEK5000*RC*JZUX",
+        "LIN**BP*42600FEK5000*RC*JZUX*",               # :352 — TRAILING sep after kanban (legacy)
         "SN1**80*PC",
         "HL*4*2*I*0",
-        "LIN**BP*42600FEK5001*RC*JZUW",
+        "LIN**BP*42600FEK5001*RC*JZUW*",               # :352 — TRAILING sep after kanban (legacy)
         "SN1**12*PC",
         "HL*5*1*O*1",
         "PRF*76061858-76061858",
         "HL*6*5*I*0",
-        "LIN**BP*42600FEK6000*RC*JZUY",
+        "LIN**BP*42600FEK6000*RC*JZUY*",               # :352 — TRAILING sep after kanban (legacy)
         "SN1**900*PC",
         "CTT*6",
         "SE*22*000009069",
@@ -223,11 +243,26 @@ def main():
     rep.check("PRF = 'PRF*<manifest>-<manifest>' (the '-' is data)",
               prfs == ["PRF*76061857-76061857", "PRF*76061858-76061858"], str(prfs))
     lins = [s for s in segs if s.startswith("LIN*")]
-    rep.check("LIN = 'LIN**BP*<part>*RC*<kanban>' (LIN01 empty)",
-              lins[0] == "LIN**BP*42600FEK5000*RC*JZUX", lins[0])
+    # legacy LIN (.pas:347-352) ends in a TRAILING element separator after the kanban.
+    rep.check("LIN = 'LIN**BP*<part>*RC*<kanban>*' (LIN01 empty + TRAILING sep, .pas:352)",
+              lins[0] == "LIN**BP*42600FEK5000*RC*JZUX*", lins[0])
+    rep.check("every LIN carries the trailing element separator (.pas:352)",
+              all(s.endswith("*") for s in lins), str(lins))
     sn1s = [s for s in segs if s.startswith("SN1*")]
-    rep.check("SN1 = 'SN1**<qty>*PC' (SN101 empty; qty no leading zeros)",
+    rep.check("SN1 = 'SN1**<qty>*PC' (SN101 empty; qty no leading zeros; NO trailing sep, .pas:358)",
               sn1s == ["SN1**80*PC", "SN1**12*PC", "SN1**900*PC"], str(sn1s))
+
+    # --- ANTI-REGRESSION: these are the LEGACY bytes, NOT the rebuild's earlier (wrong) ones --------
+    # The prior build emitted 'TD1*' (one empty element) and 'LIN**BP*...*RC*<kanban>' (no trailing sep);
+    # both diverged from EDI856Object.pas by one byte on EVERY 856. Assert the legacy bytes explicitly
+    # AND that the old wrong bytes are NOT present, so a regression to the rebuild's model fails loudly.
+    print("\n--- anti-regression: TD1**/LIN trailing-sep are the LEGACY bytes (.pas), not the rebuild's ---")
+    td1 = next(s for s in segs if s.startswith("TD1*"))
+    rep.check("TD1 == 'TD1**' (two empty elements, .pas:294-296) — NOT the rebuild's 'TD1*'",
+              td1 == "TD1**" and td1 != "TD1*", td1)
+    rep.check("no LIN equals the rebuild's old trailing-sep-LESS form",
+              all(s != "LIN**BP*42600FEK5000*RC*JZUX" for s in lins),
+              "old wrong form absent")
 
     # --- no segment carries a segment terminator (decision D — CRLF only) -----------------------
     print("\n--- decision D: no '~' segment terminator inside any segment ---")
