@@ -543,3 +543,57 @@ SHOULD-FIX 1/2). Byte-faithful (reproduce-the-legacy) stance.
   back to 0; `unbilled_A`=0).
 
 ---
+
+## M1 inbound (997/824) — the loop-closer for the 856/810 outbound (2026-06-21)
+
+- **BUILT — the inbound 997/824 processor closes the EDI loop.** New gateway code, producer-recipe
+  pattern (pure parsers + driver, the twin of `edi856`/`edi810`):
+  `docs/analysis/edi/inbound/project-library/edi_inbound/code.py`. **GO unchanged / strengthened** — the
+  inbound ack path runs end-to-end against the spike through the same headless shim as the outbound, so
+  the full send→ack→reject cycle is now demonstrable without the Designer.
+- **997 functional ack:** `parse_997` walks the AK1 loop (one ack per functional group, multi-group
+  supported), reading the functional id (`copy(fcl,5,2)` chars 5-6) + EIN (`copy(fcl,8,9)` chars 8-16)
+  by the legacy `EDIUpload.pas:194-195` offsets (the parity oracle) — but **fixes the legacy fragility**:
+  it scans forward to the REAL `AK9`, **tolerating AK2/AK3/AK4** detail between AK1 and AK9 (legacy read
+  char 5 of the *next line* blindly, `:196-197`). `ak9_to_status` maps **A/E/P/R distinct** + M/W/X/
+  garbage→R (Q6 — a strict superset of the legacy binary A-vs-rest collapse). The driver wraps
+  `UPDATE_EINStatus` in-line (SH→`INV_ASN_MST`, else→`INV_INV_MST`) so it can **CHECK @@ROWCOUNT** — an
+  unknown EIN (0 rows) raises an **alarm row**, NOT a silent success (legacy bug fixed).
+- **824 application advice:** `parse_824` reads each `NTE` by the legacy fixed offsets (errorText 9-58,
+  manifest 60-67, part 69-80; `EDIUpload.pas:283-285`). Per **Q10** the driver flips the referenced ASN
+  to `'R'` (matched by manifest on **`INV_ASN_DETAIL_MST` → parent `INV_ASN_MST`** — the manifest lives
+  on the DETAIL row, confirmed via `sys.columns`; legacy flipped NOTHING → the 6 stuck-`S` invoices on
+  Live) + writes one **alarm row per reject line** (manifest/part/errorText) for the main-screen alarm +
+  click-to-detail.
+- **Two NEW rebuild tables** (`docs/analysis/edi/inbound/spike-edi-inbound-tables.sql`, applied to the
+  spike): `INV_EDI_INBOUND_LOG` (the **DB-tracked processed-files ledger** — kills the legacy re-ingest
+  hazard; a re-drop of the same name+content-hash is a no-op) and `INV_EDI_ALARM_REJ` (the 824-reject /
+  997-unknown-EIN **alarm records**, `BIT_RESOLVED=0` surfaced by the home hub; the native
+  `system.alarm` wiring off these rows is the prod follow-on). Both carry `IN_SITE_ID` from day one.
+- **Bugs deliberately NOT carried** (vs `EDIUpload.pas`): EIN-carryover (parse each file fresh), no-
+  archive re-ingest (DB ledger is authoritative), the P12 #8 wrong-target retry, the no-@@ROWCOUNT
+  silent-success. **Site-scoping** is a `-- M4` marker on the legacy-table UPDATEs (`INV_ASN_MST`/
+  `INV_INV_MST` have no `IN_SITE_ID` yet); the resolved site (by ISA `delSL[4]` → `VC_TMM_DUNS`) is
+  threaded so the M4 add is one line. **DUNS guard** (Q11): a no-match file is **quarantined**, not
+  silently dropped (legacy `:439`).
+- **Required M1 follow-on (status display):** the rebuild status-render CASEs/NQs must add `E`→
+  "Accepted/errors" and `P`→"Partial" arms or those statuses render BLANK (same gap the legacy already
+  has). No rebuild status-render NQ exists on disk yet to extend — recorded here as a required follow-on.
+- **Tests:** `scripts/e2e/test_edi_inbound_build.py` **42 PASS** (pure: parse_997 multi-AK1 + AK2/3/4
+  tolerance + A/E/P/R, parse_824 multi-NTE offsets, ak9_to_status, envelope helpers).
+  `scripts/e2e/test_edi_inbound_e2e.py` **29 PASS** (headless via the shim, REAL driver: SH-accept→ASN
+  `'A'` / IN-reject→INV `'R'`; unknown-EIN→@@ROWCOUNT-0 alarm; 824 manifest match→ASN `'R'` + per-line
+  alarm detail; DUNS-guard quarantine; idempotent re-process; `process_inbound` poll). **Shim extended:**
+  `jython_shim` `runPrepUpdate` now returns the genuine `@@ROWCOUNT` (was a constant `1`) so the driver's
+  0-row alarm path is exercised for real — non-breaking, verified by the full regression suite.
+- **Honest verification:** NO golden TEMA 997/824 exists — byte/offset parity vs a real file is NOT
+  claimed. Fixtures are built to the legacy `EDIUpload.pas` copy() offsets (the oracle) + the outbound
+  856 ISA shape (TEMA-as-sender inbound mirror). What IS proven: the status flow, the @@ROWCOUNT alarm,
+  the 824 reject flag+detail, the DUNS quarantine, idempotency — all through the real driver + DB.
+  **Pending:** confirm the AK1/NTE/ISA `delSL[4]` offsets against a real inbound sample (spec §2.3 #1,
+  §3.1, §5.2).
+- **Regressions green:** edi810_build 61, edi810_e2e 72, edi856_build 49, edi856_e2e 51, asn_fanout 34,
+  create_asn_parity 10, seam_driver 23, seam_driver_order 13, order_commit_integration 6. **Spike
+  restored as-found** (zero leftover rows; the two new tables empty as intended; `IN_EIN_SEQ` untouched).
+
+---

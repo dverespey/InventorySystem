@@ -276,8 +276,13 @@ class _TxSession(object):
         if get_key:
             cols, rows = self._batch(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True)
             return int(rows[-1][0]) if rows and rows[-1][0] != "NULL" else None
-        self._batch(stmt, want_rows=False)
-        return 1
+        # The real system.db.runPrepUpdate returns the AFFECTED-ROW COUNT (@@ROWCOUNT), not a constant.
+        # The inbound 997/824 driver (edi_inbound/code.py) keys its unknown-EIN / unmatched-manifest
+        # ALARM on a 0-row update (the legacy no-@@ROWCOUNT silent-success fix) — so the shim must return
+        # the genuine @@ROWCOUNT, captured by a trailing SELECT on the SAME tx batch. (NB: NOCOUNT is ON
+        # for the session, which suppresses the "N rows affected" message but NOT @@ROWCOUNT itself.)
+        cols, rows = self._batch(stmt + "; SELECT @@ROWCOUNT AS rc", want_rows=True)
+        return int(rows[-1][0]) if rows and rows[-1][0] not in ("NULL", "") else 0
 
     def query_scalar(self, stmt):
         """Run a batch on the live tx session and return the first cell of the LAST result row (the
@@ -367,8 +372,11 @@ class _DB(object):
             out = _run(stmt + "; SELECT CAST(SCOPE_IDENTITY() AS int) AS k", want_rows=True, db=rdb)
             cols, rows = _parse_rows(out)
             return int(rows[-1][0]) if rows else None
-        _run(stmt, want_rows=False, db=rdb)
-        return 1
+        # Return the genuine @@ROWCOUNT (see _TxSession.exec_update) so a 0-row update is observable to
+        # callers like the inbound 997/824 driver's unknown-EIN / unmatched-manifest alarm path.
+        out = _run(stmt + "; SELECT @@ROWCOUNT AS rc", want_rows=True, db=rdb)
+        cols, rows = _parse_rows(out)
+        return int(rows[-1][0]) if rows and rows[-1][0] not in ("NULL", "") else 0
 
     def runScalarPrepQuery(self, sql, args, db=None, tx=None):
         """Real 8.1+ API: run a prepared statement, return the first row/first column (None if no rows).
