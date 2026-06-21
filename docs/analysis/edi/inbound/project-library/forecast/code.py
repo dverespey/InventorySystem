@@ -33,8 +33,18 @@
 #            vanished). Legacy logged + dropped the count (ForecastBreakdownF.pas:1178-1183).
 #   D-Bug-2  usage rollup reads the SAME production-relative week the row is stored under (ISO-offset),
 #            not the legacy raw-ISO WeekOfTheYear(now) (:1052) -> usage reconciles to the stored qtys.
-#   D-Bug-3  special-date else-branch turns a day ON only if it was OFF (no double-count of days), vs the
-#            legacy unconditional INC(days) (:1403-1407). H/X turns-off path is byte-faithful.
+#   D-Bug-3  REVERSED to PARITY (BLOCKER-2): the day-spread now reproduces the legacy running days counter
+#            EXACTLY (H/X -> off + DEC; 'O' overtime / any non-H/X -> ON + INC, :1398-1407), incl. the
+#            latent already-on double-count. The former "True only if previously off" divergence IGNORED
+#            'O' and so diverged from the legacy on the live COROLLA O-Saturdays. See day_spread + §D.5.
+# PARITY FIXES (this branch — adversary BLOCKER/RISK fixes, all reproduce-the-legacy):
+#   BLOCKER-1  breakdown VC_SUPPLIER_CODE = the COMPONENT's part-master supplier (:1349), NOT the feed
+#              supplier (the feed supplier is the RAW row only, :1107). See import_830 step 2d.
+#   BLOCKER-2  'O' (overtime) days turn ON in the day-spread (above). See day_spread / _calendar_rows.
+#   RISK-1     delete anchor = min(weekDate) across all entries (a documented divergence safer than the
+#              legacy "last LIN's first week"; equal on real data). See import_830.
+#   RISK-2     _process_one_830 reads per-site IN_HISTORICAL_FORECAST + BIT_USE_FIRST_PRODUCTION_DAY from
+#              INV_SITES (the columns are live, not dead). See _read_site_forecast_config.
 #
 # Jython 2.7 (8.1 and 8.3, no delta — pure string slicing + system.db; no Py3-only libs).
 #
@@ -230,31 +240,65 @@ def explode(week_count, recipe):
     return out
 
 
-def day_spread(fc_count, off_days, work_days=None):
-    """PURE weekly-qty -> 7 day-buckets (Mon..Sun = IN_QTY1..7) (ForecastBreakdownF.pas:1414-1434 /
-    algorithm §D.6).
+def day_spread(fc_count, calendar_rows, work_days=None):
+    """PURE weekly-qty -> 7 day-buckets (Mon..Sun = IN_QTY1..7) (ForecastBreakdownF.pas:1321-1434 /
+    algorithm §D.3-6).
 
-    The legacy STARTS from a fixed Mon-Fri working week (workday[1..5]=true, workday[6]=workday[7]=false,
-    :1321-1328) and then the production calendar turns days OFF (H/X) — Sat/Sun are off by default. So this
-    function defaults `work_days = {1,2,3,4,5}` (Mon-Fri) and SUBTRACTS `off_days` (the calendar H/X day
-    numbers) from it. A caller that needs a different base week (e.g. a 6-day production line) can pass
-    `work_days` explicitly; the driver passes the default (the legacy base).
+    BYTE-FAITHFUL to the legacy DoPartNumberForecast day-spread, INCLUDING the running `days` counter:
 
-      working = work_days - off_days
-      days = |working|; ratiocount = fc_count // days; leftover = fc_count % days
-      each working day (in 1..7 order) gets ratiocount; the ENTIRE remainder lands on the FIRST working
-      day (legacy: leftover added to the first working day then zeroed, :1428-1430). Non-working days get
-      0. If days==0 -> all zeros (legacy :1419-1422).
+      * The legacy STARTS from a fixed Mon-Fri working week (workday[1..5]=true, workday[6]=workday[7]=
+        false; days := 5; :1321-1328).
+      * Then, for EACH AD_GetSpecialDateWeek row (:1394-1410), it applies the row's status to that
+        'Day Number' AND adjusts the running `days` counter UNCONDITIONALLY:
+            H / X (HOLIDAY / NON-PRODUCTION) -> workday[N] := False; DEC(days)   (:1398-1401)
+            else  (OVERTIME 'O', any non-H/X) -> workday[N] := True;  INC(days)  (:1403-1407)
+        'O' (OVERTIME — e.g. a worked Saturday) turns a day ON; this is the BLOCKER-2 fix. The live
+        VehicleOrder calendar carries 6 'O' Saturdays on COROLLA (ISO wks 13/15/17/20/23/30); without
+        this branch an O-Saturday week divides qty by 5 instead of 6 and every bucket is wrong.
+      * The remaining defined statuses (N=NORMAL, W=WEEKEND) never appear in SpecialDate data (verified
+        on spike), so only H/X and O are exercised; any OTHER status falls to the else-branch (turn ON),
+        matching the legacy's binary `if H or X .. else` exactly.
 
-    `off_days` = the production-calendar H/X day numbers (1=Mon..7=Sun) for the week (from
-    AD_GetSpecialDateWeek; the driver resolves them). Returns a 7-list of ints [qty1..qty7]. PURE — the
-    arithmetic only, so the unit test can assert a holiday week vs a no-holiday week directly.
+    PARITY OVER THE D-Bug-3 "fix": the legacy DEC/INC is a RUNNING COUNTER, NOT count(workday). It can
+    diverge from |working| in two latent edges and we reproduce the legacy NUMBER in both (the review's
+    job is parity, ForecastBreakdownF.pas:1403-1407 "exactly"):
+      - H/X on an already-OFF day (e.g. an H Saturday) -> DEC(days) below 5 working days, even though the
+        workday set already had that day off (the legacy under-counts days here -> a LARGER per-day qty).
+      - 'O' on an already-ON weekday (Mon-Fri) -> INC(days) above the workday count (the legacy DOUBLE-
+        COUNTS days here -> a SMALLER per-day qty). LATENT: all 6 live 'O' rows are Saturdays (start OFF),
+        so the double-count is not hit on real data today; reproduced anyway for strict parity. (This
+        REVERSES the former D-Bug-3 divergence, which avoided the double-count and therefore did NOT match
+        the legacy on an O-Saturday — see forecast-import-algorithm.md §F.)
 
-    D-Bug-4 defense: returns 0 (never None) for every day -> the additive upsert never sees NULL."""
+    Spread (:1414-1434): days = the running counter; ratiocount = fc_count // days; leftover = fc_count %
+    days; each working day (in 1..7 order) gets ratiocount; the ENTIRE remainder lands on the FIRST
+    working day (legacy: leftover added to the first working day then zeroed, :1428-1430). Non-working
+    days get 0. If days <= 0 -> all zeros (legacy :1419-1422).
+
+    `calendar_rows` = the AD_GetSpecialDateWeek rows for (lookupWeek, line) as a list of
+    (day_number:int, status_abbr:str) tuples (1=Mon..7=Sun; the driver resolves them via
+    _calendar_rows()). Pass [] for a no-special-date week. A caller that needs a different base week can
+    pass `work_days` explicitly; the driver passes the default (the legacy Mon-Fri base).
+
+    Returns a 7-list of ints [qty1..qty7]. D-Bug-4 defense: returns 0 (never None) for every day -> the
+    additive upsert never sees NULL."""
     base = set((1, 2, 3, 4, 5)) if work_days is None else set(work_days)
-    off = set(off_days or set())
-    workday = [(d in base and d not in off) for d in (1, 2, 3, 4, 5, 6, 7)]
-    days = sum(1 for w in workday if w)
+    workday = [(d in base) for d in (1, 2, 3, 4, 5, 6, 7)]
+    days = sum(1 for w in workday if w)                    # legacy: days := 5 (the Mon-Fri base count)
+    for (day_no, status) in (calendar_rows or []):
+        try:
+            n = int(day_no)
+        except (ValueError, TypeError):
+            continue
+        if not (1 <= n <= 7):
+            continue
+        abbr = (status or "").strip().upper()
+        if abbr in ("H", "X"):
+            workday[n - 1] = False                         # legacy :1400 workday[N] := False
+            days -= 1                                       # legacy :1401 DEC(days) (unconditional)
+        else:
+            workday[n - 1] = True                          # legacy :1405 workday[N] := True ('O' = ON)
+            days += 1                                       # legacy :1406 INC(days) (unconditional)
     fc = int(fc_count or 0)
     if days > 0:
         ratiocount = fc // days
@@ -316,6 +360,35 @@ def _resolve_site_by_duns(db, duns, tx):
     if not len(rows):
         return None
     return int(rows[0]["IN_SITE_ID"])
+
+
+def _read_site_forecast_config(db, siteId, tx):
+    """RISK-2 — resolve the per-site forecast config from INV_SITES (the columns the M2 schema added):
+      * IN_HISTORICAL_FORECAST  -> the history-prune window in WEEKS (legacy [INIT] HistoricalForecast;
+        used for DELETE_ForecastInfo's @HistWeekDate = now - weeks*7). Falls back to
+        DEFAULT_HISTORICAL_WEEKS (12) if NULL/missing.
+      * BIT_USE_FIRST_PRODUCTION_DAY -> the per-site equivalent of fiUseFirstProductionDay
+        (ForecastBreakdownF.pas:1362): when on, the holiday-lookup week is offset by firstWeek-1 (the
+        stored week stays RAW — D10). Falls back to True (the legacy default-on) if NULL/missing.
+    Returns (historicalWeeks:int, useFirstProductionDay:bool). Read inside the import tx (Inventory DB).
+    Mirrors the supplierBySite per-site lookup so the per-site config is live, not hardcoded."""
+    histWeeks = DEFAULT_HISTORICAL_WEEKS
+    useFPD = True
+    if siteId is None:
+        return (histWeeks, useFPD)
+    rows = system.db.runPrepQuery(
+        "SELECT IN_HISTORICAL_FORECAST, BIT_USE_FIRST_PRODUCTION_DAY FROM INV_SITES WHERE IN_SITE_ID = ?",
+        [int(siteId)], db, tx)
+    if not len(rows):
+        return (histWeeks, useFPD)
+    r = rows[0]
+    hv = r["IN_HISTORICAL_FORECAST"]
+    if hv is not None and _as_str(hv).strip() != "":
+        histWeeks = _as_int(hv) or DEFAULT_HISTORICAL_WEEKS
+    fv = r["BIT_USE_FIRST_PRODUCTION_DAY"]
+    if fv is not None and _as_str(fv).strip() != "":
+        useFPD = _as_int(fv) != 0                          # BIT 1 -> True, 0 -> False
+    return (histWeeks, useFPD)
 
 
 def _already_processed(db, fileHash, tx):
@@ -422,26 +495,25 @@ def _read_first_week(db, prodYear, tx):
     return _as_int(rows[0]["First Week Number"]) or 1
 
 
-def _calendar_off_days(calDb, lookupWeek, line):
-    """Resolve the production-calendar OFF days for (week, line) via AD_GetSpecialDateWeek on the
-    VehicleOrder DB (ForecastBreakdownF.pas:1383-1412 / algorithm §D.5). Returns a SET of day numbers
-    (1=Mon..7=Sun) that are NOT working: an H or X 'Date Status Abrv' turns that 'Day Number' OFF.
-
-    D-Bug-3: the legacy else-branch (a NON-H/X special row) does an unconditional workday:=True + INC(days)
-    -> double-counts an already-on workday. The PURE day_spread is driven by the OFF set ALONE, so a
-    non-H/X row simply does NOT add to the off set (it never spuriously inflates `days`). H/X turns-off is
-    byte-faithful; the buggy INC is structurally avoided (no day is double-counted because day_spread
-    derives `days` from 7 minus the off set, not by incrementing a running counter).
+def _calendar_rows(calDb, lookupWeek, line):
+    """Resolve the production-calendar special-date rows for (week, line) via AD_GetSpecialDateWeek on the
+    VehicleOrder DB (ForecastBreakdownF.pas:1383-1412 / algorithm §D.5). Returns a list of
+    (day_number:int, status_abbr:str) tuples for day_spread to apply — the FULL legacy row stream, NOT a
+    pre-reduced OFF set, so day_spread can reproduce the legacy's running DEC/INC counter exactly:
+        H / X 'Date Status Abrv' -> that 'Day Number' OFF (DEC days)
+        O (OVERTIME, e.g. a worked Saturday) / any non-H/X -> that 'Day Number' ON (INC days)  [BLOCKER-2]
+    (See day_spread for the parity rationale — we reproduce the legacy INC(days) incl. the latent
+    already-on double-count, REVERSING the former D-Bug-3 divergence.)
 
     CROSS-DATASOURCE READ — autocommit, NOT inside the import tx (this is the load-bearing detail). The
     calendar lives on a SEPARATE datasource (VehicleOrder/ALC), so a read against it is a DIFFERENT JDBC
     connection that is NOT part of the Inventory write transaction — passing the Inventory tx here would be
     wrong (the proc isn't even in that DB) and is not transactional with it anyway. The calendar is RO
     reference data (legacy used the separate ALC_Connection), so an autocommit read on CAL_DATABASE is both
-    correct and what the gateway does. Returns set() on any calendar error (logged) so a calendar outage
+    correct and what the gateway does. Returns [] on any calendar error (logged) so a calendar outage
     degrades to the default Mon-Fri spread rather than aborting the import."""
     log = system.util.getLogger("SPIKE.import_830")
-    off = set()
+    out = []
     try:
         rows = system.db.runPrepQuery(
             "EXEC dbo.AD_GetSpecialDateWeek @Week = ?, @LineName = ?",
@@ -449,17 +521,16 @@ def _calendar_off_days(calDb, lookupWeek, line):
     except Exception as e:
         log.warn("calendar lookup failed for week=%s line=%s: %s -> default Mon-Fri"
                  % (lookupWeek, line, e))
-        return off
+        return out
     for r in rows:
         abbr = _as_str(r["Date Status Abrv"]).strip().upper()
         try:
             day_no = int(r["Day Number"])
         except (ValueError, TypeError):
             continue
-        if abbr in ("H", "X") and 1 <= day_no <= 7:
-            off.add(day_no)
-        # NON-H/X (overtime/extra) rows: do NOT add to off (D-Bug-3 — never inflate `days`).
-    return off
+        if 1 <= day_no <= 7:
+            out.append((day_no, abbr))
+    return out
 
 
 def _as_int(v):
@@ -491,14 +562,18 @@ def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, s
            b. read the recipe; pick_ratio by week date. NO recipe / NO ratio match -> 830_FORECAST_GAP
               alarm (D-Bug-1, NOT a silent drop) and the count is not exploded (no BOM to explode by).
            c. explode -> component (code, count) pairs.
-           d. per component: resolve supplier/line/size (part master); resolve the calendar OFF days for
-              the OFFSET holiday-lookup week (D10 — stored week stays RAW); day_spread; then
+           d. per component: resolve supplier/line/size (part master); resolve the calendar special-date
+              rows for the OFFSET holiday-lookup week (D10 — stored week stays RAW); day_spread; then
               INSERTUPDATE_BreakdownForecastInfo (ADDITIVE) with @WeekNumber = the RAW week.
       3. record the ledger row + stamp VC_LAST_FORECAST_IMPORT on the site (Q11). Commit.
 
-    The supplier on every row is the per-site configured supplier (legacy fiSupplierCode) — passed in, or
-    falls back to the component part master's supplier (the legacy day-spread read it from the part too,
-    :1349; we prefer the explicit per-site supplier when given, else the part-master supplier).
+    TWO DISTINCT SUPPLIER SOURCES (legacy-faithful — BLOCKER-1):
+      * RAW INV_FORECAST_INF: the per-site FEED supplier (legacy fiSupplierCode, :1107) — passed in as
+        `supplier`.
+      * BREAKDOWN INV_BREAKDOWN_FC_INF: the COMPONENT's part-master supplier (:1349), resolved per
+        component from SELECT_PartsStockInfo. NOT the feed supplier. This is also the additive-upsert key
+        (VC_SUPPLIER_CODE, VC_PART_NUMBER, IN_WEEK_NUMBER), so it must be the component supplier or the
+        delete-then-accumulate idempotency lands under the wrong key.
 
     Returns a summary dict: {'entries': N, 'assembliesDeleted': N, 'breakdownWrites': N, 'rawWrites': N,
     'gapAlarms': N, 'fileHash': fileHash}.
@@ -515,11 +590,25 @@ def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, s
         fileHash = _hash_text(text)
 
     entries = parse_830(text)
+    # RISK-1 — the delete-window anchor (the @WeekDate floor for DELETE_ForecastInfo's forward slice).
+    #   Legacy: fFirstWeekDate is reassigned on the FIRST FST of EVERY LIN (ForecastBreakdownF.pas:283-287
+    #   inside the per-LIN parse loop), so after parsing it holds the LAST assembly's first-week-date — an
+    #   essentially arbitrary value. On real TEMA feeds every LIN starts at the same first week, so legacy
+    #   == FIRST-entry-first-week == min-across-all; the three agree on live data.
+    #   DELIBERATE DIVERGENCE (documented): we anchor on min(weekDate) across ALL entries/weeks instead.
+    #   WHY SAFER: DELETE_ForecastInfo deletes the forward slice WHERE VC_WEEK_DATE >= @WeekDate, then the
+    #   breakdown upsert is ADDITIVE. If the anchor were LATER than some assembly's earliest forecast week
+    #   (which the legacy's "last LIN's first week" can be, if LINs are mis-ordered or carry different
+    #   start weeks), those earlier weeks would NOT be deleted but WOULD be re-inserted -> DOUBLED qty on
+    #   re-import. min(weekDate) guarantees the delete window covers every week we will re-insert, so the
+    #   delete-then-accumulate idempotency holds for ANY LIN ordering / start-week mix. Equal to legacy on
+    #   real data; strictly stronger against the doubling risk the anchor exists to guard.
     firstWeekDate = None
     for e in entries:
-        if e["weeks"]:
-            firstWeekDate = e["weeks"][0]["weekDate"]
-            break
+        for wk in e["weeks"]:
+            wd = wk["weekDate"]
+            if wd and (firstWeekDate is None or wd < firstWeekDate):
+                firstWeekDate = wd                          # min yyyymmdd (lexical == chronological)
     histWeekDate = _hist_week_date(db, histWeeks, tx)
 
     ownTx = tx is None
@@ -580,9 +669,17 @@ def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, s
                 lookupWeek = rawWeek + production_offset(firstWeek)
                 for (compCode, compCount) in components:
                     compSupplier, line, size = _read_part_master(db, compCode, tx)
-                    rowSup = rowSupplier or compSupplier
-                    offDays = _calendar_off_days(calDb, lookupWeek, line)   # cross-DS RO read (no tx)
-                    qtys = day_spread(compCount, offDays)
+                    # BLOCKER-1 (parity): the breakdown row's supplier is the COMPONENT's part-master
+                    # supplier (ForecastBreakdownF.pas:1349 supplier := FieldByName('Supplier Code') read
+                    # from SELECT_PartsStockInfo(@PartNum := the COMPONENT) — proven 959/959 on live, 14
+                    # distinct suppliers). The feed supplier (rowSupplier) is used ONLY for the RAW
+                    # INV_FORECAST_INF write above (:1107). NOT `rowSupplier or compSupplier` — that wrote
+                    # the feed supplier on every row (wrong VC_SUPPLIER_CODE + wrong additive-upsert key;
+                    # and DELETE_ForecastInfo has no supplier filter, so a re-import would silently rewrite
+                    # the supplier). compSupplier may be None (no part master) -> the legacy wrote NULL too.
+                    rowSup = compSupplier
+                    calRows = _calendar_rows(calDb, lookupWeek, line)   # cross-DS RO read (no tx)
+                    qtys = day_spread(compCount, calRows)
                     system.db.runPrepUpdate(
                         "EXEC dbo.INSERTUPDATE_BreakdownForecastInfo @WeekNumber = ?, @WeekDate = ?, "
                         "@Supplier = ?, @PartNumber = ?, @SizeCode = ?, @Qty1 = ?, @Qty2 = ?, @Qty3 = ?, "
@@ -731,7 +828,11 @@ def process_forecast_dir(inDir, database=None, calDatabase=None, archiveDir=None
 
 def _process_one_830(text, fileName, db, calDb, srcPath, archiveDir, quarantineDir, supplierBySite):
     """One file, one tx: envelope + DUNS + idempotency, then import_830. Quarantine a non-830 / no-DUNS
-    file (Q11). Mirrors edi_inbound.process_one_file. Returns an outcome dict."""
+    file (Q11). Mirrors edi_inbound.process_one_file. Returns an outcome dict.
+
+    RISK-2: reads the per-site forecast config (IN_HISTORICAL_FORECAST + BIT_USE_FIRST_PRODUCTION_DAY) from
+    INV_SITES via _read_site_forecast_config and threads it into import_830, so the poll path honors the
+    per-site config instead of always defaulting (the columns the M2 schema added are LIVE here)."""
     log = system.util.getLogger("SPIKE.import_830")
     fileHash = _hash_text(text)
     lines = _lines(text)
@@ -765,8 +866,15 @@ def _process_one_830(text, fileName, db, calDb, srcPath, archiveDir, quarantineD
             _move(srcPath, quarantineDir, log)
             return {"outcome": "QUARANTINED_NOT_830", "detail": "type %r" % (typ,), "siteId": siteId}
         supplier = supplierBySite.get(siteId)
+        # RISK-2 — read the per-site forecast config live (mirrors the supplierBySite lookup pattern) so
+        # the columns the schema added are NOT dead: IN_HISTORICAL_FORECAST (the history-prune window in
+        # weeks, legacy [INIT] HistoricalForecast) and BIT_USE_FIRST_PRODUCTION_DAY (the per-site
+        # equivalent of fiUseFirstProductionDay — drives the holiday-lookup offset). Without this the poll
+        # path always defaulted (12 weeks / use-FPD on) regardless of the site row.
+        histWeeks, useFPD = _read_site_forecast_config(db, siteId, tx)
         summary = import_830(text, fileName, database=db, calDatabase=calDb, fileHash=fileHash,
-                             siteId=siteId, supplier=supplier, tx=tx)
+                             siteId=siteId, supplier=supplier, historicalWeeks=histWeeks,
+                             useFirstProductionDay=useFPD, tx=tx)
         detail = ("%d entries, %d breakdown writes, %d gaps"
                   % (summary["entries"], summary["breakdownWrites"], summary["gapAlarms"]))
         _record_processed(db, fileName, fileHash, siteId, "PROCESSED", detail, tx)

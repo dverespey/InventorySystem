@@ -145,26 +145,49 @@ Given `(PN=component, WeekDate, FCCount, WeekNumber)`:
 2. **Part master read** — `SELECT_PartsStockInfo(@PartNum := PN)` (`:1338-1351`):
    `line := 'Line Name'` (or `'ALL LINES'` if blank), `supplier := 'Supplier Code'`, `size := 'Size Code'`.
    So the breakdown row's supplier/size come from the **component's** part master, **not** the feed.
+   > **BLOCKER-1 (per-component supplier — REALIZED in the rebuild).** `PN` here is the COMPONENT part
+   > (the column code passed into `DoPartNumberForecast` from `UpdateForecast` :1233/1242/...). `supplier
+   > := FieldByName('Supplier Code')` (`:1349`) is therefore the **component's part-master supplier**
+   > (`INV_SUPPLIER_MST.VC_SUPPLIER_CODE` via `INV_PARTS_STOCK_MST.IN_SUPPLIER_ID`), and that is what the
+   > breakdown INSERT (`:1450`) writes. The FEED supplier (`fEntries[].Supplier` = `fiSupplierCode`) is
+   > used **only** for the RAW `INSERTUPDATE_ForecastInfo` (`:1107`), never for the breakdown. Proven on
+   > live: `INV_BREAKDOWN_FC_INF` = 14 distinct suppliers, 959/959 == the component part-master supplier,
+   > 0/959 == the feed supplier. The rebuild writes `rowSup = compSupplier` for the breakdown (NOT
+   > `rowSupplier or compSupplier`, which had every row land under the feed supplier — wrong
+   > `VC_SUPPLIER_CODE` AND wrong additive-upsert key `(VC_SUPPLIER_CODE, VC_PART_NUMBER,
+   > IN_WEEK_NUMBER)`; and since `DELETE_ForecastInfo` has **no supplier filter**, a re-import would
+   > silently rewrite the supplier on the whole forward slice). `compSupplier` may be `None` (no part
+   > master) — the legacy wrote NULL too; the row is still written so the qty is not lost.
 3. **Default workdays Mon-Fri** (`:1321-1328`): `workday[1..5]=true`, `workday[6]=workday[7]=false`,
    **`days := 5`**.
 4. **Offset-adjust the holiday-lookup week ONLY** (`:1360-1377`): if `fiUseFirstProductionDay` and
    `FirstWeekNumber ≠ 1`, `WeekNumber := WeekNumber + FirstWeekNumber − 1` (the LOCAL var; never stored).
 5. **Apply the production calendar** — `AD_GetSpecialDateWeek(@Week := WeekNumber, @Line := line)` on
-   `ALC_Connection` (cross-DB, VehicleOrder; body read on spike). For each returned row (`:1394-1410`):
+   `ALC_Connection` (cross-DB, VehicleOrder; body read on spike). The proc joins `SpecialDate` →
+   `ProductionStatus`; the only `ProductionStatusAbv` values PRESENT in live `SpecialDate` data are **H**
+   (HOLIDAY, 11 rows) and **O** (OVERTIME, 6 rows); `X`/`N`/`W` are defined statuses but unused on real
+   data. Starting from `days := 5` (Mon-Fri base), for each returned row (`:1394-1410`):
    - if `trim('Date Status Abrv') in {'H','X'}` → `workday['Day Number'] := False; DEC(days)`
-   - **else** → `workday['Day Number'] := True; INC(days)`.
-   > **AMBIGUITY — the `INC(days)` else-branch is a LATENT LEGACY BUG (`:1403-1407`).** For a special-date
-   > row that is NOT H/X (e.g. an overtime/extra-production 'O'/'P' day, or a Saturday turned ON), the
-   > legacy sets `workday[N]:=True` AND `INC(days)` **unconditionally** — so a day that was ALREADY a
-   > workday (Mon-Fri, days started at 5) gets **double-counted** in `days`, while a day turned-OFF then
-   > back-ON could be mis-tracked. On the spike VehicleOrder `SpecialDate` data the special dates are
-   > overwhelmingly H/X (holidays/shutdowns), so the else-branch is rarely hit and the live day-spread is
-   > stable; but the arithmetic is not provably correct for an overtime row. **The rebuild reproduces the
-   > H/X-turns-off behavior faithfully (the load-bearing, data-confirmed path) and, for the else-branch,
-   > sets `workday[N]:=True` only if it was previously off (no double-count) — a documented divergence
-   > (§F D-Bug-3), NOT a silent port of the buggy `INC`.** The `'Day Number'` is `DATEPART(DW, date +
-   > @@DATEFIRST - 1)` (1=Mon..7=Sun under the proc's @@DATEFIRST math); the rebuild keeps the proc as the
-   > authority for the day index (does not recompute it).
+   - **else** (`'O'` OVERTIME, any non-H/X) → `workday['Day Number'] := True; INC(days)`.
+   > **BLOCKER-2 — the 'O' OVERTIME branch turns a day ON (REPRODUCED for parity).** An `'O'` Saturday
+   > (e.g. a worked Sat) turns `workday[6]` ON and bumps `days` 5→6, so a 6-day week divides the qty by 6,
+   > not 5. The live VehicleOrder calendar carries **6 'O' Saturdays on COROLLA** (ISO wks 13/15/17/20/23/
+   > 30). Counterexample (COROLLA wk23, qty 138): legacy `[23,23,23,23,23,23,0]` (days=6) vs the former
+   > rebuild `[30,27,27,27,27,0,0]` (Sat ignored, days=5) — every bucket differed. **The rebuild now
+   > applies the FULL row stream and reproduces the legacy's RUNNING `days` counter (DEC/INC),
+   > byte-faithful to `:1398-1407`, including the two latent edges the running counter implies (which a
+   > `count(workday)` derivation would NOT reproduce):**
+   > - **H/X on an already-OFF day** (e.g. an H Saturday): `DEC(days)` below 5 even though the set already
+   >   had it off → the legacy OVER-spreads (a larger per-day qty). Reproduced.
+   > - **'O' on an already-ON weekday** (Mon-Fri): `INC(days)` above the workday count → the legacy
+   >   DOUBLE-COUNTS days (a smaller per-day qty). LATENT (all 6 live 'O' rows are Saturdays, which start
+   >   OFF, so this edge is not hit on real data today) but reproduced for strict parity.
+   >
+   > **This REVERSES the former D-Bug-3 "fix"** (which set `workday[N]:=True` only if previously off and so
+   > did NOT INC for an O-Saturday — diverging from the legacy on the very rows that exist in live data).
+   > The review's job is parity; this matches `ForecastBreakdownF.pas:1403-1407` exactly. The `'Day
+   > Number'` is `DATEPART(DW, date + @@DATEFIRST - 1)` (1=Mon..7=Sun under the proc's @@DATEFIRST math);
+   > the rebuild keeps the proc as the authority for the day index (does not recompute it).
 6. **Spread** (`:1414-1434`):
    ```
    if days > 0:  ratiocount = FCCount div days;  leftover = FCCount mod days
@@ -190,6 +213,18 @@ Given `(PN=component, WeekDate, FCCount, WeekNumber)`:
 1. **DELETE FIRST** (`:322-329`): for **every non-skipped entry**, `DeleteBreakdown(part)` →
    `DELETE_ForecastInfo(@WeekDate := fFirstWeekDate, @HistWeekDate := fHistDate, @PartNumber := assembly)`
    (`:110-125`). `fHistDate := now − fiHistoricalForecast*7 days` (`:318`; INI default 12 → 84 days).
+   > **RISK-1 — the delete-window anchor `@WeekDate`.** The legacy reassigns `fFirstWeekDate` on the FIRST
+   > FST of **EVERY** LIN (`:283-287`, inside the per-LIN parse loop), so after parsing it holds the **LAST
+   > assembly's** first-week-date — an essentially arbitrary value. On real TEMA feeds every LIN starts at
+   > the same first week, so legacy == first-entry-first-week == `min(weekDate)`; all three agree on live
+   > data. **DELIBERATE DIVERGENCE (rebuild): anchor on `min(weekDate)` across ALL entries/weeks.** WHY
+   > SAFER: the delete clears the forward slice `VC_WEEK_DATE >= @WeekDate` and the breakdown upsert is
+   > ADDITIVE; if the anchor were LATER than some assembly's earliest forecast week (which the legacy's
+   > "last LIN's first week" can be if LINs are mis-ordered or carry different start weeks), those earlier
+   > weeks would NOT be deleted but WOULD be re-inserted → **DOUBLED qty on re-import**. `min(weekDate)`
+   > guarantees the delete window covers every week we re-insert, so the delete-then-accumulate idempotency
+   > holds for ANY LIN ordering / start-week mix — equal to legacy on real data, strictly stronger against
+   > the doubling risk the anchor exists to guard.
    The proc (`/tmp/inv_utf8.sql:2725`) does **four deletes**, resolving assembly→its 7 component codes via
    a `CROSS APPLY (VALUES …)` over `INV_FORECAST_DETAIL_INF` where `VC_ASSY_PART_NUMBER_CODE=@PartNumber`:
    - (A) `INV_BREAKDOWN_FC_INF` for those components WHERE `VC_WEEK_DATE >= @WeekDate` (forward slice).
@@ -220,7 +255,7 @@ Given `(PN=component, WeekDate, FCCount, WeekNumber)`:
 |---|---|---|---|
 | **D-Bug-1** | `bd=FALSE` (no BOM ratio match) → log + **silently drop** the count (`:1178-1183`). The week bucket ends up zero → the Order's "Unable to get month forecast". | Write a **forecast-gap alarm** row (`INV_EDI_ALARM_REJ`, type `830_FORECAST_GAP`, manifest=NULL, part=assembly, errorText=the missing-BOM reason) + log; the count is still not exploded (no recipe to explode by) but it is now **visible, not vanished**. | A missing recipe is operationally actionable; silent zero forecast is the root of the daily-log order error (spec §4). |
 | **D-Bug-2** | Usage rollup `HistoryForecast` reads `WeekOfTheYear(now)` = **raw ISO** with NO offset (`:1052`), mismatching the stored ISO−1 week → averages from the wrong/empty bucket. | The rebuild's usage rollup reads the **same production-relative week** the row is stored under (`ISO − offset`), so usage reconciles to the stored day-qtys. | Read/write the SAME week consistently — eliminates the "Unable to get month forecast" offset gap (spec §4, hazard #5). |
-| **D-Bug-3** | Special-date else-branch (`:1403-1407`) does `workday[N]:=True; INC(days)` **unconditionally** → a NON-H/X special row double-counts an already-on workday in `days`. | Set `workday[N]:=True` only if it was previously OFF (and only then `INC(days)`); H/X turns OFF as in source. | Prevents a spurious `days` inflation that would under-spread the qty. H/X path (the live-dominant case) is byte-faithful. |
+| **D-Bug-3 (REVERSED — now byte-faithful)** | Special-date else-branch (`:1403-1407`) does `workday[N]:=True; INC(days)` **unconditionally**; 'O' (OVERTIME) turns a day ON. The former rebuild only handled H/X→off and IGNORED 'O', so an O-Saturday week divided by 5 not 6 (every bucket wrong on the 6 live COROLLA O-Saturdays — BLOCKER-2). | **REVERSED to parity:** reproduce the legacy running `days` counter exactly — H/X → off + DEC; 'O'/any non-H/X → ON + INC, incl. the latent already-on double-count + already-off under-count. (See §D.5.) | The review's job is PARITY; the former "fix" diverged from the legacy on the O-Saturdays that exist in live data. Proven: COROLLA wk23 qty 138 → `[23×6,0]` matches the legacy. |
 | **D-Bug-4 (latent)** | `IN_QTY1..7` are nullable; additive `IN_QTYn = IN_QTYn + @Qtyn` → `NULL + n = NULL` (NULL poison). Live has 0 NULL rows so latent. | The rebuild always writes **0, never NULL** on INSERT (the proc already does), and the delete-then-additive cycle never leaves a partial row. (No code change to the proc; honored by always-non-NULL writes.) | Defends the additive math against a hand-NULLed row (T3). |
 | **D-Bug-5 (year-blind, deferred)** | `IN_WEEK_NUMBER` + the upsert key carry **no year** (week 30/2026 collides with 30/2027). Safe today only via delete-forward. | **Deferred to M4 schema** (add year or FST04-month to the breakdown key) — documented, NOT silently dropped. The rebuild keeps the delete-forward discipline (the legacy guard) for now. | Multi-year/multi-site safety needs a key change; in scope of M4 re-key, not M2. |
 
@@ -249,3 +284,11 @@ are replaced by a server-side export — out of M2 logic scope; noted in spec §
   `VC_LAST_FORECAST_IMPORT` (stamped per successful import), an **8-day staleness** check
   (`stale_sites()`) raising a `830_FORECAST_STALE` alarm. The gateway scheduled poll + the home-hub box
   are prod wiring (follow-ons).
+- **RISK-2 — per-site forecast config (wired LIVE in the poll path):** `_process_one_830` reads
+  `IN_HISTORICAL_FORECAST` (the history-prune window in weeks → `DELETE_ForecastInfo @HistWeekDate`;
+  legacy `[INIT] HistoricalForecast`, default 12) and `BIT_USE_FIRST_PRODUCTION_DAY` (the per-site
+  equivalent of `fiUseFirstProductionDay` → the holiday-lookup offset) from `INV_SITES` via
+  `_read_site_forecast_config` (mirrors the `supplierBySite` lookup) and threads them into `import_830`.
+  Without this the poll path silently defaulted (12 weeks / use-FPD on) regardless of the site row, so the
+  two columns the M2 schema added were dead. Now they are honored per-site (e2e case 7 proves the poll
+  reads `BIT_USE_FIRST_PRODUCTION_DAY` and the offset changes accordingly).

@@ -633,9 +633,10 @@ SHOULD-FIX 1/2). Byte-faithful (reproduce-the-legacy) stance.
   forecast" order error.
 - **D-Bug-2:** the usage rollup reads the SAME production-relative week the row is stored under (not the
   legacy raw-ISO `WeekOfTheYear(now)`).
-- **D-Bug-3:** the special-date else-branch turns a day ON only if it was OFF (no double-count of `days`)
-  — the PURE `day_spread` derives `days` from `7 − off_set`, structurally avoiding the legacy
-  unconditional `INC(days)` (`:1403-1407`). H/X turns-off is byte-faithful.
+- **D-Bug-3 (REVERSED 2026-06-21 — see the adversary-fix entry below):** the day-spread now reproduces the
+  legacy running `days` counter EXACTLY (H/X → off + DEC; 'O' overtime → ON + INC, `:1398-1407`). The former
+  "True only if previously off" divergence ignored 'O' and so diverged from the legacy on the live COROLLA
+  O-Saturdays (BLOCKER-2). Parity wins.
 
 **Correction logged:** `forecast-breakdown.md` flagged `DELETE_ForecastInfo` as "absent from the snapshot
 → latent runtime failure." It is **CONFIRMED PRESENT** at `CreateInventory.sql:2725` (snapshot drift;
@@ -656,5 +657,49 @@ captured feed (same stance as 856/810/997/824). Year-blind key (D-Bug-5) deferre
 edi_inbound_e2e 41, edi810_build 61, edi810_e2e 72, edi856_build 49, edi856_e2e 51, asn_fanout 34,
 create_asn_parity 10, seam_driver 23, seam_driver_order 13, order_commit_integration 6. **Spike restored
 as-found** (0 synthetic rows; real `4265202R6000` wk-24 breakdown untouched; site stamps NULL as found).
+
+---
+
+## M2 forecast importer — adversary BLOCKER/RISK fixes (2026-06-21) ✅
+
+Closed the 2 BLOCKERs + 2 RISKs the sql-adversary/code-reviewer found
+(`docs/analysis/edi/inbound/sql/adversary-findings-forecast.md`). All are **reproduce-the-legacy (parity)**
+fixes against `ForecastBreakdownF.pas`. Files: `forecast/code.py`, both forecast tests, algorithm §D/§E/§F/§H.
+
+- **BLOCKER-1 (per-component supplier).** Each `INV_BREAKDOWN_FC_INF` row is written/keyed/deleted under the
+  **COMPONENT's part-master supplier** (`:1349` `supplier := FieldByName('Supplier Code')` from
+  `SELECT_PartsStockInfo(@PartNum := the component)`), NOT the feed supplier. The feed supplier stays on the
+  RAW `INV_FORECAST_INF` row only (`:1107`). Was `rowSup = rowSupplier or compSupplier` (every row → feed
+  supplier: wrong `VC_SUPPLIER_CODE` + wrong additive-upsert key `(supplier, part, week)`; and the
+  supplier-blind `DELETE_ForecastInfo` would silently rewrite supplier on re-import). Now `rowSup =
+  compSupplier`. **Proven live:** breakdown = 14 distinct suppliers, 959/959 == component part-master
+  supplier, 0/959 == feed. New e2e: two components → two DIFFERENT synthetic suppliers; the row carries the
+  component's, the raw carries the feed's.
+- **BLOCKER-2 (overtime 'O' day-spread).** `AD_GetSpecialDateWeek` 'Date Status': **H/X turn a day OFF, 'O'
+  (overtime) turns a day ON** (a worked Saturday). `day_spread` now takes the FULL calendar rows and
+  reproduces the legacy running `days` counter (`:1398-1407`): H/X → off + DEC, 'O'/non-H/X → ON + INC,
+  incl. the latent already-on double-count. **Proven live:** 6 'O' Saturdays on COROLLA (ISO
+  13/15/17/20/23/30); wk23 qty 138 → legacy `[23,23,23,23,23,23,0]` (days=6), was `[30,27,27,27,27,0,0]`
+  (days=5). New PURE + e2e cases assert the O-spread + the parity edges.
+- **RISK-1 (delete anchor).** Anchor = `min(weekDate)` across all entries (documented divergence from the
+  legacy "last LIN's first-week-date", which is arbitrary). Equal on real data; strictly stronger against
+  the additive-doubling risk the anchor guards (the delete window covers every week we re-insert for any LIN
+  ordering / start-week mix).
+- **RISK-2 (per-site config wired).** `_process_one_830` now reads `IN_HISTORICAL_FORECAST` +
+  `BIT_USE_FIRST_PRODUCTION_DAY` from `INV_SITES` (`_read_site_forecast_config`, mirrors `supplierBySite`)
+  and threads them into `import_830` — the columns the M2 schema added are LIVE, not dead. e2e case 7 pins
+  `BIT_USE_FIRST_PRODUCTION_DAY=0` for site 1 → offset 0 → lookupWeek 30 = COROLLA O-Saturday →
+  `[19,16,16,16,16,16,0]` (and restores the flag as-found).
+
+**Tests:** forecast_import_build **43 PASS** (+8: O-Saturday spread, X==H, mixed H+O week, the two running-
+counter parity edges), forecast_import_e2e **35 PASS** (+11: per-component supplier B1, O-Saturday 5b,
+RISK-2 poll honors the per-site flag). **Regressions all green** (edi_inbound_build 42, edi_inbound_e2e 41,
+edi810_build 61, edi810_e2e 72, edi856_build 49, edi856_e2e 51, asn_fanout 34, create_asn_parity 10,
+seam_driver 23, seam_driver_order 13, order_commit 16, order_commit_integration 6). **Spike restored
+as-found** (0 synthetic rows + suppliers; site config + stamps unchanged).
+
+**Honest verification:** still NO golden TEMA 830 on disk — the supplier/'O'-day/anchor fixes are proven
+against the legacy `.pas` algorithm + the live proc bodies + live `Inventory`/`VehicleOrder` data, NOT a
+golden file. The ISA `delSL[4]` element index remains the standing pending-golden caveat.
 
 ---

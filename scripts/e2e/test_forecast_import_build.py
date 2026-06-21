@@ -213,29 +213,74 @@ def main():
               all(c != "V" for c, _ in m.explode(100, short)))
 
     # ---------------------------------------------------------------------------------------------
-    # 5. day_spread — no-holiday week vs a holiday week.
+    # 5. day_spread — no-special-date week, holiday (H) week, and an OVERTIME ('O') Saturday week.
+    #    day_spread now takes the FULL AD_GetSpecialDateWeek rows as (dayNumber, statusAbbr) tuples (so it
+    #    can reproduce the legacy running DEC/INC days counter exactly — H/X off+DEC, O on+INC). [] = no
+    #    special dates. (BLOCKER-2 fix.)
     # ---------------------------------------------------------------------------------------------
-    # 5a. NO holiday: 138 over Mon-Fri (5 days). 138//5=27 r3 -> day1=27+3=30, days2-5=27, Sat/Sun=0.
-    spread = m.day_spread(138, set())     # Sat(6)/Sun(7) off automatically
-    rep.check("day_spread: 138 / Mon-Fri -> [30,27,27,27,27,0,0]",
+    # 5a. NO special date: 138 over Mon-Fri (5 days). 138//5=27 r3 -> day1=27+3=30, days2-5=27, Sat/Sun=0.
+    spread = m.day_spread(138, [])        # Sat(6)/Sun(7) off automatically (the Mon-Fri base)
+    rep.check("day_spread: 138 / Mon-Fri (no special date) -> [30,27,27,27,27,0,0]",
               spread == [30, 27, 27, 27, 27, 0, 0], str(spread))
     rep.check("day_spread: sum preserved (138)", sum(spread) == 138, str(sum(spread)))
 
-    # 5b. WITH a holiday on Wednesday (day 3 off): 138 over 4 working days (Mon,Tue,Thu,Fri).
+    # 5b. WITH a holiday (H) on Wednesday (day 3 off): 138 over 4 working days (Mon,Tue,Thu,Fri).
     #     138//4=34 r2 -> day1=34+2=36, day2=34, day3=0(holiday), day4=34, day5=34, Sat/Sun=0.
-    spread_h = m.day_spread(138, {3})
-    rep.check("day_spread: 138 / Wed-holiday -> [36,34,0,34,34,0,0]",
+    spread_h = m.day_spread(138, [(3, "H")])
+    rep.check("day_spread: 138 / Wed H-holiday -> [36,34,0,34,34,0,0]",
               spread_h == [36, 34, 0, 34, 34, 0, 0], str(spread_h))
     rep.check("day_spread: holiday week sum preserved (138)", sum(spread_h) == 138, str(sum(spread_h)))
+    # 5b'. X (NON-PRODUCTION) behaves identically to H (both turn the day OFF + DEC days).
+    rep.check("day_spread: X turns the day OFF same as H ([36,34,0,34,34,0,0])",
+              m.day_spread(138, [(3, "X")]) == [36, 34, 0, 34, 34, 0, 0],
+              str(m.day_spread(138, [(3, "X")])))
 
-    # 5c. all-week holiday (Mon-Fri all off) -> all zeros (days==0).
-    rep.check("day_spread: all working days off -> zeros",
-              m.day_spread(138, {1, 2, 3, 4, 5}) == [0, 0, 0, 0, 0, 0, 0])
+    # 5c. OVERTIME 'O' SATURDAY (BLOCKER-2 — the legacy parity case proven on live COROLLA wk23, qty 138).
+    #     The legacy turns Saturday (day 6, started OFF) ON and INC(days) 5->6 -> 138//6=23 r0 -> all six
+    #     worked days (Mon-Sat) get 23; Sun=0. This is [23,23,23,23,23,23,0] — NOT the old (Sat-ignored)
+    #     [30,27,27,27,27,0,0]. Every bucket differs from the pre-fix behavior.
+    spread_o = m.day_spread(138, [(6, "O")])
+    rep.check("BLOCKER-2: O-Saturday turns Sat ON (days 5->6) -> [23,23,23,23,23,23,0] (legacy parity)",
+              spread_o == [23, 23, 23, 23, 23, 23, 0], str(spread_o))
+    rep.check("BLOCKER-2: O-Saturday week sum preserved (138)", sum(spread_o) == 138, str(sum(spread_o)))
+    rep.check("BLOCKER-2: O-Saturday is NOT the pre-fix Sat-ignored [30,27,27,27,27,0,0]",
+              spread_o != [30, 27, 27, 27, 27, 0, 0], str(spread_o))
+    # 5c'. an O-Saturday that does NOT divide evenly: qty 140 / 6 = 23 r2 -> day1(Mon)=23+2=25, days2-6=23.
+    spread_o2 = m.day_spread(140, [(6, "O")])
+    rep.check("day_spread: O-Saturday 140/6 -> [25,23,23,23,23,23,0] (remainder on first working day)",
+              spread_o2 == [25, 23, 23, 23, 23, 23, 0], str(spread_o2))
 
-    # 5d. zero qty -> zeros (no NULL poison — D-Bug-4).
-    rep.check("day_spread: 0 qty -> all-zero (never None)", m.day_spread(0, set()) == [0] * 7)
+    # 5d. MIXED week — an H on Mon (day1 off, DEC) AND an O on Sat (day6 on, INC) -> still 5 working days
+    #     (Tue,Wed,Thu,Fri,Sat). 138//5=27 r3 -> first WORKING day (Tue=idx2) gets 27+3=30 ->
+    #     [0,30,27,27,27,27,0]. Proves both branches compose via the running counter.
+    spread_mix = m.day_spread(138, [(1, "H"), (6, "O")])
+    rep.check("day_spread: Mon-H + Sat-O -> 5 days (Tue..Sat) -> [0,30,27,27,27,27,0]",
+              spread_mix == [0, 30, 27, 27, 27, 27, 0], str(spread_mix))
+
+    # 5e. PARITY of the legacy RUNNING COUNTER (not count(workday)) — the latent edges we deliberately
+    #     reproduce (ForecastBreakdownF.pas:1403-1407 "exactly"):
+    #   * 'O' on an already-ON weekday (Mon) double-counts days: 5+1=6 (NOT 5). 120//6=20 -> all Mon-Fri
+    #     get 20, Sat/Sun=0; sum=100, NOT 120 (the legacy LOSES the remainder differently). Assert the
+    #     legacy NUMBER: days=6 -> 120//6=20 r0 -> [20,20,20,20,20,0,0].
+    rep.check("day_spread (parity edge): O on already-ON Mon double-counts days (6) -> [20,20,20,20,20,0,0]",
+              m.day_spread(120, [(1, "O")]) == [20, 20, 20, 20, 20, 0, 0],
+              str(m.day_spread(120, [(1, "O")])))
+    #   * H/X on an already-OFF day (Sat) under-counts days: 5-1=4 (NOT 5). 120//4=30 -> Mon-Thu get 30,
+    #     Fri... wait Fri is still ON: working = Mon,Tue,Wed,Thu,Fri = 5 set-on but days counter = 4.
+    #     ratiocount=120//4=30 r0; spread over the 5 ON days gives 30 each -> sum 150 (the legacy OVER-
+    #     spreads). Assert the legacy NUMBER: [30,30,30,30,30,0,0].
+    rep.check("day_spread (parity edge): H on already-OFF Sat under-counts days (4) -> [30,30,30,30,30,0,0]",
+              m.day_spread(120, [(6, "H")]) == [30, 30, 30, 30, 30, 0, 0],
+              str(m.day_spread(120, [(6, "H")])))
+
+    # 5f. all-week holiday (Mon-Fri all off) -> all zeros (days==0).
+    rep.check("day_spread: all working days H-off -> zeros",
+              m.day_spread(138, [(1, "H"), (2, "H"), (3, "H"), (4, "H"), (5, "H")]) == [0, 0, 0, 0, 0, 0, 0])
+
+    # 5g. zero qty -> zeros (no NULL poison — D-Bug-4).
+    rep.check("day_spread: 0 qty -> all-zero (never None)", m.day_spread(0, []) == [0] * 7)
     rep.check("day_spread: every bucket is an int 0, not None",
-              all(isinstance(x, int) for x in m.day_spread(0, set())))
+              all(isinstance(x, int) for x in m.day_spread(0, [])))
 
     return rep.summary_exit()
 

@@ -20,9 +20,16 @@ transaction the driver itself opens:
       and writes NO breakdown rows (nothing silently doubled, nothing silently dropped).
   (5) HOLIDAY DAY-SPREAD — a week whose holiday-lookup week carries an H day spreads the qty over the
       reduced working days (the production calendar in VehicleOrder drives it).
+  (5b) OVERTIME 'O' SATURDAY DAY-SPREAD (BLOCKER-2) — a COROLLA week whose lookup week carries an 'O'
+      (OVERTIME) Saturday turns Saturday ON (days 5->6) and spreads over Mon-Sat, matching the legacy
+      ForecastBreakdownF.pas:1403-1407 (proven on live COROLLA ISO week 23: 138 -> [23,23,23,23,23,23,0]).
+  (B1) PER-COMPONENT SUPPLIER (BLOCKER-1) — each breakdown row carries its COMPONENT's part-master supplier
+      (ForecastBreakdownF.pas:1349), NOT the feed supplier; tire/wheel resolve to DIFFERENT suppliers; the
+      raw INV_FORECAST_INF row still carries the feed supplier (the legacy's two distinct sources).
   (6) DUNS GUARD — a file whose ISA delSL[4] matches no INV_SITES.VC_TMM_DUNS is QUARANTINED, not dropped.
-  (7) IDEMPOTENCY — the SAME 830 dropped twice via process_forecast_dir processes once (the 2nd poll is a
-      ledger NO-OP); no double breakdown, no duplicate alarms.
+  (7) IDEMPOTENCY + RISK-2 — the SAME 830 dropped twice via process_forecast_dir processes once (the 2nd
+      poll is a ledger NO-OP); the poll path reads the per-site BIT_USE_FIRST_PRODUCTION_DAY /
+      IN_HISTORICAL_FORECAST from INV_SITES (the columns are LIVE, not dead).
 
 HONEST VERIFICATION (no golden 830)
 -----------------------------------
@@ -62,9 +69,13 @@ ASSY = "ZZF830ASSY01"           # synthetic assembly WITH a recipe (12 chars)
 ASSY_NOBOM = "ZZF830NOBOM1"     # synthetic assembly with NO recipe (gap alarm)
 TIRE = "ZZF830TIRE01"           # synthetic tire component (12 chars)
 WHEEL = "ZZF830WHL001"          # synthetic wheel component (12 chars)
-SUPPLIER = "ZZF83"              # 5-char synthetic supplier
+SUPPLIER = "ZZF83"              # 5-char synthetic FEED supplier (the per-site import supplier)
+# BLOCKER-1: each COMPONENT resolves to its OWN part-master supplier (NOT the feed supplier). Two DISTINCT
+# synthetic suppliers prove the breakdown row carries the component's supplier, and that tire/wheel differ.
+TIRE_SUP = "ZZS1A"              # 5-char synthetic supplier for the TIRE component's part master
+WHEEL_SUP = "ZZS2B"            # 5-char synthetic supplier for the WHEEL component's part master
 SIZE = "ZZF830SZ"              # synthetic size (component part master size)
-LINE = "COROLLA"                # a real production line WITH holidays (for the holiday-spread case)
+LINE = "COROLLA"                # a real production line WITH holidays + overtime (H wk22, O-Sat wk23/30)
 
 CODE_PY = os.path.normpath(os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..",
@@ -131,18 +142,27 @@ def setup_fixtures():
         " VC_LABEL_PART_NUMBER, VC_MISC1_PART_NUMBER, VC_MISC2_PART_NUMBER) "
         "VALUES ('%s', ' ', 'RC01', '%s', 100, '%s', 100, 100, '', '', 1, 'ZZF830BC', '%s', '', '', '')"
         % (ASSY, TIRE, WHEEL, ADD_STAMP))
-    # synthetic part-master rows for the components (LEFT-join size/supplier resolve to NULL, but we set
-    # VC_LINE_NAME so the calendar lookup uses LINE; the driver passes the explicit supplier from the feed
-    # site config in the prod path — here import_830 is called with supplier=SUPPLIER).
+    # BLOCKER-1: two synthetic SUPPLIER master rows so each component resolves to its OWN supplier via
+    # SELECT_PartsStockInfo (INV_PARTS_STOCK_MST.IN_SUPPLIER_ID -> INV_SUPPLIER_MST.VC_SUPPLIER_CODE). The
+    # breakdown row's VC_SUPPLIER_CODE must be the COMPONENT's supplier (ForecastBreakdownF.pas:1349), NOT
+    # the feed supplier — so tire rows carry TIRE_SUP and wheel rows carry WHEEL_SUP.
+    for code in (TIRE_SUP, WHEEL_SUP):
+        sql(INV, "INSERT INTO INV_SUPPLIER_MST (VC_SUPPLIER_CODE, VC_ADD) VALUES ('%s', '%s')"
+            % (code, ADD_STAMP))
+    # synthetic part-master rows for the components, each pointing at its component supplier via
+    # IN_SUPPLIER_ID. We set VC_LINE_NAME=COROLLA so the calendar lookup uses a line WITH real special
+    # dates (H wk22, O-Sat wk23/30). The feed supplier is passed to import_830 separately (supplier=
+    # SUPPLIER) and lands ONLY on the RAW INV_FORECAST_INF row.
     # NB: an INSERT trigger archives into INV_PARTS_STOCK_MST_HIST, which requires VC_PARTS_NAME +
     # IN_RENBAN_COUNT NOT NULL — so the synthetic part must set them (else the insert silently fails and
-    # SELECT_PartsStockInfo returns no row -> line 'ALL LINES' -> no holiday spread). VC_LINE_NAME=COROLLA
-    # so the production-calendar lookup uses a line WITH real holidays.
-    for pn in (TIRE, WHEEL):
+    # SELECT_PartsStockInfo returns no row -> line 'ALL LINES' -> no holiday spread).
+    for pn, sup in ((TIRE, TIRE_SUP), (WHEEL, WHEEL_SUP)):
         sql(INV,
             "INSERT INTO INV_PARTS_STOCK_MST "
-            "(VC_PART_NUMBER, VC_PARTS_NAME, IN_RENBAN_COUNT, VC_LINE_NAME, VC_ADD) "
-            "VALUES ('%s', 'ZZF830 SYNTH', 0, '%s', '%s')" % (pn, LINE, ADD_STAMP))
+            "(VC_PART_NUMBER, VC_PARTS_NAME, IN_RENBAN_COUNT, VC_LINE_NAME, IN_SUPPLIER_ID, VC_ADD) "
+            "VALUES ('%s', 'ZZF830 SYNTH', 0, '%s', "
+            "(SELECT IN_SUPPLIER_ID FROM INV_SUPPLIER_MST WHERE VC_SUPPLIER_CODE='%s'), '%s')"
+            % (pn, LINE, sup, ADD_STAMP))
 
 
 def teardown_fixtures():
@@ -152,10 +172,16 @@ def teardown_fixtures():
         % (ADD_STAMP, ASSY, ASSY_NOBOM))
     sql(INV, "DELETE FROM INV_PARTS_STOCK_MST WHERE VC_ADD = '%s' OR VC_PART_NUMBER IN ('%s','%s')"
         % (ADD_STAMP, TIRE, WHEEL))
-    sql(INV, "DELETE FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER IN ('%s','%s') OR VC_SUPPLIER_CODE='%s'"
-        % (TIRE, WHEEL, SUPPLIER))
+    # breakdown rows now carry the COMPONENT suppliers (BLOCKER-1) — clear by component part AND by all
+    # three synthetic supplier codes (feed + the two component suppliers) so nothing leaks.
+    sql(INV, "DELETE FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER IN ('%s','%s') "
+        "OR VC_SUPPLIER_CODE IN ('%s','%s','%s')" % (TIRE, WHEEL, SUPPLIER, TIRE_SUP, WHEEL_SUP))
     sql(INV, "DELETE FROM INV_FORECAST_INF WHERE VC_PART_NUMBER IN ('%s','%s') OR VC_SUPPLIER_CODE='%s'"
         % (ASSY, ASSY_NOBOM, SUPPLIER))
+    # synthetic SUPPLIER master rows (BLOCKER-1). The DELETE_SupplierCode trigger uses a scalar
+    # (SELECT .. FROM DELETED), so delete ONE supplier per statement (a multi-row delete would error).
+    for code in (TIRE_SUP, WHEEL_SUP):
+        sql(INV, "DELETE FROM INV_SUPPLIER_MST WHERE VC_SUPPLIER_CODE = '%s'" % code)
     sql(INV, "DELETE FROM INV_EDI_ALARM_REJ WHERE VC_ALARM_TYPE IN ('830_FORECAST_GAP','830_FORECAST_STALE') "
         "AND (VC_ASSY_PART_NUMBER IN ('%s','%s') OR VC_ERROR_TEXT LIKE '%%ZZF830%%' OR IN_SITE_ID IN (1,2))"
         % (ASSY, ASSY_NOBOM))
@@ -175,6 +201,12 @@ def breakdown_qtys(part, week):
     if not rows:
         return None
     return [int(x) if x not in ("NULL", "") else None for x in rows[0]]
+
+
+def breakdown_supplier(part, week):
+    """The VC_SUPPLIER_CODE stored on the breakdown row for (component part, week) — BLOCKER-1 proof."""
+    return scalar(INV, "SELECT VC_SUPPLIER_CODE FROM INV_BREAKDOWN_FC_INF "
+                       "WHERE VC_PART_NUMBER='%s' AND IN_WEEK_NUMBER=%d" % (part, week))
 
 
 def main():
@@ -212,6 +244,23 @@ def main():
         qtys1 = breakdown_qtys(TIRE, 24)
         rep.check("2. day-spread 138/Mon-Fri (week 25 no holiday) -> [30,27,27,27,27,0,0]",
                   qtys1 == [30, 27, 27, 27, 27, 0, 0], str(qtys1))
+
+        # BLOCKER-1 — each breakdown row carries its COMPONENT's part-master supplier (NOT the feed
+        # supplier ZZF83). Tire -> TIRE_SUP, wheel -> WHEEL_SUP (they DIFFER), proving the per-component
+        # resolution (ForecastBreakdownF.pas:1349) and that the feed supplier is used ONLY for the raw row.
+        tire_sup = breakdown_supplier(TIRE, 24)
+        wheel_sup = breakdown_supplier(WHEEL, 24)
+        rep.check("B1. tire breakdown VC_SUPPLIER_CODE == component supplier (TIRE_SUP), NOT feed",
+                  tire_sup == TIRE_SUP and tire_sup != SUPPLIER, "got %r (feed=%r)" % (tire_sup, SUPPLIER))
+        rep.check("B1. wheel breakdown VC_SUPPLIER_CODE == component supplier (WHEEL_SUP), NOT feed",
+                  wheel_sup == WHEEL_SUP and wheel_sup != SUPPLIER, "got %r (feed=%r)" % (wheel_sup, SUPPLIER))
+        rep.check("B1. tire and wheel breakdown rows carry DIFFERENT (per-component) suppliers",
+                  tire_sup != wheel_sup, "tire=%r wheel=%r" % (tire_sup, wheel_sup))
+        # the RAW INV_FORECAST_INF row still carries the FEED supplier (the legacy's two distinct sources).
+        raw_sup = scalar(INV, "SELECT VC_SUPPLIER_CODE FROM INV_FORECAST_INF WHERE VC_PART_NUMBER='%s' "
+                              "AND IN_WEEK_NUMBER=24" % ASSY)
+        rep.check("B1. RAW INV_FORECAST_INF carries the FEED supplier (ZZF83), not a component supplier",
+                  raw_sup == SUPPLIER, "got %r" % raw_sup)
 
         # DELETE-THEN-ACCUMULATE: re-import the SAME content with idempotency DISABLED (call import_830
         # directly, which does NOT consult the ledger — it always DELETE-then-rebuilds). If the delete did
@@ -266,6 +315,28 @@ def main():
                   str(qtys_h))
 
         # -----------------------------------------------------------------------------------------
+        # 5b. OVERTIME 'O' SATURDAY DAY-SPREAD (BLOCKER-2 — the legacy parity case on live COROLLA data).
+        #     DO 2622 -> raw week 22 -> lookupWeek = 22 + offset(1) = 23. COROLLA week 23 has an 'O'
+        #     (OVERTIME) on day 6 (Saturday, 20260606) -> the legacy turns Sat ON and INC(days) 5->6.
+        #     138//6=23 r0 -> all SIX worked days (Mon-Sat) get 23; Sun=0 -> [23,23,23,23,23,23,0].
+        #     Pre-fix (Sat ignored, days=5) this was [30,27,27,27,27,0,0] — every bucket differs. Stored
+        #     at RAW week 22 (D10 — the offset is only for the calendar lookup).
+        # -----------------------------------------------------------------------------------------
+        body_ot = build_830(TMM_DUNS, [(ASSY, "RC01", [(138, "20260601", "2622")])])  # DO 2622 -> raw 22
+        s5b = mod.import_830(body_ot, "zzf830_overtime.edi", database=INV, siteId=SITE_ID, supplier=SUPPLIER)
+        rep.check("5b. overtime week stored at RAW week 22 (D10)", count_breakdown(TIRE, 22) == 1,
+                  "wk22=%d" % count_breakdown(TIRE, 22))
+        qtys_o = breakdown_qtys(TIRE, 22)
+        rep.check("5b. BLOCKER-2: O-Saturday spread (lookupWeek 23, days=6) -> [23,23,23,23,23,23,0]",
+                  qtys_o == [23, 23, 23, 23, 23, 23, 0], str(qtys_o))
+        rep.check("5b. BLOCKER-2: NOT the pre-fix Sat-ignored [30,27,27,27,27,0,0]",
+                  qtys_o != [30, 27, 27, 27, 27, 0, 0], str(qtys_o))
+        rep.check("5b. BLOCKER-2: Saturday bucket (IN_QTY6) is non-zero (Sat worked)",
+                  qtys_o is not None and qtys_o[5] == 23, str(qtys_o))
+        rep.check("5b. overtime-week sum preserved (138)", qtys_o is not None and sum(qtys_o) == 138,
+                  str(qtys_o))
+
+        # -----------------------------------------------------------------------------------------
         # 6. DUNS GUARD: a file whose ISA delSL[4] matches no site -> QUARANTINED (via _process_one_830).
         # -----------------------------------------------------------------------------------------
         import tempfile, shutil
@@ -278,33 +349,57 @@ def main():
                       r6["outcome"] == "QUARANTINED_NO_DUNS", r6["outcome"])
 
             # -------------------------------------------------------------------------------------
-            # 7. IDEMPOTENCY via process_forecast_dir: drop the SAME 830 twice -> processed once.
+            # 7. IDEMPOTENCY via process_forecast_dir + RISK-2 (the poll path reads per-site config).
+            #    The poll path now resolves BIT_USE_FIRST_PRODUCTION_DAY + IN_HISTORICAL_FORECAST from
+            #    INV_SITES (RISK-2 — the columns are LIVE, not dead). We pin the flag = 0 for site 1 so the
+            #    holiday-lookup offset is 0 and the test is deterministic, then RESTORE it as-found.
+            #    Content: qty 99, DO 2630 -> raw week 30, weekDate 20260720. With offset 0 the lookupWeek =
+            #    30 = COROLLA's 'O' (OVERTIME) Saturday -> days=6 -> 99//6=16 r3 -> first working day (Mon)
+            #    gets 16+3=19, the rest 16, incl. Sat -> [19,16,16,16,16,16,0]. (This both proves
+            #    idempotency through the poll AND that the poll honors the per-site config + the O-Saturday.)
             # -------------------------------------------------------------------------------------
-            indir = os.path.join(tmpdir, "in")
-            os.makedirs(indir)
-            # UNIQUE content (qty 99, DO 2630 -> raw week 30, weekDate 20260720) so the poll's content hash
-            # does NOT collide with the direct import_830 ledger rows above. Week 30 lookup = 31 (no COROLLA
-            # holiday) -> 99//5=19 r4 -> [23,19,19,19,19,0,0].
-            good = build_830(TMM_DUNS, [(ASSY, "RC01", [(99, "20260720", "2630")])])
-            with open(os.path.join(indir, "zzf830_poll.edi"), "w") as fh:
-                fh.write(good)
-            res_a = mod.process_forecast_dir(indir, database=INV, supplierBySite={SITE_ID: SUPPLIER})
-            # re-drop the SAME content under a NEW name (renamed redelivery) -> ledger NO-OP.
-            with open(os.path.join(indir, "zzf830_poll_REDELIVERED.edi"), "w") as fh:
-                fh.write(good)
-            res_b = mod.process_forecast_dir(indir, database=INV, supplierBySite={SITE_ID: SUPPLIER})
-            outcomes_a = [r["outcome"] for r in res_a]
-            outcomes_b = [r["outcome"] for r in res_b]
-            rep.check("7. idempotency: 1st poll PROCESSED",
-                      "PROCESSED" in outcomes_a, str(outcomes_a))
-            rep.check("7. idempotency: renamed re-drop -> SKIPPED_ALREADY_PROCESSED (content-hash dedup)",
-                      "SKIPPED_ALREADY_PROCESSED" in outcomes_b, str(outcomes_b))
-            rep.check("7. idempotency: exactly ONE breakdown row per component @ week 30 (no double poll)",
-                      count_breakdown(TIRE, 30) == 1 and count_breakdown(WHEEL, 30) == 1,
-                      "tire=%d wheel=%d" % (count_breakdown(TIRE, 30), count_breakdown(WHEEL, 30)))
-            qtys_poll = breakdown_qtys(TIRE, 30)
-            rep.check("7. idempotency: qty NOT doubled by the 2nd poll ([23,19,19,19,19,0,0])",
-                      qtys_poll == [23, 19, 19, 19, 19, 0, 0], str(qtys_poll))
+            saved_fpd = scalar(INV, "SELECT BIT_USE_FIRST_PRODUCTION_DAY FROM INV_SITES WHERE IN_SITE_ID=%d"
+                               % SITE_ID)
+            sql(INV, "UPDATE INV_SITES SET BIT_USE_FIRST_PRODUCTION_DAY = 0 WHERE IN_SITE_ID=%d" % SITE_ID)
+            try:
+                indir = os.path.join(tmpdir, "in")
+                os.makedirs(indir)
+                good = build_830(TMM_DUNS, [(ASSY, "RC01", [(99, "20260720", "2630")])])
+                with open(os.path.join(indir, "zzf830_poll.edi"), "w") as fh:
+                    fh.write(good)
+                res_a = mod.process_forecast_dir(indir, database=INV, supplierBySite={SITE_ID: SUPPLIER})
+                # re-drop the SAME content under a NEW name (renamed redelivery) -> ledger NO-OP.
+                with open(os.path.join(indir, "zzf830_poll_REDELIVERED.edi"), "w") as fh:
+                    fh.write(good)
+                res_b = mod.process_forecast_dir(indir, database=INV, supplierBySite={SITE_ID: SUPPLIER})
+                outcomes_a = [r["outcome"] for r in res_a]
+                outcomes_b = [r["outcome"] for r in res_b]
+                rep.check("7. idempotency: 1st poll PROCESSED",
+                          "PROCESSED" in outcomes_a, str(outcomes_a))
+                rep.check("7. idempotency: renamed re-drop -> SKIPPED_ALREADY_PROCESSED (content-hash dedup)",
+                          "SKIPPED_ALREADY_PROCESSED" in outcomes_b, str(outcomes_b))
+                rep.check("7. idempotency: exactly ONE breakdown row per component @ week 30 (no double poll)",
+                          count_breakdown(TIRE, 30) == 1 and count_breakdown(WHEEL, 30) == 1,
+                          "tire=%d wheel=%d" % (count_breakdown(TIRE, 30), count_breakdown(WHEEL, 30)))
+                qtys_poll = breakdown_qtys(TIRE, 30)
+                # RISK-2 + BLOCKER-2 via the poll: BIT_USE_FIRST_PRODUCTION_DAY=0 -> offset 0 -> lookupWeek
+                # 30 -> COROLLA O-Saturday -> days=6 -> [19,16,16,16,16,16,0] (NOT the offset-+1 wk31
+                # Mon-Fri [23,19,19,19,19,0,0]). Proves the poll path reads the per-site config AND spreads
+                # the O-Saturday.
+                rep.check("7. RISK-2: poll honors BIT_USE_FIRST_PRODUCTION_DAY=0 + O-Saturday "
+                          "-> [19,16,16,16,16,16,0]",
+                          qtys_poll == [19, 16, 16, 16, 16, 16, 0], str(qtys_poll))
+                rep.check("7. idempotency: qty NOT doubled by the 2nd poll (still [19,16,16,16,16,16,0])",
+                          qtys_poll == [19, 16, 16, 16, 16, 16, 0], str(qtys_poll))
+                # the poll-written breakdown rows carry the COMPONENT suppliers (BLOCKER-1 via the poll too).
+                rep.check("7. B1: poll breakdown rows carry the per-component suppliers (tire=TIRE_SUP)",
+                          breakdown_supplier(TIRE, 30) == TIRE_SUP,
+                          "got %r" % breakdown_supplier(TIRE, 30))
+            finally:
+                # restore the flag as-found (RISK-2 test mutated it).
+                restore_fpd = 0 if saved_fpd in (None, "NULL", "") else int(saved_fpd)
+                sql(INV, "UPDATE INV_SITES SET BIT_USE_FIRST_PRODUCTION_DAY = %d WHERE IN_SITE_ID=%d"
+                    % (restore_fpd, SITE_ID))
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -337,8 +432,9 @@ def main():
         # restore-as-found assertion: no synthetic rows left behind.
         leftover = (int(scalar(INV, "SELECT COUNT(*) FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD='%s'" % ADD_STAMP) or 0)
                     + int(scalar(INV, "SELECT COUNT(*) FROM INV_PARTS_STOCK_MST WHERE VC_ADD='%s'" % ADD_STAMP) or 0)
-                    + int(scalar(INV, "SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER IN ('%s','%s')"
-                                 % (TIRE, WHEEL)) or 0)
+                    + int(scalar(INV, "SELECT COUNT(*) FROM INV_SUPPLIER_MST WHERE VC_ADD='%s'" % ADD_STAMP) or 0)
+                    + int(scalar(INV, "SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER IN ('%s','%s') "
+                                 "OR VC_SUPPLIER_CODE IN ('%s','%s')" % (TIRE, WHEEL, TIRE_SUP, WHEEL_SUP)) or 0)
                     + int(scalar(INV, "SELECT COUNT(*) FROM INV_FORECAST_INF WHERE VC_PART_NUMBER IN ('%s','%s')"
                                  % (ASSY, ASSY_NOBOM)) or 0))
         rep.check("teardown: spike restored as-found (0 synthetic rows remain)", leftover == 0,
