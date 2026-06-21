@@ -770,3 +770,95 @@ H3); (b) the M4 leading-field width; (c) the Excel template visuals. Ship date u
 AD_GetSpecialDate calendar.
 
 ---
+
+## M2 renban breakdown (RenbanOrder.pas / GroupRenbanOrder_Form) — ✅ pure + driver built + verified
+
+The MIDDLE order stage: splits blank-renban placeholder orders across N trailers, assigning each a
+unique FRS# + renban, via DELETE-then-reINSERT. New gateway code: pure `compute_trailer_breakdown` +
+driver `commit_renban_breakdown` in `docs/analysis/order/project-library/renban/code.py`. STEP-0
+algorithm extraction appended to `renban-breakdown-spec.md` §12 (verbatim from RenbanOrder.pas:255-301
+distribution + :746-799 read-out). Does NOT touch the GO/STAY picture — confirms the Order chain's
+middle stage is rebuildable as pure-logic + a thin tx driver, same shape as Order commit / order-file.
+
+- **Trailer distribution (`:255-301`):** per part `lots = order_qty div lotqty`; Phase A even base
+  share `lots div T` (+ forward-spill of overflow); Phase B `lots mod T` remainder dribbled one-lot
+  round-robin; merge repeated parts per truck (SUM lots — R3 sum-all, FAITHFUL). **Cross-checked vs an
+  INDEPENDENT transcription of the .pas across 10,200 scenarios → 0 mismatches** (incl. the multi-part
+  forward-spill else-branch). KEY fidelity catch: `TTruck.AddOrder` bumps `CurrentCount` INLINE
+  (`:179`), so later same-part iterations see the running counts — a delta-then-add-later refactor
+  diverged (1830/10200 mismatches); fixed by mutating the truck in place, matching the interleaved
+  Pascal.
+- **FRS suffix (`:763-767`):** `copy(frs,1,5)` + 2-digit trailer ordinal (`TruckNumber+1`, zero-pad
+  <10, raw digits ≥10). **Renban (`:775-779`):** `groupCode + %.3d(seed3 + TruckNumber)`, seed3 = the
+  3-digit tail of `groupCode||groupCount`; never blank.
+- **FRS-SUFFIX NO-OP CONFIRMED (the assigned-task gate):** `INSERT_OpenOrder` re-derives the trailing
+  2 FRS digits server-side, BUT `@FRSNum` is `varchar(7)` and we send the full 7-char FRS, so
+  `@FRSNum + <suffix>` → 9 chars → silently truncated back to 7 = our value. RE-PROVED 2026-06-21 both
+  branches: `'6090102'+'01'` → `'6090102'`, `'6090103'+(max+1)` → `'6090103'` (both len 7). The proc
+  HONORS Pascal's `TruckNumber+1` suffix; no override → no STOP needed. (The recompute is only live for
+  the original 5-char Order path.) E2E confirms persisted FRS `9123101/02/03` == compute output.
+- **Driver (one tx):** per part `DELETE_OrderRenban(@FRS='',@Renban='')` (clears ALL still-blank rows
+  of the part) → `INSERT_OpenOrder` per trailer-row (renban NON-blank, qty>0, skip qty=0) → once
+  `UPDATE_RenbanGroupCount(next_count)`. Delete-then-reinsert ONLY (the commented-out update-in-place
+  `:482-539` is NOT resurrected). Read uses an ALIASED SELECT (not the proc) to dodge the
+  `SELECT_OrderNoRenban` duplicate-`IN_QTY` trap (o.IN_QTY order vs p.IN_QTY on-hand).
+- **Hazards handled:** H7 div-by-zero (lotqty 0/NULL → raise, no crash); varchar(3) counter rollover
+  at 999 (the persisted count = `('%03d' % next_count)[:3]` = legacy `str(N)[:3]` left-trunc — see the
+  2026-06-21 adversary-fix entry below; the original `% 1000` was a BLOCKER, now fixed); Phase-B infinite
+  loop bounded (raise vs hang); inverted lot-flag confirmed UPSTREAM-only (not read here). H1 (silent
+  stuck blank-renban orders) noted as a follow-on alert (not built this pass).
+
+**Tests (initial build; later raised to 35/27 by the 2026-06-21 adversary fixes below):**
+`test_renban_build.py` **28 PASS** (hand-traced base case, FRS/renban derivation, merge
+sum-all, skip-qty=0, capacity gate, div-zero guard, the 10,200-scenario independent-reference fuzz,
+conservation). `test_renban_e2e.py` **16 PASS** (REAL `commit_renban_breakdown` via the shim's
+persistent-session tx: seed 3 blank CMWA placeholders → delete-then-reinsert → 9 trailer rows all
+NON-blank renban + blank order-date (emit-eligible), per-trailer FRS/renban/qty == compute, counter
+288→291, STOCK-NEUTRAL on-hand unchanged, idempotent re-run no-op). **All regressions green**
+(order_file 53/34, forecast 43/35, edi_inbound 42/41, edi810 61/72, edi856 49/51, asn_fanout 34,
+create_asn_parity 10, seam 23/13, order_commit 16/6). **Spike restored as-found** (0 tagged rows/hist,
+CMWA count back to 288, on-hand unchanged).
+
+**Honest verification / pending golden:** faithful to RenbanOrder.pas; the distribution proven vs an
+independent .pas transcription + the FRS-suffix no-op proven on the live proc. PENDING a golden renban
+breakdown are the exact persisted FRS/renban cells for a real operator run (the spec's H8 names the
+cells: a 3-trailer CMWA breakdown → `01/02/03` FRS + `CMWA000/001/002` renban) — the E2E reproduces
+this shape on synthetic-but-real-keyed placeholders.
+
+---
+
+## M2 renban breakdown — sql-adversary parity fixes (2026-06-21) ✅
+
+Closed the 2 divergences the sql-adversary found
+(`docs/analysis/order/sql/adversary-findings-renban.md`); both reproduce-the-legacy (parity-first).
+The distribution math / FRS suffix / in-run renban string were PROVEN faithful (could not be broken);
+these two live in the counter-PERSISTENCE rollover and the write-back DELETE scope. Does NOT change the
+GO/STAY picture — sharpens parallel-run fidelity at two previously-untested edges.
+
+- **BLOCKER 1 — counter-rollover parity (`code.py` step (c)).** The persisted group count for
+  `next_count >= 1000` was `'%03d' % (next_count % 1000)` (`1002 → '002'`). The legacy persists
+  `Format('%.3d',[next_count])` = `'1002'` (min-width, never caps) into `@RenbanCount varchar(3)`, which
+  the proc LEFT-TRUNCATES to the first 3 chars → `'100'`. Reduction is `str(N)[:3]`, NOT `% 1000`. FIX:
+  `('%03d' % next_count)[:3]`. **PROVEN on the live proc** (mssql-spike, rolled back, CMWA restored 288):
+  `@RenbanCount='1002' → '100'`; `@RenbanCount='002' → '002'` (the old-bug value); `'634'→'634'`,
+  `'005'→'005'`. The renban NUMBER itself is unaffected (`CMWA1000` is 8 chars, fits varchar(8)). The
+  rollover is itself a **latent legacy bug** (`1000→'100'` collides the next run's renban block with the
+  earlier `CMWA100x`) — faithfully reproduced for parity, carried as a POST-CUTOVER fix (widen the count
+  / alert+block at 999), tagged `# IG83-TODO:` in code + spec §12.7 (rollover-latent-bug carry).
+- **SHOULD-FIX 2 — partial-lot delete scope (`code.py` `parts_seen`).** The delete set was built from
+  the full loaded feed, so a part with `0 < qty < lotqty` (`lots=0`, emits no trailer row) had its
+  blank placeholder DELETED with no re-insert → silent order loss. The legacy commit loop iterates only
+  the EMITTED grid rows (`:417`/`fAvailableCount`=`:799`) and deletes by the emitted row's part
+  (`:506`), so a `lots=0` part is NEVER deleted. FIX: derive `parts_seen` from the emitted `rows`
+  (compute output), not `orders`. Verified live: a sub-lot part (qty 20 < lotqty 40) + a normal part →
+  after commit the sub-lot placeholder SURVIVES with qty 20 intact, the normal part is grouped.
+
+**Tests:** `test_renban_build.py` **35 PASS** (+7 rollover: next_count crosses 1000, persisted `'100'`,
+regression-guard that the old `% 1000` would give `'002'`, the 8-char renban numbers, sub-1000
+unchanged). `test_renban_e2e.py` **27 PASS** (+11: partial-lot survival incl. qty intact + normal-part
+grouped + counter-from-emitted-only; rollover persists `'100'` in the DB + the DB-side CMWA1000/1001
+renban numbers). **All regressions green** (order_file 53/34, forecast 43/35, edi_inbound 42/41,
+edi810 61/72, edi856 49/51, asn_fanout 34, create_asn_parity 10, seam 23/13, order_commit 16/6).
+**Spike restored as-found** (0 tagged rows/hist, CMWA 288, on-hand 13341 unchanged).
+
+---
