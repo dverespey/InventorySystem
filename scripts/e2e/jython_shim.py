@@ -339,10 +339,19 @@ class _DB(object):
     # type constants the wrappers pass to registerInParam (values irrelevant — shim inlines literals)
     INTEGER = "INTEGER"; VARCHAR = "VARCHAR"; BIT = "BIT"
 
-    def runPrepQuery(self, sql, args, db=None):
+    def runPrepQuery(self, sql, args, db=None, tx=None):
+        # Real 8.1+ API: runPrepQuery(query, args, [database], [tx]). Inside a live transaction, route
+        # the SELECT to THAT session's connection so it sees the tx's own uncommitted writes (e.g. the
+        # 856 driver reads the ASN header AFTER stamping the EIN on it in the same tx — an autocommit
+        # read on a separate connection would BLOCK on the uncommitted row lock and hang). Returns a
+        # PyDataset either way.
+        stmt = _bind(sql, args)
+        if isinstance(tx, _TxSession):
+            cols, rows = tx._batch(stmt, want_rows=True)
+            return _PyDataset(cols, rows)
         # Route to the named DB (VehicleOrder for AD_FRSPULL); defaults to Inventory for every other
         # caller. The Inventory autocommit path is byte-for-byte unchanged (db resolves to SQL_DB).
-        return _PyDataset(*_parse_rows(_run(_bind(sql, args), want_rows=True, db=_resolve_db(db))))
+        return _PyDataset(*_parse_rows(_run(stmt, want_rows=True, db=_resolve_db(db))))
 
     def runPrepUpdate(self, sql, args, db=None, getKey=False, tx=None):
         stmt = _bind(sql, args)
@@ -427,10 +436,50 @@ class _Util(object):
         return _Logger(name)
 
 
+class _File(object):
+    """Minimal stand-in for system.file (8.1+). The 856 driver writes the EDI-out file with
+    writeFile(path, text). Mirrors the gateway signature (path, data[, append]); data may be a str or
+    bytes. Test-harness only — the gateway provides the real system.file."""
+    def writeFile(self, path, data, append=False):
+        mode = "ab" if append else "wb"
+        if isinstance(data, bytes):
+            payload = data
+        else:
+            # the gateway writes the platform default; the 856 driver hands us a str of ASCII X12 with
+            # explicit \r\n. Encode ASCII (X12 is 7-bit) and DO NOT let open() translate newlines (wb).
+            payload = data.encode("ascii")
+        with open(path, mode) as fh:
+            fh.write(payload)
+
+    def readFileAsString(self, path, encoding="UTF-8"):
+        with open(path, "rb") as fh:
+            return fh.read().decode(encoding)
+
+
+class _Date(object):
+    """Minimal stand-in for system.date (8.1+). The 856 driver calls now() + format(d, 'HHmm') for the
+    one shared file timestamp. Java SimpleDateFormat patterns are translated to the strftime equivalents
+    the driver actually uses (HHmm). Test-harness only."""
+    import datetime as _dt
+
+    _PATTERN = {"HHmm": "%H%M", "yyyyMMdd": "%Y%m%d", "yyyy-MM-dd HH:mm:ss": "%Y-%m-%d %H:%M:%S"}
+
+    def now(self):
+        return self._dt.datetime.now()
+
+    def format(self, d, pattern):
+        py = self._PATTERN.get(pattern)
+        if py is None:
+            raise ValueError("jython_shim._Date.format: unmapped pattern %r" % (pattern,))
+        return d.strftime(py)
+
+
 class _System(object):
     def __init__(self):
         self.db = _DB()
         self.util = _Util()
+        self.file = _File()
+        self.date = _Date()
 
 
 def load_wrapper(name, code_path, extra_globals=None):

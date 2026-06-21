@@ -194,8 +194,11 @@ INSERT INTO dbo.INV_SITES
 )
 VALUES
 -- site 1: MAS / TMMMS (Tupelo MS)  -- placeholders pending legacy INI
+-- VC_EDI_MODE is the X12 ISA15 usage indicator: a SINGLE char 'P'(roduction)/'T'(est) (legacy
+-- Site.SiteEDIMode). It must be 1 char (EDI856Object.pas:161 emits it verbatim into the positional ISA);
+-- the earlier 'PROD' placeholder would emit a malformed 4-char ISA15. Seeded 'P'.
 ('Tupelo MS',     'MAS',  NULL, 'Tupelo',     'MS', 'US', NULL,
- '000000001',     'MAS', 'D01', 0, 'PROD',
+ '000000001',     'MAS', 'D01', 0, 'P',
  '~', '*', '>',
  'Toyota Motor Mfg Mississippi',  'TMMMS', '000000011', 999, 0,
  'CV',
@@ -205,7 +208,7 @@ VALUES
  NULL, '2026061900000000'),
 -- site 2: HERO / TMMTX (San Antonio TX)  -- placeholders pending legacy INI
 ('San Antonio TX','HERO', NULL, 'San Antonio','TX', 'US', NULL,
- '000000002',     'HERO','D01', 0, 'PROD',
+ '000000002',     'HERO','D01', 0, 'P',
  '~', '*', '>',
  'Toyota Motor Mfg Texas',        'TMMTX', '000000012', 999, 0,
  'CV',
