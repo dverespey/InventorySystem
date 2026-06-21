@@ -442,3 +442,104 @@ Branch `m1-asn-creation`.
   structure-parity to byte-parity.
 
 ---
+
+## M1 Rank-4 — outbound EDI 810 INVOICE builder (2026-06-20) ✅
+
+- **What:** new gateway code (NOT a wrap of the self-flipping `REPORT_EDI810`), byte-faithful to the
+  legacy 810 wire format (`EDI810Object.pas`, the LIVE `T810EDI`) with **clean/correct money** (David
+  locked) + **D6 window-aware pricing** + **Carry-5 in-place unsend**. Twin of the just-shipped 856.
+- **Where:**
+  - PURE builder `docs/analysis/edi/810/project-library/edi810/code.py` → `build_810(invoiceRows, site,
+    ein, fileTime)` returns the ordered segment list (CRLF-joined by the driver). 3 drivers in the same
+    module: `create_invoice` (daily invoicing), `recreate_invoice` (re-emit, EIN reused), `unsend_invoice`
+    (Carry-5 in-place). Each driver = ONE Inventory transaction + `.tmp`→rename-after-commit atomicity.
+  - Feed SQL `docs/analysis/edi/810/spike-edi810-feed.sql` — both REPORT_EDI810 branches (`@EIN=0` create
+    / `@EIN<>0` recreate), `CROSS APPLY fn_ManifestCostAt`, **side-effect-free (NO self-flip)**. Canonical
+    copy of the two inline `_*_FEED_SQL` strings; a drift guard in the e2e asserts byte-identity.
+  - Tests `scripts/e2e/test_edi810_build.py` (pure) + `scripts/e2e/test_edi810_e2e.py` (headless).
+- **Segment fidelity (vs `EDI810Object.pas`, the 856 lesson — expected bytes derived FROM the .pas):**
+  GS01=`IN` (856 uses `SH`); BIG02=SiteSupplierCode; IT101 `M391` if manifest starts `'7'` else `M390`;
+  IT1 ends on the dock code (the audit's "CLEAN — zero trailing seps" VERIFIED line-by-line — no `**`,
+  no trailing sep anywhere); interior REF=`MK`+PREVIOUS manifest / DTM=`050`+pickup, trailing REF=FINAL
+  manifest; dates off **NOW** (ISA09 yymmdd, GS04/BIG01 yyyymmdd) not the pickup date; EIN `%09d` in all
+  7 control positions; SE01/CTT01 COUNTED from the emitted segments.
+- **CLEAN MONEY (David locked — legacy bugs DELIBERATELY not reproduced):**
+  - TDS01 = `round(total*10000)` integer, implied-decimal scale-4. Legacy hand-rolled this WITH BUGS: a
+    1-digit fraction was NOT padded (`1234.5` → `12345`, an implied `1.2345` = **off by 10000×**) and a
+    whole-dollar total emitted a malformed string. The test asserts the CORRECT values (incl. `1234.5` →
+    `12345000`) AND that the off-by-10000 value (`22924` for the fixture total `2292.40`) is ABSENT.
+  - IT104 = a fixed scale-4 decimal (`12.5000`), locale-independent — NOT `FloatToStr` (locale separator
+    + variable fraction). Exact IT104 scale (4 vs trimmed) **flagged pending a golden 810**.
+- **EIN:** allocated per-site from `INV_SITES.IN_EIN_SEQ` at invoice-CREATE (the SAME shared sequence the
+  856 uses — faithful, interleaved control numbers), **reused** at recreate (no re-alloc, so the 997-ack
+  `UPDATE_EINStatus WHERE IN_INV_EIN=@EIN` still lands). NEVER the self-flip, NEVER `UPDATE_INVRecreate`.
+- **Carry-5 unsend (in-place):** reverts `INV_INV_MST.VC_INV_STATUS` to `'C'` (the unsent/recreate state)
+  + re-pools detail (`IN_INV_ID=null`), **keeping the header + EIN + audit**. NOT the legacy
+  `UPDATE_INVUnsend` HARD-DELETE (whose commented-out line shows the original intent was this status
+  revert).
+- **Tests:** `test_edi810_build.py` **61 PASS** (full byte-exact segment list vs the .pas derivation;
+  GS01/BIG02; M391/M390; IT1 clean/no-trailing-sep; %09d EIN ×7; SE01==actual ST..SE; CTT01==#IT1; dates
+  off NOW; CLEAN TDS incl. the 1-digit-fraction case + the legacy bug ABSENT; IT104 scale-4; empty-feed
+  guard; single-item edge; ISA truncation). `test_edi810_e2e.py` **53 PASS** (real drivers via the shim:
+  CREATE feed-row parity 3/3 vs the legacy `REPORT_EDI810 @EIN=0` SELECT on synthesized unbilled lines;
+  EIN 9200→9201 from `INV_SITES.IN_EIN_SEQ`; `INSERT_INVInfo` header status 'S'; detail linked
+  (`UPDATE_INVItems`); byte-exact file STRUCTURE + CLEAN money; RECREATE reuses the EIN, seq NOT bumped,
+  byte-identical wire; ATOMICITY — commit-fault rolls back the EIN bump + header + link AND leaves no
+  final 810 (only a swept `.tmp`); UNSEND in-place — header+EIN survive, detail re-pooled). Regressions
+  green: asn_fanout 34, create_asn_parity 10, edi856_build 49, edi856_e2e 51, seam_driver 23,
+  seam_driver_order 13, order_commit_integration 6.
+- **Honest verification (fixture-fidelity):** NO golden 810 → byte-for-byte TEMA parity UNPROVABLE and
+  NOT claimed. The spike `INV_SITES` holds PLACEHOLDER site identity (DUNS `000000001`, supplier `MAS`,
+  dock `D01`, EDI mode `P`), so ISA/GS/BIG BYTES reflect placeholders, not the TEMA wire. PROVEN: feed
+  STRUCTURE + parity vs the legacy SELECT + byte-exact STRUCTURE & self-consistency & CLEAN money on real
+  data. Pending cutover: real INV_SITES values + a golden 810 (→ true byte-parity) + the exact IT104
+  scale.
+- **Spike restored as-found:** sentinel ASNs/detail swept; driver-created invoices swept by the
+  test-owned EIN range (seeded 9200, above the snapshot max 9058); `INV_SITES.IN_EIN_SEQ` back to 0;
+  counts back to baseline (INV_INV_MST 2934, INV_ASN_MST 2550, detail 39707); idempotent across reruns.
+  Inventory_Live + VehicleOrder never written.
+- **GO/STAY impact:** the third M1 keystone (outbound 810) builds clean — the clean-money + D6-pricing +
+  in-place-unsend model holds on real data, no new blocker. Same two cutover open items as the 856 (real
+  site identity + a golden file), plus: confirm the exact IT104 scale against a golden 810.
+
+---
+
+## 2026-06-21 — 810 CREATE-path adversary fixes: per-pickup-date file split (FIX 1 done; FIX 2 STOP)
+
+Two CREATE-path divergences the sql-adversary found (`docs/analysis/edi/810/sql/adversary-findings-810.md`
+SHOULD-FIX 1/2). Byte-faithful (reproduce-the-legacy) stance.
+
+- **Legacy grouping CONFIRMED = per DISTINCT PickUpDate (NOT per-(date,line)).** `CreateINVOICEClick`
+  (`MainMenu.pas:2613-2654`) walks the `REPORT_EDI810 @EIN=0` cursor (ordered `BY VC_MANIFEST_NUMBER`);
+  each `EDI810.Execute` consumes one pickup-date run — the IT1 loop BREAKS only on a pickup-date change
+  (`EDI810Object.pas:263-266`, the manifest break at :268 is an *interior* REF/DTM, not a file break) —
+  then writes a SEPARATE file + allocates a NEW EIN (`SiteEIN+1`/`AD_UpdateEIN`) + `INSERT_INVInfo`. There
+  is NO line dimension: the `@EIN=0` feed returns **6 columns** (Manifest/Part/Price/Qty/PickUp/ASNid, NO
+  `LineName`) — verified in BOTH `CreateInventory.sql:3739-3745` (authoritative live dump) and
+  `/tmp/inv_utf8.sql:3739-3745`. So: **N distinct pickup dates → N invoices / N sequential EINs / N files.**
+- **FIX 1 DONE — `create_invoice` now splits per pickup date.** Reworked `code.py`: read the `@EIN=0` feed
+  once → `_group_by_pickup_date` → per group `_create_one_invoice` (its own EIN + `INSERT_INVInfo` header +
+  date-scoped detail link + `build_810` + `.tmp`→rename-after-commit), each its OWN transaction
+  (commit-per-invoice, like the legacy per-`Execute` `InsertINVInfo`). Detail link is **date-scoped**
+  (`UPDATE d … JOIN INV_ASN_MST a … WHERE d.IN_INV_ID IS NULL AND d.IN_ASN_ID=? AND a.VC_PRODUCTION_DATE=?`)
+  — a correctness-preserving tightening of the legacy per-ASN `UPDATE_INVItems` (`VC_PRODUCTION_DATE` lives
+  on the ASN header, one date per ASN, so the two coincide on real data). Return shape now
+  `{invoiceCount, invoices[…], eins[…], rowCount}`. Atomicity/no-self-flip/per-invoice-status preserved.
+- **FIX 2 STOP (escalated) — the create filename's `LineName` has NO source in the 810 create feed.**
+  `MainMenu.pas:2623` interpolates `EDI810DataSet.FieldByName('LineName')`, but `REPORT_EDI810 @EIN=0`
+  does NOT select a `LineName` column (proven above) and `EDI810DataSet` has no persistent field defs
+  (`DataModule.dfm:460-467`) — so in Delphi/ADO that `FieldByName` would raise `EDatabaseError`. By
+  contrast the **856** create feed DOES select `a.VC_LINE_NAME 'LineName'` (`CreateInventory.sql` REPORT_EDI856),
+  and the **810 recreate** filename (`ASNInvoice.pas:872`) carries NO `LineName` — which the rebuild's
+  `_filename_810` already matches. Cannot byte-faithfully add a `LineName` the create feed never produces;
+  left `_filename_810` as `810<mmdd>.txt` pending delphi-architect / source confirmation of the `LineName`
+  source (or a decision that the legacy create-with-LineName branch was dead/broken).
+- **Tests:** `test_edi810_build.py` **61 PASS** (pure builder unchanged). `test_edi810_e2e.py` **72 PASS**
+  (was 53; +new section (7) MULTI-DATE: 2 dates → 2 invoices / 2 distinct sequential EINs from
+  `IN_EIN_SEQ` / 2 files `8100610.txt`+`8100611.txt`, each carrying ONLY its date's IT1 + DTM, detail-link
+  date-scoped with NO cross-date leak; single-date still → exactly 1 invoice). Regressions green:
+  asn_fanout 34, create_asn_parity 10, edi856_build 49, edi856_e2e 51, seam_driver 23, seam_driver_order
+  13, order_commit_integration 6. Spike restored as-found (sentinel + test-EIN-range sweep; `IN_EIN_SEQ`
+  back to 0; `unbilled_A`=0).
+
+---
