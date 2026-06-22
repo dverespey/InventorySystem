@@ -65,6 +65,8 @@ Thumbs.db
 DB Schema/OrderSimulation*.xls
 DB Schema/*.bak
 DB Schema/DailyWorkLog*.csv
+DB Schema/AllLog.csv
+DB Schema/ReportLog.csv
 # Real TEMA EDI traffic (830/810/856/…) — never commit
 EDI/*.EDI
 EDIIn/*.EDI
@@ -81,6 +83,9 @@ scripts/e2e/.env
 scripts/e2e/artifacts/
 __pycache__/
 *.pyc
+# Jython build artifacts (headless POI render runs via the bundled jython; these are throwaway)
+.jython_cache/
+*$py.class
 
 # Local dev-sandbox bring-up script — carries the throwaway SQL Server sa cred
 scripts/spike-db.sh

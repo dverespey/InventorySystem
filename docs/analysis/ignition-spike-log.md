@@ -862,3 +862,46 @@ edi810 61/72, edi856 49/51, asn_fanout 34, create_asn_parity 10, seam 23/13, ord
 **Spike restored as-found** (0 tagged rows/hist, CMWA 288, on-hand 13341 unchanged).
 
 ---
+
+## M3 — server-side report-render harness + the 4 live reports (2026-06-21)
+
+**Built:** the reusable POI render engine (`docs/analysis/reporting/project-library/report_render/`
+`{code.py, report_defs.py, driver.py}`) + the **4 reports that actually ran in a year** (data-driven
+prune — 18 of 22 never ran): `daily_shipping_assy` (R3, faithful), `invoice_summary` (R9, D6 corrected
+default + faithful behind the seam), `forecast_detail` (R18, faithful), `lot_location` (R12, faithful).
+One `.sql` per proc in `docs/analysis/reporting/sql/`; SKIP-list of the 18 dead reports in
+`report_defs.py::SKIP_REPORTS` + `m3-render-architecture.md §10.1`.
+
+**GO-relevant finding — POI render is HEADLESS-runnable on 8.1.52.** The render mechanism the architect
+bet on (Apache POI XSSF Jython lib, §1.2) is **proven end-to-end headless** using the gateway's bundled
+JRE + `jython-ia-2.7.3.3` + `poi-4.1.2` (no system Java, no running gateway):
+`lib/runtime/jre-mac/bin/java -Dpython.path=user-lib/pylib -cp jython-ia.jar:lib/core/common/*
+org.python.util.jython -S <script>`. This is the exact code path that runs on the gateway; the e2e reads
+the `.xlsx` back with openpyxl. Strengthens GO: the entire report surface (data + XLSX numbers gate) is
+build/test-able on the 8.1.52 spike with no Designer and no PDF/print dependency (PDF is the only
+8.3-specific, non-gating surface).
+
+**Lot Location confirmed LIVE (not the D9 NUMMI twin):** the live `LotLocationClick` calls
+`REPORT_PLANTLotLocation[W]` (PLANT procs); `REPORT_NUMMILotLocation[W]` is the deprecated twin and is
+NOT referenced. → BUILD, not SKIP.
+
+**INVOICE Summary D6 (billing):** ships the window-aware corrected query (`fn_ManifestCostAt`, consistent
+with locked 810/856 D6) as default; window-blind legacy behind the `QUERY_VARIANT` seam. Divergence proven
+NON-VACUOUSLY (inject a 2nd gap window → legacy 34→42 over-bill, corrected stays 34; revert FAILS).
+
+**Tests:** `scripts/e2e/test_m3_reports.py` **48 PASS / 0 FAIL** — Layer 1 numbers parity (every
+expectation from the legacy proc / an independent truth query, never the rebuild), Layer 2 real-POI render
+read back with openpyxl, output-stage (legacy `yyyymmddhhmmss00` filename + `.xlsx` + tmp-then-rename) +
+revert non-vacuity. HONEST: numbers faithful to legacy procs on live data; the `.xls` template chrome
+(borders/page-breaks/fonts) is NOT reproduced — same cells, not the template. **Regressions green**
+(renban 35/27, order_file 53/34, forecast 43/35, edi_inbound 42/41, edi810 61/72, edi856 49/51,
+asn_fanout 34, create_asn_parity 10, seam 23/13, order_commit 16/6). **Spike restored as-found**
+(yard-status 0, no injected windows, no temp procs).
+
+**Flagged (NOT M3): `test_report_procs_d6.py` is 9/2 on this spike** — pre-existing + independent: a
+filtered unique index later added to `INV_ASN_MST` (`UX_INV_ASN_MST_LINE_PDATE_NORMAL`) needs
+`QUOTED_IDENTIFIER ON` (Msg 1934), but that test's sqlcmd uses the `-Q` default OFF, so its EDI856 seed
+INSERT silently fails → its fan-out check was vacuously green. Fixing the SET options un-masks a real
+`legacy=2` vs `migrated=1` divergence in `REPORT_EDI856_D6`'s forecast fan-out. → for D6/sql-adversary.
+
+---
