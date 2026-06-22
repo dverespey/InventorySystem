@@ -1,5 +1,10 @@
 # M3 Report Usage — PRUNE LIST (rebuild vs skip)
 
+> **SUPERSEDED (2026-06-22):** the conservative "DECIDE most reports" verdict below was based on the 1-day
+> `DailyWorkLog.csv`. It is superseded by David's full 1-year exports (`ReportLog.csv` = REPORT trans;
+> `AllLog.csv` = all trans), which showed only **4 of 22 reports ran in a year** (18 never, 3 once) → M3
+> rebuilt exactly those 4.
+
 **Phase:** M3 source-truth (2026-06-21) **Analyst:** Claude (SQL-semantics) **Scope:** decide which of
 the 22 reports (R1–R22) + 8 Excel companions (C1–C8) in `m3-report-inventory.md` to REBUILD vs SKIP,
 driven by *actual usage signal* — David's directive: "most of the 22 reports are NOT in use; prune the
