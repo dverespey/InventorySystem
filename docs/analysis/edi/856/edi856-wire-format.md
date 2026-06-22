@@ -64,9 +64,25 @@ by counting actual emitted segments — never copy a magic offset.
 
 ## File output
 - Dir = `[DIRECTORIES] EDIOut` (the log's `X:\EDIOut\` is that INI value). → gateway-side file I/O, path from `sites`/gateway config.
-- Filename CREATE (`ASNSelect:457`): `856<copy(ProductionDate,4,5)>.txt` (chars 4-8 = lastYearDigit+mmdd, 5 chars).
-- Filename RECREATE (`ASNInvoice:817`): `856<copy(PickupDate,5,4)>.txt` (mmdd) — **different offset = latent
-  inconsistency**; hot-call (`StartSeq='-1'`) → `8HC<copy(PickupDate,4,5)>1.txt`. Rebuild: pick ONE deterministic pattern.
+- **Decision E (REVISED — anchored on the OPERATIONAL SENDER, not the recreate button).** The rebuild reproduces
+  `MainMenu.ResendMarkedEDIsClick` (`MainMenu.pas:2691-2771`), the live daily C→S-flip send path — NOT the
+  `ASNInvoice` recreate button the build was originally anchored on (a different code path with a latently-
+  inconsistent offset). The earlier decision E was WRONG for both branches: it dropped `LineName` AND used the
+  recreate offset. The canonical operational-sender patterns:
+  - **NORMAL** (`VC_START_SEQ_NUMBER <> '-1'`, `MainMenu.pas:2718`):
+    `856 + copy(PickupDate,5,4) + LineName + .txt` = `856` + `prodDate[4:8]` (MMDD, 4 chars) + `LineName` + `.txt`.
+    e.g. `20260618`/COROLLA → `8560618COROLLA.txt`.
+  - **HOT-CALL** (`VC_START_SEQ_NUMBER = '-1'`, `MainMenu.pas:2722-2724`):
+    `8HC + copy(PickupDate,4,5) + IntToStr(y) + LineName + .txt` = `8HC` + `prodDate[3:8]` (year-digit+MMDD,
+    5 chars) + `y` + `LineName` + `.txt`. e.g. `20260618`/y=1/COROLLA → `8HC606181COROLLA.txt`.
+  - **Note the deliberate legacy asymmetry**: NORMAL uses `[4:8]` (MMDD); HOT-CALL uses `[3:8]` (year+MMDD).
+    Preserve it verbatim. `y` is a per-send-batch counter (init 1 `:2702`, `INC` only in the hot-call branch
+    `:2724`); the rebuild sends per-ASN, so the driver derives a deterministic, collision-free per-ASN
+    equivalent (`1 + count of same-day same-line hot-call ASNs already flipped to 'S'`). Single hot-call/day → 1.
+    **The exact `y` RANGE is golden-pending (P13 cutover check)** — byte-faithful to the source pattern, range
+    unverified until a golden `8HC` file exists.
+  - (For reference, the recreate button `ASNInvoice:817-825` used `856<copy(PickupDate,5,4)>.txt` (no LineName)
+    and `8HC<copy(PickupDate,4,5)>1.txt` (literal '1', no LineName) — NOT the operational pattern; do not port it.)
 
 ## Hardcoded / multi-site hazards
 1. **No segment terminator emitted** (CRLF only). 2. **TD3 trailer id literal `1234567890`**. 3. Order HL02

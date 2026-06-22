@@ -22,7 +22,9 @@ NON-VACUOUS COVERAGE (synthetic header + multi-manifest/multi-item detail):
     terminator and the join is clean.
   * the HL parent chain: S(id1,no parent) -> O(id,parent '1') -> I(id,parent=order id).
   * trailerId default '1234567890' AND a parameterized override.
-  * the filename pattern (decision E): 856 + copy(prodDate,4,5) + .txt.
+  * the NORMAL filename pattern (operational sender MainMenu.pas:2718): 856 + copy(prodDate,5,4)=MMDD +
+    LineName + .txt — re-derived from the OPERATIONAL sender (NOT the recreate button); the new assertion
+    that was previously missing, with non-vacuity that the old (recreate-anchored) name now fails.
   * edge: single manifest / single item (minimal envelope) counts still self-consistent.
 
 Run:  python3 scripts/e2e/test_edi856_build.py     (no DB, no env needed)
@@ -283,12 +285,33 @@ def main():
     td3b = next(s for s in segs2 if s.startswith("TD3*"))
     rep.check("parameterized trailer id overrides the literal", td3b == "TD3*TL**9998887770", td3b)
 
-    # --- filename pattern (decision E) ----------------------------------------------------------
-    print("\n--- filename (decision E: CREATE pattern 856 + copy(prodDate,4,5) + .txt) ---")
-    fn = edi856._filename_856(PDATE)
-    rep.check("filename '20260618' -> '85660618.txt' (856 + '60618')", fn == "85660618.txt", fn)
-    rep.check("filename for 20271225 -> '85671225.txt' (1-digit year)",
-              edi856._filename_856("20271225") == "85671225.txt", edi856._filename_856("20271225"))
+    # --- filename pattern (NORMAL — operational sender MainMenu.pas:2718) ------------------------
+    # NEW ASSERTION (was MISSING): the shipped normal filename was never checked against the OPERATIONAL
+    # sender. The operational pattern is '856' + copy(PickupDate,5,4)=MMDD + LineName + '.txt' — it
+    # INCLUDES LineName and uses the [4:8] (MMDD) offset, NOT [3:8]. The prior build (recreate-anchored)
+    # emitted '856'+[3:8]+no-LineName -> wrong on BOTH the offset and the missing LineName.
+    print("\n--- filename NORMAL (operational sender MainMenu.pas:2718: 856 + MMDD + LineName + .txt) ---")
+    # EXPECTED is hand-derived from MainMenu.pas:2718, independent of the rebuild's _filename_856:
+    #   '856' + copy('20260618',5,4)='0618' + 'COROLLA' + '.txt' = '8560618COROLLA.txt'.
+    LINE = "COROLLA"
+    fn = edi856._filename_856(PDATE, LINE, "0001")          # a real seq -> normal branch
+    rep.check("NORMAL '20260618'/COROLLA -> '8560618COROLLA.txt' (856 + MMDD '0618' + LineName)",
+              fn == "8560618COROLLA.txt", fn)
+    rep.check("NORMAL '20271225'/SIENNA -> '8561225SIENNA.txt' (MMDD '1225' + LineName)",
+              edi856._filename_856("20271225", "SIENNA", "0001") == "8561225SIENNA.txt",
+              edi856._filename_856("20271225", "SIENNA", "0001"))
+    rep.check("NORMAL filename INCLUDES the LineName (the omitted-LineName bug is fixed)",
+              LINE in fn, fn)
+
+    # --- NON-VACUITY: the OLD (recreate-anchored) normal pattern — '856'+[3:8]+no-LineName — now FAILS.
+    # The shipped filename (PR #29) was '856' + prodDate[3:8] + '.txt' = '85660618.txt'. Prove the NEW
+    # assertion can catch that wrong rebuild (so the green above is meaningful, not vacuous).
+    print("\n--- non-vacuity: the old '856'+[3:8]+no-LineName ('85660618.txt') is now WRONG ---")
+    oldWrong = "856" + PDATE[3:8] + ".txt"                   # '85660618.txt' — the shipped (wrong) name
+    rep.check("the rebuild NO LONGER emits the old '85660618.txt' (wrong offset + no LineName)",
+              fn != oldWrong, "new=%s old(wrong)=%s" % (fn, oldWrong))
+    rep.check("old wrong name lacks the LineName AND uses the [3:8] offset — both now fixed",
+              "COROLLA" not in oldWrong and oldWrong == "85660618.txt", oldWrong)
 
     # ============================================================================================
     # EDGE: single manifest / single item — the minimal envelope, counts still self-consistent.
