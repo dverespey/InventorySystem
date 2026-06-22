@@ -5,12 +5,5 @@
   "overridable": true,
   "files": [
     "view.json"
-  ],
-  "attributes": {
-    "lastModification": {
-      "actor": "external",
-      "timestamp": "2026-06-20T00:00:43Z"
-    },
-    "lastModificationSignature": "0d6e1a1607c522c889c9efc91ae23788230c7b7af10aba3acbdac5667d210884"
-  }
+  ]
 }
