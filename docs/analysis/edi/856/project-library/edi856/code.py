@@ -35,7 +35,9 @@
 #      though the 856 never carries a price) — feed SQL.
 #   D  emit CRLF ONLY (NO '~' segment terminator) — the driver joins with "\r\n"; the segment terminator
 #      VC_SEP_SEGMENT is READ into the site dict but NEVER emitted (legacy Trap 1 / EDI856Object.pas:13).
-#   E  filename = the CREATE pattern  856<copy(prodDate,4,5)>.txt  — _filename_856() below.
+#   E  filename = the OPERATIONAL-SENDER pattern (MainMenu.pas:2718/2723, the C->S-flip send path; NOT the
+#      recreate button). NORMAL: 856 + copy(prodDate,5,4)=MMDD + LineName + .txt. HOT-CALL (seq='-1'):
+#      8HC + copy(prodDate,4,5)=Y+MMDD + IntToStr(y) + LineName + .txt. See _filename_856() below.
 #   EIN  allocated per-site from INV_SITES.IN_EIN_SEQ AT SEND (atomic), %09d in ISA13/GS06/ST02/SE02/
 #        GE02/IEA02, BSN02 = yyyymmdd + %09d.  NOT the 6440 literal; NOT EIN-at-create.
 #   Status flip  per-ASN C->S at send, DECOUPLED — NEVER REPORT_EDI856's self-flip, NEVER the blanket
@@ -277,17 +279,55 @@ def build_856(header, detailRows, site, ein, fileTime, trailerId="1234567890"):
     return segs
 
 
-def _filename_856(prodDate):
-    """Decision E — the CREATE filename pattern (ASNSelect.pas:457):
-        856 + copy(ProductionDate,4,5) + '.txt'
-    Pascal copy(s,4,5) is 1-based -> chars 4..8 of 'yyyymmdd' = last-year-digit + MM + DD (5 chars).
-    '20260618' -> '60618' -> '85660618.txt'? No: '856' + '60618' = '85660618.txt'. (The RECREATE
-    variant ASNInvoice.pas:817 uses copy(PickupDate,5,4) = MM+DD = a DIFFERENT offset; the build spec
-    locks the CREATE pattern as the ONE deterministic choice — decision E.)"""
+def _filename_856(prodDate, lineName, startSeq=None, counter=1):
+    """The 856 output filename. TWO branches, keyed on the hot-call sentinel — reproduced from the
+    OPERATIONAL SENDER (MainMenu.ResendMarkedEDIsClick, the C->S-flip send path), NOT the recreate button.
+
+    The operational sender is the live daily path: it builds the 856 for every queued ASN and flips it
+    C->S. The earlier build was anchored on the ASNInvoice recreate button (a different code path with a
+    DIFFERENT, latently-inconsistent offset) — that was WRONG for both branches: both omitted LineName,
+    and the normal branch used the wrong date offset. The canonical patterns are MainMenu.pas:
+
+        if Data_Module.EDI856DataSet.FieldByName('StartSeq').AsString <> '-1' then      // NORMAL ASN
+            AssignFile(fcf, ...+'\856'+copy(EDI856.PickupDate,5,4)+EDI856.LineName+'.txt');  // :2718
+        else                                                                            // HOT-CALL ASN
+            AssignFile(fcf, ...+'\8HC'+copy(EDI856.PickupDate,4,5)+IntToStr(y)+EDI856.LineName+'.txt'); // :2723
+            INC(y);                                                                      // :2724
+
+    NORMAL (startSeq != '-1', MainMenu.pas:2718):
+        '856' + copy(PickupDate,5,4) + LineName + '.txt'.
+        Pascal copy(s,5,4) is 1-based -> chars 5..8 of 'yyyymmdd' = MM + DD (4 chars) = prodDate[4:8]
+        0-based. '20260618' / 'COROLLA' -> '856' + '0618' + 'COROLLA' + '.txt' = '8560618COROLLA.txt'.
+
+    HOT-CALL (startSeq == '-1', the VC_START_SEQ_NUMBER='-1' sentinel HotCallEntry stamps,
+        HotCallEntry.pas:238-243; MainMenu.pas:2722-2724):
+        '8HC' + copy(PickupDate,4,5) + IntToStr(y) + LineName + '.txt'.
+        copy(PickupDate,4,5) = prodDate[3:8] (last-year-digit + MM + DD, 5 chars) — a DIFFERENT offset
+        from the normal branch (preserve this legacy asymmetry: normal [4:8]=MMDD; hot-call [3:8]=Y+MMDD).
+        IntToStr(y) is the per-send-batch hot-call counter, NOT a literal '1': y init 1 (:2702), INC only
+        in the hot-call branch (:2724). '20260618' / y=1 / 'COROLLA' -> '8HC' + '60618' + '1' + 'COROLLA'
+        + '.txt' = '8HC606181COROLLA.txt'.
+
+    BYTE-FAITHFUL (P13): TEMA's dispatcher may key on the '8HC' prefix to route hot-calls, so the exact
+    pattern matters. A hot-call ASN MUST produce '8HC...<counter><LineName>.txt'; a normal ASN MUST
+    produce '856<MMDD><LineName>.txt'.
+
+    lineName : the ASN header's VC_LINE_NAME (str) — appended to BOTH branches (legacy EDI856.LineName).
+    startSeq : the ASN header's VC_START_SEQ_NUMBER (str). '-1' -> hot-call branch; anything else (incl.
+        None, for back-compat with callers that only build normal ASNs) -> the normal '856' pattern.
+    counter  : the hot-call y-equivalent (1-based). Only used in the hot-call branch. The legacy y is a
+        per-SEND-BATCH counter (Nth hot-call file in one ResendMarkedEDIs run); the rebuild sends per-ASN,
+        so the driver derives a deterministic, collision-free per-ASN equivalent (see send_856). The exact
+        y RANGE is golden-pending (P13 cutover check) — byte-faithful per source, range unverified."""
     prodDate = str(prodDate)
+    lineName = "" if lineName is None else str(lineName)
     if len(prodDate) != 8:
         raise Edi856BuildError("edi856: production date must be yyyymmdd, got %r" % (prodDate,))
-    return "856" + prodDate[3:8] + ".txt"   # copy(s,4,5) = [3:8] 0-based
+    if startSeq is not None and str(startSeq) == "-1":
+        # HOT-CALL — MainMenu.pas:2723: '8HC' + copy(pd,4,5) + IntToStr(y) + LineName + '.txt'
+        return "8HC" + prodDate[3:8] + str(int(counter)) + lineName + ".txt"
+    # NORMAL — MainMenu.pas:2718: '856' + copy(pd,5,4) + LineName + '.txt'
+    return "856" + prodDate[4:8] + lineName + ".txt"   # copy(s,5,4) = [4:8] 0-based = MMDD
 
 
 def _cleanup_tmp(tmpPath):
@@ -451,11 +491,21 @@ def send_856(asnId, site, database=None, outDir=None, trailerId="1234567890", fi
         # ON the tx (runPrepQuery's tx arg, 8.1+) — an autocommit read on a separate connection would
         # block on the uncommitted row lock and hang. Routing through the tx also makes them read-
         # consistent with the in-flight EIN stamp.
+        # Also read VC_START_SEQ_NUMBER — the hot-call sentinel ('-1') that picks the 8HC filename branch
+        # (P13, the operational sender MainMenu.pas:2715/2722) — and VC_LINE_NAME, which the operational
+        # sender appends to BOTH filename branches (EDI856.LineName, MainMenu.pas:2718/2723). A normal ASN
+        # carries a real seq; a hot-call carries '-1'.
         prodRows = system.db.runPrepQuery(
-            "SELECT VC_PRODUCTION_DATE FROM INV_ASN_MST WHERE IN_ASN_ID = ?", [int(asnId)], db, tx)
+            "SELECT VC_PRODUCTION_DATE, VC_START_SEQ_NUMBER, VC_LINE_NAME "
+            "FROM INV_ASN_MST WHERE IN_ASN_ID = ?",
+            [int(asnId)], db, tx)
         if not len(prodRows):
             raise Edi856BuildError("send_856: ASN %r not found" % (asnId,))
         prodDate = str(prodRows[0]["VC_PRODUCTION_DATE"])
+        startSeq = prodRows[0]["VC_START_SEQ_NUMBER"]
+        startSeq = None if startSeq is None else str(startSeq).strip()
+        lineName = prodRows[0]["VC_LINE_NAME"]
+        lineName = "" if lineName is None else str(lineName)
 
         feedDs = system.db.runPrepQuery(_FEED_SQL, [int(asnId)], db, tx)
         detailRows = [{
@@ -478,7 +528,28 @@ def send_856(asnId, site, database=None, outDir=None, trailerId="1234567890", fi
         # decision D — join with CRLF only; NO segment terminator. A trailing CRLF after the last
         # segment matches the legacy Writeln (every line, incl. the last, gets a CRLF).
         text = "\r\n".join(segments) + "\r\n"
-        filename = _filename_856(prodDate)
+        # P13: hot-call ASNs (VC_START_SEQ_NUMBER='-1') -> '8HC<Y+MMDD><counter><LineName>.txt'; normal ->
+        # '856<MMDD><LineName>.txt' (operational sender MainMenu.pas:2718/2723).
+        #
+        # The hot-call COUNTER (the deterministic y-equivalent). Legacy y is a per-SEND-BATCH counter:
+        # init 1 before the ResendMarkedEDIs loop, INC only in the hot-call branch — so the Nth hot-call
+        # file emitted in ONE batch run gets y=N (MainMenu.pas:2702/2724). The rebuild sends per-ASN (not
+        # per-batch), so we reproduce "the Nth hot-call of the day for this line" deterministically:
+        # counter = 1 + (count of same-day, same-line hot-call ASNs ALREADY flipped to 'S'). This ASN is
+        # still 'C' at this point (the flip is step 6), so it is excluded from the count; the first hot-call
+        # of the day -> counter 1 (matches legacy single-send y=1), a second -> counter 2 (no collision).
+        # Read ON the tx so it is read-consistent with the in-flight flip(s).
+        # GOLDEN-PENDING (P13 cutover check): byte-faithful to the source pattern, but the exact y RANGE
+        # legacy actually produced (vs send order / multi-batch days) is unverified until a golden 8HC file
+        # exists. The pattern + the no-collision property hold; the precise counter VALUE is the open check.
+        counter = 1
+        if startSeq == "-1":
+            counter = 1 + int(system.db.runScalarPrepQuery(
+                "SELECT COUNT(*) FROM INV_ASN_MST "
+                "WHERE VC_START_SEQ_NUMBER = '-1' AND VC_ASN_STATUS = 'S' "
+                "AND VC_LINE_NAME = ? AND VC_PRODUCTION_DATE = ? AND IN_ASN_ID <> ?",
+                [lineName, prodDate, int(asnId)], db, tx))
+        filename = _filename_856(prodDate, lineName, startSeq, counter)
 
         # --- 5. write the file to a .tmp (NOT the final name) — temp-then-rename atomicity --------
         # ATOMICITY (adversary blocker): the FINAL 856 file must NOT exist unless the DB committed. If

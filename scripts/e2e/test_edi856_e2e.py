@@ -351,8 +351,13 @@ def main():
                   next(s for s in segs if s.startswith("TD1*")))
         rep.check("every LIN ends with the trailing element separator (.pas:352)",
                   all(s.endswith("*") for s in lins), "%d LINs all trailing-sep" % len(lins))
-        rep.check("filename == decision-E pattern '85660618.txt'",
-                  result["filename"] == "85660618.txt", result["filename"])
+        # NORMAL filename — operational sender MainMenu.pas:2718: '856' + copy(pd,5,4)=MMDD + LineName +
+        # '.txt'. The copied ASN is on TEST_LINE -> '856' + '0618' + 'ZZ856E2E' + '.txt'.
+        expectedNorm = "856" + PDATE[4:8] + TEST_LINE + ".txt"      # '8560618ZZ856E2E.txt'
+        rep.check("filename == operational NORMAL pattern '%s' (856 + MMDD + LineName)" % expectedNorm,
+                  result["filename"] == expectedNorm, result["filename"])
+        rep.check("the NORMAL filename INCLUDES the line name (the omitted-LineName bug is fixed)",
+                  TEST_LINE in result["filename"], result["filename"])
 
         # --- 6. DECOUPLED PER-ASN FLIP ---------------------------------------------------------
         print("\n--- (4) the C->S flip is PER-ASN, decoupled (NOT the blanket UPDATE_ASNStatus) ---")
@@ -535,7 +540,8 @@ def main():
                       wroteTmp["path"] is not None and wroteTmp["path"].endswith(".tmp"),
                       "wrote=%r" % wroteTmp["path"])
             files = sorted(os.listdir(atomdir))
-            finalName = edi856._filename_856(PDATE)             # '85660618.txt'
+            # the probe ASN is normal (seq '0001') on PROBE_LINE -> '856' + MMDD + PROBE_LINE + '.txt'.
+            finalName = edi856._filename_856(PDATE, PROBE_LINE, "0001")   # '8560618ZZ856PRB.txt'
             rep.check("NO final 856 file exists after the rolled-back send (atomicity)",
                       finalName not in files, "dir=%r" % files)
             rep.check("the orphan .tmp was cleaned up too (the .tmp that WAS written is now gone)",
