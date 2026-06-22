@@ -34,7 +34,11 @@ def sqlq(query):
     out = subprocess.check_output([
         "docker", "exec", CONTAINER, "/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "localhost",
         "-U", "sa", "-P", SA_PASS, "-d", DB, "-h", "-1", "-W", "-s", "\t",
-        "-Q", "SET NOCOUNT ON; " + query], text=True)
+        # SET QUOTED_IDENTIFIER ON is REQUIRED: INV_ASN_MST carries a FILTERED unique index
+        # (UX_INV_ASN_MST_LINE_PDATE_NORMAL, filter [VC_START_SEQ_NUMBER]<>'-1'). sqlcmd defaults to
+        # QUOTED_IDENTIFIER OFF, under which any DML against a filtered-index table fails with Msg 1934.
+        # Without this the 856 seed INSERT (line ~144) failed silently and asnId corrupted to "INSERT".
+        "-Q", "SET NOCOUNT ON; SET QUOTED_IDENTIFIER ON; " + query], text=True)
     return [l.split("\t") for l in out.splitlines()
             if l.strip() and not l.startswith("(") and not l.startswith("Msg ")]
 
@@ -45,10 +49,18 @@ def scalar(query):
 
 
 def deploy_d6_copies():
-    """Derive _D6-suffixed copies of the migrated procs and deploy them alongside the legacy procs."""
+    """Derive _D6-suffixed copies of the migrated procs and deploy them alongside the legacy procs.
+
+    The procs are CREATEd under SET QUOTED_IDENTIFIER ON: a proc captures its QI setting at CREATE time
+    and applies it at EXEC time. sqlcmd -i defaults to QI OFF, which would bake QI=OFF into the _D6 procs
+    and make them FAIL at EXEC with Msg 1934 the moment they touch the filtered-index INV_ASN_MST table
+    (the legacy procs were created QI ON in production, so they work — the divergence would be a TEST
+    artifact, not a proc defect). Prepend the SET so every CREATE PROCEDURE batch captures QI=ON.
+    """
     src = open(MIGRATION_SQL).read()
     for p in PROCS:
         src = re.sub(r'\b' + p + r'\b', p + "_D6", src)
+    src = "SET QUOTED_IDENTIFIER ON;\nGO\n" + src
     tmp = "/tmp/report_d6.sql"
     open("/tmp/_report_d6_local.sql", "w").write(src)
     subprocess.check_call(["docker", "cp", "/tmp/_report_d6_local.sql", "%s:%s" % (CONTAINER, tmp)])
@@ -137,34 +149,50 @@ def main():
         # collapses) + a covering manifest window. EDI856 @EIN=0 must return 2 rows (one per kanban), and
         # legacy == migrated (EDI856 @EIN=0 was ALREADY windowed -> the JOIN->TVF swap is a faithful no-op).
         P8, EIN8, ST = "ZZ856PART", 99999, "2026061512000000"
-        sqlq("DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ASSY_PART_NUMBER_CODE='%s'; "
-             "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ASSY_PART_NUMBER_CODE='%s'; "
-             "DELETE FROM INV_ASN_DETAIL_MST WHERE VC_ASSY_PART_NUMBER='%s'; "
-             "DELETE FROM INV_ASN_MST WHERE IN_ASN_EIN=%d" % (P8, P8, P8, EIN8))
+
+        def sweep_856_fixtures():
+            # Robust teardown keyed on the STABLE fixture markers (the ZZ856* part code + the EIN8 ASN),
+            # NOT on asnId — so it always sweeps even if the seed INSERT failed and asnId is garbage. The
+            # detail delete is by part code (independent of asnId), the ASN delete by IN_ASN_EIN.
+            sqlq("DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ASSY_PART_NUMBER_CODE LIKE 'ZZ856%%'; "
+                 "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ASSY_PART_NUMBER_CODE LIKE 'ZZ856%%'; "
+                 "DELETE FROM INV_ASN_DETAIL_MST WHERE VC_ASSY_PART_NUMBER LIKE 'ZZ856%%'; "
+                 "DELETE FROM INV_ASN_DETAIL_MST WHERE IN_ASN_EIN=%d; "
+                 "DELETE FROM INV_ASN_MST WHERE IN_ASN_EIN=%d" % (EIN8, EIN8))
+
+        sweep_856_fixtures()  # pre-clean: a prior aborted run cannot leak into this one
         asnId = scalar("INSERT INTO INV_ASN_MST (IN_ASN_EIN,VC_ASN_STATUS,VC_LINE_NAME,VC_ASSEMBLY_LINE,"
                        "VC_START_SEQ_NUMBER,VC_END_SEQ_NUMBER,IN_QTY,VC_PRODUCTION_DATE,VC_LAST_UPDATE,VC_ADD) "
                        "OUTPUT INSERTED.IN_ASN_ID VALUES (%d,'C','ZZ856LINE','Z','0001','0002',1,'20260615','%s','%s')"
                        % (EIN8, ST, ST))
-        sqlq("INSERT INTO INV_ASN_DETAIL_MST (IN_ASN_ID,IN_ASN_EIN,VC_MANIFEST_NUMBER,VC_ASSY_PART_NUMBER,IN_QTY,VC_LAST_UPDATE) "
-             "VALUES (%s,%d,'Z9','%s',10,'%s')" % (asnId, EIN8, P8, ST))
-        for k in ("K1", "K2"):
-            sqlq("INSERT INTO INV_FORECAST_DETAIL_INF (VC_ASSY_PART_NUMBER_CODE,VC_EFFECTIVE_MONTH,"
-                 "VC_TIRE_PART_NUMBER_CODE,VC_WHEEL_PART_NUMBER_CODE,VC_BROADCAST_CODE,VC_ASSY_KANBAN_NUMBER) "
-                 "VALUES ('%s','202606','T','W','BC','%s')" % (P8, k))
-        sqlq("INSERT INTO INV_MANIFEST_COST_MST (VC_ASSY_PART_NUMBER_CODE,VC_ASSY_MANIFEST_NUMBER,"
-             "VC_START_MANIFEST,VC_END_MANIFEST,MO_PRICE) VALUES ('%s','Z9','20250101','20281231',100)" % P8)
+        # GUARD: under a broken QI the seed INSERT silently fails and asnId is non-numeric ("INSERT").
+        # Fail LOUDLY rather than run the 856 asserts non-functionally + leak fixtures.
         try:
-            leg856 = len(sqlq("EXEC REPORT_EDI856 @EIN=0"))
-            mig856 = len(sqlq("EXEC REPORT_EDI856_D6 @EIN=0"))
-            rep.check("EDI856 @EIN=0 exercises forecast fan-out + GROUP BY (2 kanbans -> 2 rows)",
-                      mig856 == 2, "migrated rows=%d" % mig856)
-            rep.check("EDI856 @EIN=0 parity: legacy == migrated (windowed JOIN -> TVF faithful)",
-                      leg856 == mig856, "legacy=%d migrated=%d" % (leg856, mig856))
-        finally:
-            sqlq("DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ASSY_PART_NUMBER_CODE='%s'; "
-                 "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ASSY_PART_NUMBER_CODE='%s'; "
-                 "DELETE FROM INV_ASN_DETAIL_MST WHERE IN_ASN_ID=%s; "
-                 "DELETE FROM INV_ASN_MST WHERE IN_ASN_EIN=%d" % (P8, P8, asnId, EIN8))
+            asnId_i = int(asnId)
+        except (TypeError, ValueError):
+            asnId_i = None
+        if asnId_i is None:
+            rep.check("EDI856 seed INSERT succeeded (numeric IN_ASN_ID — QI ON, filtered index OK)",
+                      False, "asnId=%r (filtered-index INSERT failed; check SET QUOTED_IDENTIFIER ON)" % (asnId,))
+            sweep_856_fixtures()
+        else:
+            sqlq("INSERT INTO INV_ASN_DETAIL_MST (IN_ASN_ID,IN_ASN_EIN,VC_MANIFEST_NUMBER,VC_ASSY_PART_NUMBER,IN_QTY,VC_LAST_UPDATE) "
+                 "VALUES (%d,%d,'Z9','%s',10,'%s')" % (asnId_i, EIN8, P8, ST))
+            for k in ("K1", "K2"):
+                sqlq("INSERT INTO INV_FORECAST_DETAIL_INF (VC_ASSY_PART_NUMBER_CODE,VC_EFFECTIVE_MONTH,"
+                     "VC_TIRE_PART_NUMBER_CODE,VC_WHEEL_PART_NUMBER_CODE,VC_BROADCAST_CODE,VC_ASSY_KANBAN_NUMBER) "
+                     "VALUES ('%s','202606','T','W','BC','%s')" % (P8, k))
+            sqlq("INSERT INTO INV_MANIFEST_COST_MST (VC_ASSY_PART_NUMBER_CODE,VC_ASSY_MANIFEST_NUMBER,"
+                 "VC_START_MANIFEST,VC_END_MANIFEST,MO_PRICE) VALUES ('%s','Z9','20250101','20281231',100)" % P8)
+            try:
+                leg856 = len(sqlq("EXEC REPORT_EDI856 @EIN=0"))
+                mig856 = len(sqlq("EXEC REPORT_EDI856_D6 @EIN=0"))
+                rep.check("EDI856 @EIN=0 exercises forecast fan-out + GROUP BY (2 kanbans -> 2 rows)",
+                          mig856 == 2, "migrated rows=%d" % mig856)
+                rep.check("EDI856 @EIN=0 parity: legacy == migrated (windowed JOIN -> TVF faithful)",
+                          leg856 == mig856, "legacy=%d migrated=%d" % (leg856, mig856))
+            finally:
+                sweep_856_fixtures()
 
         # EDI810 @EIN=0 + Monthly: PARITY (legacy == migrated) — non-vacuous (catches any divergence the
         # CROSS APPLY swap might introduce), unlike a bare len>=0. Monthly has rows for the parity month.
@@ -179,8 +207,15 @@ def main():
 
     leftover = int(scalar("SELECT COUNT(*) FROM sys.procedures WHERE name LIKE 'REPORT_%%_D6'") or 0)
     inj = int(scalar("SELECT COUNT(*) FROM INV_MANIFEST_COST_MST WHERE VC_ASSY_MANIFEST_NUMBER='D6'") or 0)
-    rep.check("fixture clean (_D6 procs dropped, injected window removed)", leftover == 0 and inj == 0,
-              "_D6 procs=%d injected=%d" % (leftover, inj))
+    # also confirm NO ZZ856* fixture rows leaked (the QI-OFF bug used to leak cost+forecast rows).
+    zz = int(scalar(
+        "SELECT (SELECT COUNT(*) FROM INV_MANIFEST_COST_MST WHERE VC_ASSY_PART_NUMBER_CODE LIKE 'ZZ856%%') "
+        "+ (SELECT COUNT(*) FROM INV_FORECAST_DETAIL_INF WHERE VC_ASSY_PART_NUMBER_CODE LIKE 'ZZ856%%') "
+        "+ (SELECT COUNT(*) FROM INV_ASN_DETAIL_MST WHERE VC_ASSY_PART_NUMBER LIKE 'ZZ856%%') "
+        "+ (SELECT COUNT(*) FROM INV_ASN_MST WHERE IN_ASN_EIN=99999)") or 0)
+    rep.check("fixture clean (_D6 procs dropped, injected window removed, ZZ856* swept)",
+              leftover == 0 and inj == 0 and zz == 0,
+              "_D6 procs=%d injected=%d zz856=%d" % (leftover, inj, zz))
     sys.exit(rep.summary_exit())
 
 
