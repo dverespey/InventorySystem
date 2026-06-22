@@ -284,18 +284,68 @@ def test_daily_shipping_assy(rep, defs):
     rep.check("R3 L1 non-vacuity: a wrong-date NQ does NOT match legacy",
               _pairs(bad, "Part Number", "PQty") != leg_pairs, "bad rows=%d" % (len(bad[1]) if bad else 0))
 
-    # header band parity: Start/End/Vehicle Count aggregated for the date
+    # header band parity: Start/End/Vehicle Count == the LEGACY printed header.
+    # LEGACY behavior (MainMenu.pas:3173-3174, TMainMenu_Form.DailyASNReportClick): the header band is
+    # read off the FIRST DETAIL ROW of REPORT_DailyShippingAssy (fieldbyname('Start'/'End'/'Vehicle Count')
+    # BEFORE the z:=4 loop). NOT MIN/MAX/SUM. The proc orders ONLY by VC_ASSY_PART_NUMBER, so "row 1" =
+    # the header that owns the alphabetically-first part.
     hcols, hdata = sqlrows(bind_qmarks(load_sql("daily_shipping_header_assy"), [pdate]), with_header=True)
     header = dict(zip(hcols, hdata[0])) if hdata else {}
-    # independent truth for the header (MIN/MAX/SUM over the date's ASN headers)
-    truth = sqlrows("SELECT MIN(VC_START_SEQ_NUMBER), MAX(VC_END_SEQ_NUMBER), SUM(IN_QTY) "
-                    "FROM INV_ASN_MST WHERE VC_PRODUCTION_DATE='%s'" % pdate)
-    t_start, t_end, t_vc = truth[0]
-    rep.check("R3 L1 header band == independent MIN/MAX/SUM truth",
-              header.get("StartSeq") == t_start and header.get("EndSeq") == t_end
-              and header.get("Vehicle Count") == t_vc,
-              "hdr=%s/%s/%s truth=%s/%s/%s" % (header.get("StartSeq"), header.get("EndSeq"),
-                                               header.get("Vehicle Count"), t_start, t_end, t_vc))
+    # INDEPENDENT legacy truth: EXEC the real proc, read row 1's Start/End/Vehicle Count (what Delphi printed).
+    # This is NOT the rebuild's plan and NOT MIN/MAX/SUM — it is the legacy proc's own first detail row.
+    leg_start, leg_end, leg_vc = _legacy_assy_header_row1(pdate)
+    rep.check("R3 L1 header band == LEGACY first-detail-row (MainMenu.pas:3173-3174)",
+              header.get("StartSeq") == leg_start and header.get("EndSeq") == leg_end
+              and header.get("Vehicle Count") == leg_vc,
+              "hdr=%s/%s/%s legacy-row1=%s/%s/%s" % (header.get("StartSeq"), header.get("EndSeq"),
+                                                     header.get("Vehicle Count"), leg_start, leg_end, leg_vc))
+
+    # MULTI-HEADER regression guard (the -1 sentinel bug). On a multi-header day a throwaway -1/-1 sentinel
+    # header co-exists with the real one. The OLD MIN/MAX/SUM header printed "Start Seq: -1" and an inflated
+    # Vehicle Count; the fixed header reproduces the legacy proc's row 1 (the real header). Assert the fixed
+    # NQ header == the legacy first-detail-row AND demonstrate non-vacuity: the OLD MIN/MAX/SUM derivation
+    # would FAIL on this date (it picks -1 / inflated count, != the legacy row 1).
+    # Pick a multi-header date whose alphabetically-FIRST part belongs to exactly ONE header, so the raw
+    # legacy proc's "row 1" (ORDER BY part only, no tiebreaker) is deterministic and == the NQ's pinned row.
+    # Prefer the documented regression date 20250121; else any qualifying date with the most ASN headers.
+    mh = scalar(
+        "SELECT TOP 1 a.VC_PRODUCTION_DATE "
+        "FROM INV_ASN_MST a "
+        "WHERE a.VC_PRODUCTION_DATE IN ("
+        "    SELECT VC_PRODUCTION_DATE FROM INV_ASN_MST "
+        "    GROUP BY VC_PRODUCTION_DATE HAVING COUNT(DISTINCT VC_START_SEQ_NUMBER) > 1) "
+        "  AND NOT EXISTS ("  # exclude dates where the first part is tied across >1 header
+        "    SELECT 1 FROM ("
+        "      SELECT d.VC_ASSY_PART_NUMBER part, COUNT(DISTINCT s.VC_START_SEQ_NUMBER) hc "
+        "      FROM INV_ASN_MST s JOIN INV_ASN_DETAIL_MST d ON s.IN_ASN_ID=d.IN_ASN_ID "
+        "      WHERE s.VC_PRODUCTION_DATE=a.VC_PRODUCTION_DATE "
+        "      GROUP BY d.VC_ASSY_PART_NUMBER) fp "
+        "    WHERE fp.part=("
+        "      SELECT MIN(d2.VC_ASSY_PART_NUMBER) FROM INV_ASN_MST s2 "
+        "      JOIN INV_ASN_DETAIL_MST d2 ON s2.IN_ASN_ID=d2.IN_ASN_ID "
+        "      WHERE s2.VC_PRODUCTION_DATE=a.VC_PRODUCTION_DATE) AND fp.hc > 1) "
+        "GROUP BY a.VC_PRODUCTION_DATE "
+        "ORDER BY CASE WHEN a.VC_PRODUCTION_DATE='20250121' THEN 0 ELSE 1 END, COUNT(*) DESC")
+    if not mh:
+        rep.check("R3 L1 multi-header: a >1-distinct-start-seq date exists on the spike", False, "none")
+    else:
+        mh_hcols, mh_hdata = sqlrows(bind_qmarks(load_sql("daily_shipping_header_assy"), [mh]), with_header=True)
+        mh_header = dict(zip(mh_hcols, mh_hdata[0])) if mh_hdata else {}
+        mh_start, mh_end, mh_vc = _legacy_assy_header_row1(mh)
+        rep.check("R3 L1 multi-header header == LEGACY first-detail-row (no -1 sentinel) [%s]" % mh,
+                  mh_header.get("StartSeq") == mh_start and mh_header.get("EndSeq") == mh_end
+                  and mh_header.get("Vehicle Count") == mh_vc and mh_header.get("StartSeq") != "-1",
+                  "hdr=%s/%s/%s legacy-row1=%s/%s/%s"
+                  % (mh_header.get("StartSeq"), mh_header.get("EndSeq"), mh_header.get("Vehicle Count"),
+                     mh_start, mh_end, mh_vc))
+        # NON-VACUITY: the OLD MIN/MAX/SUM header would NOT match the legacy row 1 on this multi-header date
+        # (it prints the -1 sentinel / inflated SUM). If this ever "passes" the regression is back.
+        old = sqlrows("SELECT MIN(VC_START_SEQ_NUMBER), MAX(VC_END_SEQ_NUMBER), SUM(IN_QTY) "
+                      "FROM INV_ASN_MST WHERE VC_PRODUCTION_DATE='%s'" % mh)
+        o_start, o_end, o_vc = old[0]
+        rep.check("R3 L1 multi-header NON-VACUITY: old MIN/MAX/SUM header DIVERGES from legacy [%s]" % mh,
+                  not (o_start == mh_start and o_end == mh_end and o_vc == mh_vc),
+                  "old=%s/%s/%s legacy-row1=%s/%s/%s" % (o_start, o_end, o_vc, mh_start, mh_end, mh_vc))
 
     # LAYER 2 — POI render readback
     _, detail = fetch_rows_as_dicts("daily_shipping_assy", [pdate])
@@ -737,6 +787,24 @@ def _coerce_cmp(v):
     if isinstance(v, float) and v == int(v):
         return int(v)
     return v
+
+
+def _legacy_assy_header_row1(pdate):
+    """INDEPENDENT legacy truth for the Daily Shipping Assy header band.
+
+    The Delphi handler prints Start/End/Vehicle Count from the FIRST DETAIL ROW of
+    REPORT_DailyShippingAssy (MainMenu.pas:3173-3174 — fieldbyname before the z:=4 loop). We EXEC the REAL
+    legacy proc and read row 1's Start/End/Vehicle Count. This is the legacy proc's OWN output (not the
+    rebuild's plan, not MIN/MAX/SUM). The proc's ORDER BY is VC_ASSY_PART_NUMBER only; on the spike's
+    multi-header dates the alphabetically-first part is unambiguous (single header) on the chosen dates, so
+    row 1's header is deterministic. Returns (Start, End, VehicleCount) as strings.
+    """
+    cols, data = sqlrows("EXEC REPORT_DailyShippingAssy @PDate='%s'" % pdate, with_header=True)
+    if not data:
+        return None, None, None
+    i_s, i_e, i_v = cols.index("Start"), cols.index("End"), cols.index("Vehicle Count")
+    r0 = data[0]
+    return r0[i_s], r0[i_e], r0[i_v]
 
 
 def _pairs(hdr_data, c1, c2):
