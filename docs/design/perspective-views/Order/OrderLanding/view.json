@@ -1,0 +1,322 @@
+{
+  "custom": {},
+  "params": {},
+  "propConfig": {},
+  "props": {
+    "defaultSize": {
+      "width": 1300,
+      "height": 760
+    }
+  },
+  "root": {
+    "type": "ia.container.flex",
+    "meta": {
+      "name": "root",
+      "domId": "orderlanding-root"
+    },
+    "props": {
+      "direction": "column",
+      "gap": 22,
+      "style": {
+        "backgroundColor": "var(--tai-bg)",
+        "padding": "28px 32px 40px"
+      }
+    },
+    "children": [
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "header"
+        },
+        "props": {
+          "direction": "column",
+          "gap": 4
+        },
+        "children": [
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "title"
+            },
+            "props": {
+              "text": "Order",
+              "style": {
+                "fontWeight": "700",
+                "fontSize": "24px",
+                "color": "var(--tai-text)"
+              }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "subtitle"
+            },
+            "props": {
+              "text": "Order generation, renban breakdown, and hot-call entry.",
+              "style": {
+                "fontSize": "13px",
+                "color": "var(--tai-text-muted)"
+              }
+            }
+          }
+        ],
+        "position": {
+          "shrink": 0,
+          "basis": "auto"
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "cards"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 18,
+          "wrap": "wrap"
+        },
+        "children": [
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "cardRenban",
+              "domId": "orderlanding-card-renban"
+            },
+            "props": {
+              "direction": "column",
+              "gap": 8,
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "boxShadow": "var(--tai-shadow-card)",
+                "padding": "20px",
+                "width": "300px",
+                "cursor": "pointer"
+              }
+            },
+            "events": {
+              "dom": {
+                "onClick": {
+                  "type": "script",
+                  "scope": "G",
+                  "config": {
+                    "script": "\tsystem.perspective.navigate('/order/renban')\n"
+                  }
+                }
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "icon"
+                },
+                "props": {
+                  "text": "▦",
+                  "style": {
+                    "fontSize": "22px",
+                    "color": "var(--tai-accent)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "name"
+                },
+                "props": {
+                  "text": "Renban Breakdown",
+                  "style": {
+                    "fontWeight": "600",
+                    "fontSize": "15px",
+                    "color": "var(--tai-text)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "desc"
+                },
+                "props": {
+                  "text": "Break a renban order into pallet/lot groups and resolve sequence collisions.",
+                  "style": {
+                    "fontSize": "12px",
+                    "color": "var(--tai-text-muted)"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "300px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "cardOrderFile",
+              "domId": "orderlanding-card-orderfile"
+            },
+            "props": {
+              "direction": "column",
+              "gap": 8,
+              "style": {
+                "backgroundColor": "var(--tai-surface-2)",
+                "border": "1px dashed var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "padding": "20px",
+                "width": "300px",
+                "cursor": "default",
+                "opacity": "0.75"
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "icon"
+                },
+                "props": {
+                  "text": "▣",
+                  "style": {
+                    "fontSize": "22px",
+                    "color": "var(--tai-text-muted)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "name"
+                },
+                "props": {
+                  "text": "Order File Generation",
+                  "style": {
+                    "fontWeight": "600",
+                    "fontSize": "15px",
+                    "color": "var(--tai-text)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "desc"
+                },
+                "props": {
+                  "text": "Generate the order worksheet / order file for suppliers. Prototype (OrderSpike) pending wiring.",
+                  "style": {
+                    "fontSize": "12px",
+                    "color": "var(--tai-text-muted)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "badge"
+                },
+                "props": {
+                  "text": "Coming soon",
+                  "style": {
+                    "fontSize": "11px",
+                    "fontWeight": "600",
+                    "color": "var(--tai-status-caution)"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "300px"
+            }
+          },
+          {
+            "type": "ia.container.flex",
+            "meta": {
+              "name": "cardHotCall",
+              "domId": "orderlanding-card-hotcall"
+            },
+            "props": {
+              "direction": "column",
+              "gap": 8,
+              "style": {
+                "backgroundColor": "var(--tai-surface)",
+                "border": "1px solid var(--tai-border)",
+                "borderRadius": "var(--tai-radius)",
+                "boxShadow": "var(--tai-shadow-card)",
+                "padding": "20px",
+                "width": "300px",
+                "cursor": "pointer"
+              }
+            },
+            "events": {
+              "dom": {
+                "onClick": {
+                  "type": "script",
+                  "scope": "G",
+                  "config": {
+                    "script": "\tsystem.perspective.navigate('/hotcall')\n"
+                  }
+                }
+              }
+            },
+            "children": [
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "icon"
+                },
+                "props": {
+                  "text": "☎",
+                  "style": {
+                    "fontSize": "22px",
+                    "color": "var(--tai-accent)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "name"
+                },
+                "props": {
+                  "text": "Hot-Call Entry",
+                  "style": {
+                    "fontWeight": "600",
+                    "fontSize": "15px",
+                    "color": "var(--tai-text)"
+                  }
+                }
+              },
+              {
+                "type": "ia.display.label",
+                "meta": {
+                  "name": "desc"
+                },
+                "props": {
+                  "text": "Record an urgent hot-call order line for expedited supply.",
+                  "style": {
+                    "fontSize": "12px",
+                    "color": "var(--tai-text-muted)"
+                  }
+                }
+              }
+            ],
+            "position": {
+              "shrink": 0,
+              "basis": "300px"
+            }
+          }
+        ],
+        "position": {
+          "shrink": 0,
+          "basis": "auto"
+        }
+      }
+    ]
+  }
+}

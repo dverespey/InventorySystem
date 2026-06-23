@@ -1,0 +1,446 @@
+{
+  "custom": {
+    "line": "",
+    "prodDate": "",
+    "manifest": "",
+    "items": [
+      {
+        "part": "",
+        "qty": ""
+      }
+    ],
+    "lineOptions": [],
+    "statusMsg": ""
+  },
+  "params": {},
+  "propConfig": {
+    "custom.lineOptions": {
+      "binding": {
+        "type": "expr",
+        "config": {
+          "expression": "now(0)"
+        },
+        "transforms": [
+          {
+            "type": "script",
+            "code": "\t# AD_GetLines (HotCallEntry.pas:101, on the ALC dataset) -> dropdown options. Headless workaround\n\t# for the NQ data.bin wall (reference-headless-ignition-authoring-limits): inline runPrepQuery in a\n\t# script transform. AD_GetLines lives in the VehicleOrder (ALC) DB, NOT Inventory \u2014 same connection\n\t# create_asn uses for the ALC cross-DB read (asn/code.py ALC_DATABASE='VehicleOrder').\n\tlog = system.util.getLogger(\"SPIKE.hotcall.view\")\n\tout = []\n\ttry:\n\t\tds = system.db.runPrepQuery(\"EXEC AD_GetLines\", [], \"VehicleOrder\")\n\t\tfor r in ds:\n\t\t\tname = r[\"LineName\"]\n\t\t\tout.append({\"value\": name, \"label\": name})\n\texcept Exception as e:\n\t\tlog.warn(\"SPIKE hotcall view -> AD_GetLines failed: %s\" % e)\n\treturn out\n"
+          }
+        ]
+      }
+    }
+  },
+  "props": {
+    "defaultSize": {
+      "width": 900,
+      "height": 640
+    }
+  },
+  "root": {
+    "meta": {
+      "name": "root"
+    },
+    "props": {
+      "direction": "column",
+      "style": {
+        "gap": "10px",
+        "padding": "16px"
+      }
+    },
+    "type": "ia.container.flex",
+    "children": [
+      {
+        "meta": {
+          "name": "Title"
+        },
+        "props": {
+          "text": "Hot-Call Entry (One Cycle Entry)",
+          "style": {
+            "color": "#222222",
+            "fontSize": "18px",
+            "fontWeight": "bold"
+          }
+        },
+        "type": "ia.display.label"
+      },
+      {
+        "meta": {
+          "name": "Subtitle"
+        },
+        "props": {
+          "text": "Urgent out-of-cycle shipment. Manifest 8 chars, non-'7' (M390). EIN allocated at 856 send. File goes out as 8HC...",
+          "style": {
+            "color": "#666666",
+            "fontSize": "12px"
+          }
+        },
+        "type": "ia.display.label"
+      },
+      {
+        "meta": {
+          "name": "HeaderBar"
+        },
+        "props": {
+          "direction": "row",
+          "style": {
+            "gap": "16px"
+          },
+          "wrap": "wrap"
+        },
+        "type": "ia.container.flex",
+        "children": [
+          {
+            "meta": {
+              "name": "LineWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "type": "ia.container.flex",
+            "children": [
+              {
+                "meta": {
+                  "name": "LineCap"
+                },
+                "props": {
+                  "text": "Line",
+                  "style": {
+                    "color": "#666666",
+                    "fontSize": "11px"
+                  }
+                },
+                "type": "ia.display.label"
+              },
+              {
+                "meta": {
+                  "domId": "hotcall-line",
+                  "name": "LineDropdown"
+                },
+                "position": {
+                  "basis": "180px"
+                },
+                "propConfig": {
+                  "props.value": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.line",
+                        "bidirectional": true
+                      }
+                    }
+                  },
+                  "props.options": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.lineOptions"
+                      }
+                    }
+                  }
+                },
+                "props": {
+                  "placeholder": "Select a line"
+                },
+                "type": "ia.input.dropdown"
+              }
+            ]
+          },
+          {
+            "meta": {
+              "name": "DateWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "type": "ia.container.flex",
+            "children": [
+              {
+                "meta": {
+                  "name": "DateCap"
+                },
+                "props": {
+                  "text": "ASN production date (yyyymmdd)",
+                  "style": {
+                    "color": "#666666",
+                    "fontSize": "11px"
+                  }
+                },
+                "type": "ia.display.label"
+              },
+              {
+                "meta": {
+                  "domId": "hotcall-pdate",
+                  "name": "ProdDateField"
+                },
+                "position": {
+                  "basis": "140px"
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.prodDate",
+                        "bidirectional": true
+                      }
+                    }
+                  }
+                },
+                "props": {
+                  "placeholder": "20260618"
+                },
+                "type": "ia.input.text-field"
+              }
+            ]
+          },
+          {
+            "meta": {
+              "name": "ManifestWrap"
+            },
+            "props": {
+              "direction": "column",
+              "style": {
+                "gap": "2px"
+              }
+            },
+            "type": "ia.container.flex",
+            "children": [
+              {
+                "meta": {
+                  "name": "ManifestCap"
+                },
+                "props": {
+                  "text": "Manifest (8 chars)",
+                  "style": {
+                    "color": "#666666",
+                    "fontSize": "11px"
+                  }
+                },
+                "type": "ia.display.label"
+              },
+              {
+                "meta": {
+                  "domId": "hotcall-manifest",
+                  "name": "ManifestField"
+                },
+                "position": {
+                  "basis": "160px"
+                },
+                "propConfig": {
+                  "props.text": {
+                    "binding": {
+                      "type": "property",
+                      "config": {
+                        "path": "view.custom.manifest",
+                        "bidirectional": true
+                      }
+                    }
+                  }
+                },
+                "props": {
+                  "maxLength": 8,
+                  "placeholder": "52089698"
+                },
+                "type": "ia.input.text-field"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "meta": {
+          "name": "ItemsCap"
+        },
+        "props": {
+          "text": "Parts (add a row per part/qty \u2014 NOT 12 fixed slots)",
+          "style": {
+            "color": "#37474F",
+            "fontSize": "12px",
+            "fontWeight": "bold"
+          }
+        },
+        "type": "ia.display.label"
+      },
+      {
+        "events": {
+          "component": {
+            "onEditCellCommit": {
+              "config": {
+                "script": "\tc = self.view.custom\n\trows = list(c.items or [])\n\tidx = event.row\n\tcol = event.column            # the column id ('part' or 'qty')\n\tif 0 <= idx < len(rows):\n\t\trow = dict(rows[idx])\n\t\trow[col] = event.value\n\t\trows[idx] = row\n\t\tc.items = rows             # replace the whole list so the table re-keys (no sub-path write)\n"
+              },
+              "scope": "G",
+              "type": "script"
+            }
+          }
+        },
+        "meta": {
+          "domId": "hotcall-items",
+          "name": "ItemsTable"
+        },
+        "position": {
+          "basis": "300px",
+          "grow": 1
+        },
+        "propConfig": {
+          "props.data": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.items"
+              }
+            }
+          }
+        },
+        "props": {
+          "columns": [
+            {
+              "field": "part",
+              "header": {
+                "title": "Part Number"
+              },
+              "editable": true,
+              "sort": "none",
+              "render": "auto",
+              "viewParams": {}
+            },
+            {
+              "field": "qty",
+              "header": {
+                "title": "Qty"
+              },
+              "editable": true,
+              "sort": "none",
+              "render": "auto",
+              "viewParams": {}
+            }
+          ],
+          "filtering": {
+            "enabled": false
+          },
+          "pager": {
+            "activeOption": 1000,
+            "bottom": false,
+            "options": [
+              1000
+            ],
+            "top": false
+          },
+          "selection": {
+            "enabled": false
+          }
+        },
+        "type": "ia.display.table"
+      },
+      {
+        "meta": {
+          "name": "ActionBar"
+        },
+        "props": {
+          "alignItems": "center",
+          "style": {
+            "gap": "12px",
+            "padding": "8px 0"
+          }
+        },
+        "type": "ia.container.flex",
+        "children": [
+          {
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "config": {
+                    "script": "\tc = self.view.custom\n\trows = list(c.items or [])\n\trows.append({\"part\": \"\", \"qty\": \"\"})\n\tc.items = rows\n"
+                  },
+                  "scope": "G",
+                  "type": "script"
+                }
+              }
+            },
+            "meta": {
+              "domId": "hotcall-addrow-btn",
+              "name": "AddRowButton"
+            },
+            "props": {
+              "style": {
+                "backgroundColor": "#607D8B",
+                "color": "#FFFFFF"
+              },
+              "text": "Add row"
+            },
+            "type": "ia.input.button"
+          },
+          {
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "config": {
+                    "script": "\t# Create Hot-Call ASN: gather the form, post the 'create_hotcall_asn' gateway message (the DB\n\t# write MUST run in gateway scope, not the session). The message handler calls the REAL driver.\n\tlog = system.util.getLogger(\"SPIKE.hotcall.view\")\n\tc = self.view.custom\n\titems = []\n\tfor r in (c.items or []):\n\t\tpart = (r.get(\"part\") or \"\").strip() if hasattr(r, \"get\") else \"\"\n\t\tqty = r.get(\"qty\") if hasattr(r, \"get\") else None\n\t\tif part == \"\" and (qty is None or str(qty).strip() == \"\"):\n\t\t\tcontinue   # skip blank rows (the driver also skips, but trim here for a clean payload)\n\t\titems.append({\"part\": part, \"qty\": qty})\n\tpayload = {\"line\": c.line, \"prodDate\": c.prodDate, \"manifest\": c.manifest, \"items\": items}\n\tlog.info(\"SPIKE hotcall view -> create_hotcall_asn payload=%s\" % payload)\n\ttry:\n\t\t# project name comes from the session; sendRequest blocks for the handler's return value.\n\t\tproj = self.session.props.projectName\n\t\tres = system.util.sendRequest(proj, \"create_hotcall_asn\", payload)\n\t\tc.statusMsg = \"Created hot-call ASN %s (%d parts, qty %s).\" % (\n\t\t\tres.get(\"asnId\"), len(res.get(\"details\", [])), res.get(\"qty\"))\n\t\tc.items = [{\"part\": \"\", \"qty\": \"\"}]   # reset the grid (ClearEntries parity)\n\t\tlog.info(\"SPIKE hotcall view -> created ASN %s\" % res.get(\"asnId\"))\n\texcept Exception as e:\n\t\tc.statusMsg = \"Failed: %s\" % e\n\t\tlog.warn(\"SPIKE hotcall view -> create FAILED: %s\" % e)\n"
+                  },
+                  "scope": "G",
+                  "type": "script"
+                }
+              }
+            },
+            "meta": {
+              "domId": "hotcall-create-btn",
+              "name": "CreateButton"
+            },
+            "props": {
+              "style": {
+                "backgroundColor": "#388E3C",
+                "color": "#FFFFFF",
+                "fontWeight": "bold"
+              },
+              "text": "Create Hot-Call ASN"
+            },
+            "type": "ia.input.button"
+          }
+        ]
+      },
+      {
+        "meta": {
+          "domId": "hotcall-status",
+          "name": "StatusMsg"
+        },
+        "propConfig": {
+          "props.text": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.statusMsg"
+              }
+            }
+          }
+        },
+        "props": {
+          "style": {
+            "color": "#1B5E20",
+            "fontSize": "13px",
+            "fontWeight": "bold",
+            "padding": "6px 8px"
+          }
+        },
+        "type": "ia.display.label"
+      },
+      {
+        "meta": {
+          "name": "FooterNote"
+        },
+        "props": {
+          "style": {
+            "color": "#37474F",
+            "fontSize": "11px",
+            "fontStyle": "italic"
+          },
+          "text": "SHELL view. AD_GetLines options via inline runPrepQuery (promotable to a Named Query in the Designer). The 'Create' button posts the create_hotcall_asn gateway message (handler in project-library/hotcall/message-handler.py). Page/session mounting + the message-handler binding need a Designer pass \u2014 see gen_hotcall_view.py header."
+        },
+        "type": "ia.display.label"
+      }
+    ]
+  }
+}

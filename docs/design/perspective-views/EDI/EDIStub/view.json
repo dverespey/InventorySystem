@@ -1,0 +1,71 @@
+{
+  "custom": {},
+  "params": {},
+  "propConfig": {},
+  "props": {
+    "defaultSize": {
+      "width": 1300,
+      "height": 600
+    }
+  },
+  "root": {
+    "type": "ia.container.flex",
+    "meta": {
+      "name": "root",
+      "domId": "edistub-root"
+    },
+    "props": {
+      "direction": "column",
+      "gap": 12,
+      "style": {
+        "backgroundColor": "var(--tai-bg)",
+        "padding": "28px 32px 40px"
+      }
+    },
+    "children": [
+      {
+        "type": "ia.display.label",
+        "meta": { "name": "title" },
+        "props": {
+          "text": "EDI",
+          "style": { "fontWeight": "700", "fontSize": "24px", "color": "var(--tai-text)" }
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": { "name": "panel" },
+        "props": {
+          "direction": "column",
+          "gap": 6,
+          "style": {
+            "backgroundColor": "var(--tai-surface)",
+            "border": "1px solid var(--tai-border)",
+            "borderRadius": "var(--tai-radius)",
+            "boxShadow": "var(--tai-shadow-card)",
+            "padding": "24px",
+            "maxWidth": "640px"
+          }
+        },
+        "children": [
+          {
+            "type": "ia.display.label",
+            "meta": { "name": "msg" },
+            "props": {
+              "text": "EDI area (810 invoice / 856 ASN / 997 ack / forecast import) — gap skeleton.",
+              "style": { "fontWeight": "600", "fontSize": "15px", "color": "var(--tai-text)" }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": { "name": "sub" },
+            "props": {
+              "text": "Placeholder route so the top-nav EDI link resolves. The EDI workflow views (ASN→856→997→810) are built in the daily-workflow milestone, not this navigation pass.",
+              "style": { "fontSize": "13px", "color": "var(--tai-text-muted)" }
+            }
+          }
+        ],
+        "position": { "shrink": 0, "basis": "auto" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "pages": {
+    "/assemblydetail": {
+      "title": "Assembly Detail",
+      "viewPath": "Master/AssemblyDetail/AssemblyDetail"
+    },
+    "/edi": {
+      "title": "EDI",
+      "viewPath": "EDI/EDIStub"
+    },
+    "/home": {
+      "viewPath": "Home/Home",
+      "title": "Home"
+    },
+    "/hotcall": {
+      "title": "Hot-Call Entry",
+      "viewPath": "HotCall/HotCallEntry"
+    },
+    "/logistics": {
+      "title": "Logistics Master",
+      "viewPath": "Master/Logistics/Logistics"
+    },
+    "/manifestcost": {
+      "title": "Manifest Cost Master",
+      "viewPath": "Master/ManifestCost/ManifestCost"
+    },
+    "/order": {
+      "title": "Order",
+      "viewPath": "Order/OrderLanding"
+    },
+    "/order/renban": {
+      "title": "Renban Breakdown",
+      "viewPath": "Order/RenbanBreakdown"
+    },
+    "/partsstock": {
+      "title": "Parts Stock Master",
+      "viewPath": "Master/PartsStock/PartsStock"
+    },
+    "/renbangroup": {
+      "title": "Renban Group Master",
+      "viewPath": "Master/RenbanGroup/RenbanGroup"
+    },
+    "/reports": {
+      "title": "Reports",
+      "viewPath": "Reports/ReportsStub"
+    },
+    "/sites": {
+      "title": "Sites Master (Admin)",
+      "viewPath": "Master/Sites/Sites"
+    },
+    "/size": {
+      "title": "Size Master",
+      "viewPath": "Master/Size/Size"
+    },
+    "/supplier": {
+      "title": "Supplier Master",
+      "viewPath": "Master/Supplier/Supplier"
+    },
+    "/users": {
+      "title": "User Admin",
+      "viewPath": "Admin/Users/Users"
+    }
+  },
+  "sharedDocks": {
+    "top": [
+      {
+        "id": "navbar",
+        "viewPath": "Shell/NavBar",
+        "size": 52,
+        "anchor": "fixed",
+        "content": "push",
+        "show": "visible",
+        "modal": false,
+        "resizable": false,
+        "handle": "hide",
+        "autoBreakpoint": 0,
+        "viewParams": {}
+      }
+    ],
+    "bottom": [],
+    "left": [],
+    "right": [],
+    "cornerPriority": "leftRight"
+  }
+}
