@@ -45,6 +45,7 @@ KPI_KEYS = ["openOrders_num", "openOrders_foot", "asns_num", "asns_foot", "shipm
             "partsShort_num", "partsShort_foot", "stocktake_num",
             "rail_short_title", "rail_short_meta", "rail_belowlot_title", "rail_belowlot_meta",
             "rail_stocktake_title", "rail_stocktake_meta",
+            "rail_renban_title", "rail_renban_meta",      # P4 RENBAN_COLLISION attention surface
             "mod_orders", "mod_shipasn", "mod_stock", "mod_master"]
 
 KPI_TRANSFORM = (
@@ -55,6 +56,7 @@ KPI_TRANSFORM = (
     "\topenOrders=g(\"OpenOrders\"); openSuppliers=g(\"OpenSuppliers\"); asns=g(\"ActiveAsns\")\n"
     "\tasnLines=g(\"AsnLines\"); shipments=g(\"Shipments\"); partsTotal=g(\"PartsTotal\")\n"
     "\tpartsShort=g(\"PartsShort\"); belowLot=g(\"PartsBelowLot\"); stocktake=g(\"StocktakeEntries\"); suppliers=g(\"Suppliers\")\n"
+    "\trenbanCollisions=g(\"RenbanCollisions\")\n"
     "\ttopShort = (\"%s (qty %d)\" % (top.getValueAt(0,\"PartName\"), int(top.getValueAt(0,\"Qty\")))) if top.rowCount else \"none\"\n"
     "\tdef c(n): return \"{:,}\".format(n)\n"
     "\treturn {\n"
@@ -66,6 +68,7 @@ KPI_TRANSFORM = (
     "\t\t\"rail_short_title\": \"%d parts at/below zero stock\" % partsShort, \"rail_short_meta\": \"Lowest: %s\" % topShort,\n"
     "\t\t\"rail_belowlot_title\": \"%d parts below one lot\" % belowLot, \"rail_belowlot_meta\": \"Master Data - review reorder\",\n"
     "\t\t\"rail_stocktake_title\": \"%d stocktake entries to review\" % stocktake, \"rail_stocktake_meta\": \"Stocktaking - cycle counts\",\n"
+    "\t\t\"rail_renban_title\": (\"%d renban collision(s) to resolve\" % renbanCollisions) if renbanCollisions else \"No renban collisions\", \"rail_renban_meta\": \"Order - Renban Breakdown\" if renbanCollisions else \"all renbans clear\",\n"
     "\t\t\"mod_orders\": \"%s open\" % c(openOrders), \"mod_shipasn\": \"%s ASNs\" % c(asns),\n"
     "\t\t\"mod_stock\": \"%d entries\" % stocktake, \"mod_master\": \"%d parts - %d suppliers\" % (partsTotal, suppliers),\n"
     "\t}\n"
@@ -220,6 +223,7 @@ def module_section():
 # ---- attention rail (bound to real counts) ---------------------------------------------
 # (color, title_bind, meta_bind)
 ATTN = [
+    (DANGER, "rail_renban_title",    "rail_renban_meta"),     # P4 RENBAN_COLLISION (top — revenue-path)
     (DANGER, "rail_short_title",     "rail_short_meta"),
     (WARN,   "rail_belowlot_title",  "rail_belowlot_meta"),
     (INFO,   "rail_stocktake_title", "rail_stocktake_meta"),
@@ -238,7 +242,7 @@ def attn_item(i, color, title_bind, meta_bind):
 def rail():
     head = flex("rhead", [lbl("rh", "Needs attention", {"fontWeight": "600", "fontSize": "13px", "color": TXT}),
                           spacer("rh_sp"),
-                          lbl("rc", "3", {"fontSize": "11px", "color": MUT})],
+                          lbl("rc", str(len(ATTN)), {"fontSize": "11px", "color": MUT})],
                 direction="row", align="center", style={"padding": "0 0 6px"})
     items = [attn_item(i, *a) for i, a in enumerate(ATTN)]
     foot = lbl("rf", "View all activity ›", {"color": ACCENT, "fontWeight": "600",

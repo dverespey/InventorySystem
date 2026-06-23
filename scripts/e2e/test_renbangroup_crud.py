@@ -54,7 +54,10 @@ SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 # Verified parity anchors (DB ground truth, see module docstring).
 EXPECTED_COUNT = 5
 ANCHOR_CODES = ["CAP", "CMWA", "DICAS"]      # stable codes, in code order
-DETAIL_ANCHOR = {"id": 11, "code": "CMWA", "count": "288"}
+# DETAIL_ANCHOR.count is computed LIVE (see _resolve_detail_anchor): VC_RENBAN_GROUP_COUNT is the renban
+# rollover counter, which ADVANCES every time a renban breakdown commits (P4) — hardcoding it (was '288',
+# the value drifted to '297' live) makes the suite go red on counter drift. Read it from the DB at run time.
+DETAIL_ANCHOR = {"id": 11, "code": "CMWA", "count": None}   # count resolved live in main()
 REFERENCED = {"id": 7, "code": "PACF"}  # delete MUST be blocked; refCount computed live (drifts as _HIST grows)
 TEST_CODE = "ZZQA"      # throwaway round-trip code (zero refs -> gate allows cleanup)
 TEST_COUNT_IN = "7"     # typed value -> must persist/display as "007"
@@ -120,6 +123,19 @@ def db_rg_count():
         if tok.isdigit():
             return int(tok)
     return -1
+
+
+def resolve_detail_anchor():
+    """Read CMWA's live VC_RENBAN_GROUP_COUNT (the renban rollover counter — advances on every P4
+    breakdown commit, so it is NOT a fixed constant). Sets DETAIL_ANCHOR['count'] to the live 3-char value
+    the Detail form will display. Returns the value (or None on a DB error)."""
+    out = sqlq("SELECT VC_RENBAN_GROUP_COUNT FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'"
+               % DETAIL_ANCHOR["code"])
+    if "SQLERR" in out:
+        return None
+    val = out.strip().split()[-1] if out.strip() else None
+    DETAIL_ANCHOR["count"] = val
+    return val
 
 
 def grid_text(page):
@@ -485,6 +501,11 @@ def main():
     pre = db_rg_count()
     rep.check("Sandbox up + baseline (%d renban groups)" % EXPECTED_COUNT, pre == EXPECTED_COUNT,
               "count=%d" % pre)
+    # Resolve CMWA's LIVE rollover counter (drifts on P4 commits — was a stale hardcoded '288' vs live '297').
+    live_count = resolve_detail_anchor()
+    rep.check("Detail anchor: CMWA live rollover counter resolved (3-char) for the Detail-count assertion",
+              live_count is not None and live_count.isdigit() and len(live_count) == 3,
+              "CMWA VC_RENBAN_GROUP_COUNT=%r" % live_count)
 
     with sync_playwright() as p:
         b = p.chromium.launch(headless=not headed, slow_mo=250 if headed else 0)

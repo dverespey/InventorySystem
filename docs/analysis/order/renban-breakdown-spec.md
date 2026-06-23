@@ -629,32 +629,40 @@ trucks-fill-in-order case, and robust to a trailing-empty truck.
 
 - **H7 div-by-zero:** `lotqty` 0/NULL → `lots = qty div 0` crashes the legacy `LoadScreen`
   (`:622`). Rebuild: **skip the row + raise/alert** (do NOT crash the whole group). (12.0)
-- **varchar(3) counter rollover at 999 — EXACT reduction function (FIXED 2026-06-21,
-  sql-adversary BLOCKER 1):** when `next_count >= 1000` the persisted group counter is NOT
-  `next_count % 1000`. The legacy persists `Format('%.3d',[next_count])`, where `.3` is a
-  *minimum* width that NEVER caps (`1002 → '1002'`, 4 chars), into `@RenbanCount varchar(3)`,
-  which the proc **LEFT-TRUNCATES to the first 3 chars** (`'1002' → '100'`). So the reduction is
-  **`str(N)[:3]`**, not `N % 1000`. Rebuild persists **`('%03d' % next_count)[:3]`**
-  (`1002→'100'`, exact `1000→'100'`, `634→'634'`, `5→'005'`). **PROVEN on the live proc**
-  (mssql-spike, rolled back): `EXEC UPDATE_RenbanGroupCount @RenbanCount='1002'` stored `'100'`;
-  `@RenbanCount='002'` stored `'002'` (the old-bug value). For parallel-run parity the rebuild
-  must persist what the legacy persists, so a side-by-side run shows zero diff.
-  - **The renban NUMBER itself is UNAFFECTED:** `group_code + '%03d' % rcount` for rcount≥1000
-    renders the full string (`CMWA1000`, `CMWA1001`) and `VC_RENBAN_NUMBER varchar(8)` holds 8
-    chars — `CMWA1000` fits. Only the persisted `varchar(3)` COUNT truncates. (A 5-char group like
-    `DICAS1000` is 9 chars and WOULD truncate at varchar(8), but identically on both sides — not a
-    divergence.)
-  - **ROLLOVER-LATENT-BUG CARRY (do NOT fix here — post-cutover, like the GetShip-calendar carry):**
-    the wrap is itself a latent legacy bug. At `next_count >= 1000` the persisted count COLLAPSES
-    (`1000→'100'`, `1002→'100'`), so the NEXT run of that group re-seeds from ~`100` and its renban
-    numbers **COLLIDE** with the earlier `CMWA100x` block. We faithfully reproduce this for
-    parallel-run parity; we must NOT silently "fix" the wrap in phase-1, or the rebuild would diverge
-    from the legacy. **Post-cutover fix:** widen the count column/param (so it doesn't truncate), or
-    **alert + block the operator at 999** before the counter can roll. Reachability is live: counts
-    climb over operational time — today CMWA 288, DICAS 480/484, **PACF 633/634** actively climbing;
-    any group reaching ~994+ with up to 6 trailers crosses 1000 in `next_count`. Tracked as an
-    `# IG83-TODO:` in `renban/code.py` step (c).
-- **Phase-B infinite loop:** bound it — if a full round-robin pass places nothing while
+- **varchar(3) counter rollover at 999 — CLEAN WRAP (P4, post-cutover; supersedes the pre-cutover
+  truncation oracle):** the persisted group counter and the renban NUMBER tail both **ring-wrap**
+  `% 1000`. The reduction is **`next_count % 1000`** (rendered `'%03d' % (next_count % 1000)`), and the
+  renban number is **`group_code + '%03d' % (rcount % 1000)`**. So the ring rotates the full 000-999
+  space and `999` is used exactly once before wrapping back to `000` — there is **no 4-digit renban**
+  (`CMWA1000` never emitted; `CMWA000` is emitted instead) and **no count collapse** into the recent
+  100-block.
+  - **The clean-wrap ORACLE (the values a test must derive from THIS ring math, NOT from the rebuild):**
+    seed `'CMWA997'`, 5 trailers × 2 pallets, one 5-lot part → Phase A gives each truck 1 lot → the RAW
+    rcounts are `997, 998, 999, 1000, 1001` → `next_count = 1001 + 1 = 1002`.
+    - **Persisted count:** `'%03d' % (1002 % 1000)` = **`'002'`** (the ring position after a wrap-past-
+      999). `1000 % 1000 = 0 → '000'`; `634 % 1000 = 634 → '634'`; `5 % 1000 = 5 → '005'`.
+    - **Renban NUMBERS (string, ring-wrapped):** `997 % 1000 → CMWA997`, `998 → CMWA998`,
+      `999 → CMWA999`, `1000 % 1000 = 0 → CMWA000`, `1001 % 1000 = 1 → CMWA001`. The straddle emits
+      `…998 / …999 / …000 / …001` — every renban 3 digits, no `CMWA1000`. (A 5-char group is 8 chars at
+      most, still fits `VC_RENBAN_NUMBER varchar(8)`.)
+  - **A run NOT crossing 999 is byte-for-byte UNCHANGED:** for `N < 1000`, `N % 1000 == N == str(N)[:3]`,
+    so every non-rollover renban + persisted count is identical to the prior (pre-cutover) behavior. The
+    clean wrap changes a value ONLY at the 999→000 boundary (D-RNB-1; the legacy value there was the
+    defective truncated one).
+  - **The allocator is the backstop (LOAD-BEARING, not optional):** clean wrap makes the count VALID at
+    rollover, but on a high-volume group (CMWA: lap ≈ retention, ~863/1000 occupied) the ring can wrap
+    onto a still-resident OLD block. The collision-aware allocator (`check_renban_collisions` + the
+    `resolution` path in `renban/code.py`) detects an in-use candidate (resident-rows predicate, exact
+    equality), WARNs (a `RENBAN_COLLISION` row in `INV_EDI_ALARM_REJ` + the home hub), GUIDEs (the next
+    free *run* of N), and FIXes (use-next-free / override / cancel). See `renban-collision-design.md` +
+    `renban-collision-sourcetruth.md`.
+  - **PRE-CUTOVER (historical — what the parallel run reproduced):** the legacy persisted
+    `Format('%.3d',[next_count])` (a *minimum* width that NEVER caps: `1002→'1002'`, 4 chars) into
+    `@RenbanCount varchar(3)`, which the proc **LEFT-TRUNCATED** to the first 3 chars (`'1002'→'100'`,
+    PROVEN live, mssql-spike rolled back), and emitted the literal 4-digit renban `CMWA1000`. The rebuild
+    reproduced this (`('%03d' % next_count)[:3]`) for zero-diff parity until P4 — see git history. David
+    pre-decided the clean wrap (memory `feedback-warn-guide-fix` P4); the parallel run for the renban path
+    is complete (open-question Q1 default), so the wrap ships now.
 - **Phase-B infinite loop:** bound it — if a full round-robin pass places nothing while
   `remainder > 0`, raise (capacity gate should preclude this). (12.2)
 
@@ -664,7 +672,8 @@ One transaction: per **EMITTED-row part** `DELETE_OrderRenban(part, @FRSNumber='
 @RenbanNumber='')` (deletes ALL still-blank rows of the part); then per **trailer-row with
 qty>0** `INSERT_OpenOrder(@SupCode,@PartNum,@KanbanNum,@FRSNum=<7-char FRS>,@RenbanNum=<assigned>,
 @Qty=<lots×lotqty>)` (skip qty=0, `:540`); then once `UPDATE_RenbanGroupCount(@RenbanCode,
-@RenbanCount=('%03d' % next_count)[:3])` (see §12.7 — `str(N)[:3]`, NOT `% 1000`). The 7-char FRS
+@RenbanCount='%03d' % (next_count % 1000))` (P4 clean wrap, see §12.7 — `% 1000`, the post-cutover
+ring wrap that replaced the pre-cutover `str(N)[:3]` truncation). The 7-char FRS
 suffix is honored by the proc (recompute is a varchar(7) truncation no-op — PROVED, data-analysis
 §3.2 + re-proved 2026-06-21: `'6090102'+'01'` → `'6090102'`, `'6090103'+max+1` → `'6090103'`,
 both len 7). Do NOT resurrect the commented-out update-in-place path (`:482-539`).

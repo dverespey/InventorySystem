@@ -35,6 +35,11 @@ FRSPREFIX = "91231"             # far-future FRS prefix (Y=9, MMDD=1231) -> plac
 PLACEHOLDER_FRS = FRSPREFIX + "01"
 RENBAN_PY = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
                              "docs", "analysis", "order", "project-library", "renban", "code.py"))
+AUTH_PY = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                           "docs", "analysis", "production-readiness", "project-library", "auth", "code.py"))
+
+# SERVER-SIDE WRITE GATE (BLOCKER-2): the driver authorizes auth.requireWrite(session) before any write.
+WRITE_SESSION = {"auth": {"user": {"userName": "op1", "roles": ["ProductionControl"]}}}
 
 
 def sql(query):
@@ -59,6 +64,9 @@ def q(s):
 
 def load_renban():
     """The REAL renban library with the shim's tx-capable `system` injected."""
+    # Register the REAL auth module so the driver's `import auth as A; A.requireWrite(session)` resolves.
+    if "auth" not in sys.modules:
+        sys.modules["auth"] = jython_shim.load_wrapper("auth", AUTH_PY)
     return jython_shim.load_wrapper("renban_real", RENBAN_PY)
 
 
@@ -77,6 +85,10 @@ def seed_placeholders(parts):
 def cleanup():
     sql("DELETE FROM INV_OPEN_ORDER_INF WHERE VC_FRS_NUMBER LIKE '%s%%'; "
         "DELETE FROM INV_OPEN_ORDER_INF_HIST WHERE VC_FRS_NUMBER LIKE '%s%%'" % (FRSPREFIX, FRSPREFIX))
+    # P4: the clean-wrap override path raises a RENBAN_COLLISION alarm. Sweep any test-raised alarm rows
+    # (this suite only writes RENBAN_COLLISION alarms for the CMWA group via the override scenario above).
+    sql("DELETE FROM INV_EDI_ALARM_REJ WHERE VC_ALARM_TYPE='RENBAN_COLLISION' "
+        "AND VC_MANIFEST_NUMBER LIKE '%s%%'" % GROUP)
 
 
 def main():
@@ -126,7 +138,7 @@ def main():
         # ---- drive the REAL commit through the tx session: 3 trailers x 10 pallets (cap 30 >= 24) ----
         renban.system = jython_shim._System()
         TRAILERS, PALLETS = 3, 10
-        result = renban.commit_renban_breakdown(GROUP, TRAILERS, PALLETS, DB)
+        result = renban.commit_renban_breakdown(GROUP, TRAILERS, PALLETS, DB, session=WRITE_SESSION)
         rep.check("commit returned a compute result with trailer rows + next_count",
                   result["rows"] and result["next_count"] is not None,
                   "rows=%d next_count=%s total_lots=%d" % (len(result["rows"]), result["next_count"], result["total_lots"]))
@@ -185,7 +197,7 @@ def main():
         cnt_before_rerun = cnt_after
         rows_before_rerun = int(scalar("SELECT COUNT(*) FROM INV_OPEN_ORDER_INF WHERE VC_FRS_NUMBER LIKE '%s%%'" % FRSPREFIX))
         renban.system = jython_shim._System()
-        rerun = renban.commit_renban_breakdown(GROUP, TRAILERS, PALLETS, DB)
+        rerun = renban.commit_renban_breakdown(GROUP, TRAILERS, PALLETS, DB, session=WRITE_SESSION)
         rows_after_rerun = int(scalar("SELECT COUNT(*) FROM INV_OPEN_ORDER_INF WHERE VC_FRS_NUMBER LIKE '%s%%'" % FRSPREFIX))
         cnt_after_rerun = scalar("SELECT VC_RENBAN_GROUP_COUNT FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % GROUP)
         rep.check("idempotent re-run: no blank orders left -> no-op (no new rows, counter unchanged)",
@@ -212,7 +224,7 @@ def main():
         cnt_before_pl = scalar("SELECT VC_RENBAN_GROUP_COUNT FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % GROUP)
 
         renban.system = jython_shim._System()
-        res_pl = renban.commit_renban_breakdown(GROUP, 3, 10, DB)   # cap 30 >= 10 lots
+        res_pl = renban.commit_renban_breakdown(GROUP, 3, 10, DB, session=WRITE_SESSION)   # cap 30 >= 10 lots
         rep.check("partial-lot: total_lots = 10 (the sub-lot part contributes 0)",
                   res_pl["total_lots"] == 10, str(res_pl["total_lots"]))
         rep.check("partial-lot: the sub-lot part emits NO trailer row (only the normal part is grouped)",
@@ -251,32 +263,60 @@ def main():
                   "cnt %s->%s next_count=%s" % (cnt_before_pl, cnt_after_pl, res_pl["next_count"]))
 
         # ================================================================================
-        # BLOCKER 1 — COUNTER ROLLOVER PARITY: next_count >= 1000 persists the LEGACY '100', not '002'.
-        # Set the group count to 997, drive 5 trailers x 2 pallets with a 5-lot part -> rcounts 997..1001
-        # -> next_count = 1002. Legacy Format('%.3d',[1002])='1002' -> @RenbanCount varchar(3) keeps the
-        # LEFTMOST 3 = '100' (PROVEN on the live proc). The OLD rebuild ('%03d' % (1002 % 1000)) = '002'.
-        # Assert the DB persists '100'. The renban NUMBER itself for the >=1000 trailers is CMWA1000/1001
-        # (8 chars, fits VC_RENBAN_NUMBER varchar(8)).
+        # P4 CLEAN WRAP (999->000) — DB PERSIST + ring-wrapped renban strings (replaces BLOCKER-1 parity).
+        # Set the group count to 997, drive 5 trailers x 2 pallets with a 5-lot part -> RAW rcounts
+        # 997,998,999,1000,1001 -> next_count = 1002. The renban STRINGS ring-wrap: CMWA997/998/999/000/001
+        # (NO 4-digit CMWA1000). On the REAL CMWA group CMWA997/998/999 are resident (proved on the spike),
+        # so resolution=None CORRECTLY returns COLLISION (the allocator fires); we then OVERRIDE to force the
+        # write and read back the PERSISTED count = '002' (the clean ring wrap 1002 % 1000), NOT the
+        # pre-cutover '100'. Expected values derived from spec §12.7 ring math (NOT the rebuild). The persist-
+        # step non-vacuity lives HERE: revert step (c) -> the DB stores '100' -> this check flips red.
         # ================================================================================
         cleanup()
         ROLL_PART = "4261102Q5000"      # lotqty 30 -> qty 150 = 5 lots
         sql("EXEC UPDATE_RenbanGroupCount @RenbanCode=%s, @RenbanCount='997'" % q(GROUP))   # restored in finally
         seed_placeholders([(ROLL_PART, "16E", "0572B", 150)])     # 150/30 = 5 lots
         renban.system = jython_shim._System()
-        res_roll = renban.commit_renban_breakdown(GROUP, 5, 2, DB)   # 5 trailers x 2 = cap 10 >= 5
-        rep.check("rollover: next_count crosses 1000 (seed 997 + 5 trailers -> 1002)",
+        # resolution=None: the candidates straddle 999 onto resident CMWA997/998/999 -> COLLISION (no write).
+        res_roll = renban.commit_renban_breakdown(GROUP, 5, 2, DB, session=WRITE_SESSION)
+        rep.check("clean-wrap rollover: next_count carries the RAW count across 1000 (seed 997 -> 1002)",
                   res_roll["next_count"] == 1002, "next_count=%s" % res_roll["next_count"])
-        # the PERSISTED count in the DB must be the legacy '100' (str(1002)[:3]), NOT '002' (1002 % 1000).
+        rep.check("clean-wrap rollover: resolution=None DETECTS the collision (CMWA997/998/999 resident) -> no write",
+                  res_roll["status"] == "COLLISION" and res_roll.get("alarm_id"),
+                  "status=%s collisions=%s alarm=%s" % (res_roll["status"],
+                  [c["renban"] for c in res_roll["collisions"]], res_roll.get("alarm_id")))
+        cnt_after_warn = scalar("SELECT VC_RENBAN_GROUP_COUNT FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % GROUP)
+        rep.check("clean-wrap rollover: COLLISION did NOT write (counter still 997, no trailer rows)",
+                  cnt_after_warn == "997"
+                  and int(scalar("SELECT COUNT(*) FROM INV_OPEN_ORDER_INF WHERE VC_FRS_NUMBER LIKE '%s%%' AND VC_RENBAN_NUMBER<>''" % FRSPREFIX)) == 0,
+                  "cnt=%s" % cnt_after_warn)
+        # OVERRIDE: force the write through (the candidates ring-wrap to CMWA997/998/999/000/001) + read the
+        # PERSISTED count. (Override re-checks in-tx; 997/998/999 are STILL resident but override is the
+        # operator's explicit decision to reuse — the in-tx re-check guards a NEWLY-taken number, not this
+        # deliberate reuse.) Expected DB persist = '002' (1002 % 1000), NOT the pre-cutover '100'.
+        # SHOULD-FIX-2 CONTRACT: the dialog passes back the WARN's collision set as `acknowledged` (the
+        # production override script does `acknowledged=list(p.acknowledged)`); we mirror that here so the
+        # deliberately-reused 997/998/999 are excluded from the in-tx re-check. (The None default now fails
+        # CLOSED — acknowledges nothing — so this MUST pass the explicit set, exactly as the UI does.)
+        renban.system = jython_shim._System()
+        ack_roll = [c["renban"] for c in res_roll["collisions"]]   # the WARN payload the dialog returns
+        res_ovr = renban.commit_renban_breakdown(GROUP, 5, 2, DB,
+                                                 resolution={"action": "override", "alarm_id": res_roll["alarm_id"],
+                                                             "acknowledged": ack_roll},
+                                                 actor="e2e", session=WRITE_SESSION)
+        rep.check("clean-wrap rollover: override COMMITTED the breakdown", res_ovr["status"] == "COMMITTED",
+                  "status=%s" % res_ovr["status"])
         cnt_roll = scalar("SELECT VC_RENBAN_GROUP_COUNT FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % GROUP)
-        rep.check("rollover: DB persists '100' (legacy Format('%.3d')+varchar(3) left-trunc, PROVEN live)",
-                  cnt_roll == "100", "persisted=%r (the OLD %% 1000 bug would have stored '002')" % cnt_roll)
-        # the renban NUMBERS for the >=1000 trailers are the full CMWA1000 / CMWA1001 (varchar(8) holds them)
+        rep.check("clean-wrap rollover: DB persists '002' (ring wrap 1002 %% 1000), NOT the pre-cutover '100'",
+                  cnt_roll == "002", "persisted=%r (pre-cutover truncation would store '100')" % cnt_roll)
+        # the renban STRINGS in the DB ring-wrap: CMWA997/998/999/000/001 — NO 4-digit CMWA1000.
         roll_renbans = sql("SELECT DISTINCT VC_RENBAN_NUMBER FROM INV_OPEN_ORDER_INF "
                            "WHERE VC_PART_NUMBER=%s AND VC_FRS_NUMBER LIKE '%s%%' AND VC_RENBAN_NUMBER<>'' "
                            "ORDER BY VC_RENBAN_NUMBER" % (q(ROLL_PART), FRSPREFIX))
         got_roll = sorted(r[0] for r in roll_renbans)
-        rep.check("rollover: renban NUMBERS climb 997..1001 in the DB incl. the 8-char CMWA1000/CMWA1001",
-                  got_roll == ["CMWA1000", "CMWA1001", "CMWA997", "CMWA998", "CMWA999"], "got=%s" % got_roll)
+        rep.check("clean-wrap rollover: renban STRINGS ring-wrap CMWA997/998/999/000/001 (NO 4-digit CMWA1000)",
+                  got_roll == ["CMWA000", "CMWA001", "CMWA997", "CMWA998", "CMWA999"] and "CMWA1000" not in got_roll,
+                  "got=%s" % got_roll)
 
     finally:
         cleanup()
@@ -285,6 +325,9 @@ def main():
 
     leftover = int(scalar("SELECT COUNT(*) FROM INV_OPEN_ORDER_INF WHERE VC_FRS_NUMBER LIKE '%s%%'" % FRSPREFIX))
     leftover_hist = int(scalar("SELECT COUNT(*) FROM INV_OPEN_ORDER_INF_HIST WHERE VC_FRS_NUMBER LIKE '%s%%'" % FRSPREFIX))
+    leftover_alarm = int(scalar("SELECT COUNT(*) FROM INV_EDI_ALARM_REJ WHERE VC_ALARM_TYPE='RENBAN_COLLISION'"))
+    rep.check("spike restored as-found: no leftover RENBAN_COLLISION alarm rows", leftover_alarm == 0,
+              "alarm_rows=%d" % leftover_alarm)
     cnt_restored = scalar("SELECT VC_RENBAN_GROUP_COUNT FROM INV_RENBAN_GROUP_MST WHERE VC_RENBAN_GROUP_CODE='%s'" % GROUP)
     onhand_restored = all(int(scalar("SELECT IN_QTY FROM INV_PARTS_STOCK_MST WHERE VC_PART_NUMBER=%s" % q(p))) == onhand0[p]
                           for p in onhand0)

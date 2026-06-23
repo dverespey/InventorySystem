@@ -985,3 +985,38 @@ The final M4 piece (security/multi-site hardening, single-site) + the P16 test-c
 - **Regressions green**: m4_auth 39, sites_master 28, master_write_gates 86, edi856_e2e 52, m3_reports 50;
   full headless suite 42/42 green. **Spike restored as-found** (max ASN 4715, INV_SITES 12/0/1, report procs
   window-blind original, IX_INV_MANIFEST_COST_MST dropped + no-overlap trigger absent, no sentinels).
+
+## P4 — renban rollover: clean wrap (999→000) + collision-aware allocator (2026-06-23) ✅
+
+The renban-breakdown counter could exceed 999; the legacy `Format('%.3d')`+`varchar(3)` left-TRUNCATED
+`1002→'100'` (PROVEN live, mssql-spike), re-seeding the group into the recent `CMWA100x` block → renban
+**collision** (the bug ALREADY FIRED Jan-2026 on CMWA, source-truth §4). The spike-1 rebuild reproduced it
+for parallel-run parity. **P4 ships the post-cutover fix** (David pre-decided; parallel run complete):
+- **Clean wrap (D-RNB-1):** persist `next_count % 1000` and ring-wrap the renban-number tail
+  (`group + '%03d' % (rcount % 1000)`) — a straddle emits `…998/…999/…000/…001` (NO 4-digit `CMWA1000`),
+  `999` used once. `next_count` keeps the RAW count (the `% 1000` is the single authoritative persist wrap).
+  A non-rollover run is byte-for-byte unchanged. Oracle derived from the AMENDED spec §12.7 ring math (R15),
+  non-vacuity proven by REVERTING both wraps (renban string flips red in `test_renban_build.py`; persist
+  count flips red — DB stores `'100'` — in `test_renban_e2e.py`).
+- **Collision allocator (D-RNB-2, WARN→GUIDE→FIX):** `check_renban_collisions` (resident-rows,
+  status-independent, EXACT-equality predicate — self-safe since inputs are blank `''`), `next_free_run`
+  (forward-ring RUN-of-N: first base whose `[base..base+N-1] % 1000` are all free; exhaustion→None→hard
+  WARN-cancel). WARN = a `RENBAN_COLLISION` row in `INV_EDI_ALARM_REJ` (colliding renban in
+  `VC_MANIFEST_NUMBER varchar(8)`, exact fit) surfaced on the **home-hub attention rail** (a new
+  `RenbanCollisions` count in `Home/kpiSummary`). FIX = `commit_renban_breakdown(..., resolution=)`:
+  `None`→check+WARN (no write), `use_next_free`→re-map+commit, `override`→commit acknowledged rows+audit
+  note; cancel = client-side (alarm stays active). **TOCTOU re-check on ALL THREE commit paths** inside the
+  one tx (the concurrent Order commit `order/code.py:130` is a non-blank-renban writer with NO unique
+  constraint); the alarm-ack is in-tx (a rolled-back commit keeps the alarm active). Override acknowledges
+  only the SEEN-colliding set so a NEWLY-taken number still aborts.
+- **Views (driver-only today → minimal shells):** `Order/RenbanBreakdown` + `Order/RenbanCollisionDialog`
+  (gen_renban_views.py) load CLEAN on `gwcmd -r` (0 `Unable to deserialize`, 0 FAULTED; gateway re-signed
+  both). Designer-finish FLAGGED: NQ data.bin, `/order/renban` route, popup registration, bidirectional
+  binding.config, the server-side write gate.
+- **Tests green:** renban_build 35/0 (clean-wrap oracle, non-vacuous), renban_e2e 31/0 (clean-wrap persist
+  `'002'` + ring-wrapped strings, non-vacuous), **renban_collision_e2e 24/0** (detect / WARN+home-hub /
+  run-of-N=302 skipping in-use 301 / use_next_free+override commit+ack / cancel-leaves-alarm / TOCTOU fires
+  on all 3 paths via a 2nd-connection lost race / exhaustion→None). Regressions: order_file_e2e 38/0,
+  edi856_e2e 52/0. **Spike restored as-found** (CMWA count 297, no sentinel orders/groups/alarms,
+  re-pointed part renban-id restored). *Pre-existing, unrelated:* `test_renbangroup_crud.py` has 1 FAIL — a
+  stale hard-coded `count:'288'` anchor vs the live `297` (a fixture-data drift, not a P4 regression).
