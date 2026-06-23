@@ -52,7 +52,7 @@ import sys
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, preclean_sentinels   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -132,7 +132,7 @@ def setup_fixtures():
     All heap-table inserts; teardown removes them by sentinel. The recipe: assembly ZZF830ASSY01 with
     tire ZZF830TIRE01 + wheel ZZF830WHL001, ratios 100/100/100 (so tireCount=wheelCount=weekCount), a
     default (blank) effective month, and a synthetic broadcast code."""
-    teardown_fixtures()   # idempotent: clear any prior run first
+    preclean_fixtures()   # P11 self-heal: clear any KILLED prior run's rows first (error-swallowing)
     # synthetic recipe row.
     sql(INV,
         "INSERT INTO INV_FORECAST_DETAIL_INF "
@@ -165,29 +165,47 @@ def setup_fixtures():
             % (pn, LINE, sup, ADD_STAMP))
 
 
+def _sentinel_statements():
+    """The ordered (child-before-parent), sentinel-scoped DELETE/UPDATE statements that remove EXACTLY the
+    synthetic rows this suite writes — nothing real (every predicate is keyed on VC_ADD=ADD_STAMP or a
+    ZZF830 business key). Shared by teardown_fixtures() AND the start-of-suite self-heal preclean (P11)."""
+    return [
+        "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD = '%s' OR VC_ASSY_PART_NUMBER_CODE IN ('%s','%s')"
+        % (ADD_STAMP, ASSY, ASSY_NOBOM),
+        "DELETE FROM INV_PARTS_STOCK_MST WHERE VC_ADD = '%s' OR VC_PART_NUMBER IN ('%s','%s')"
+        % (ADD_STAMP, TIRE, WHEEL),
+        # breakdown rows carry the COMPONENT suppliers (BLOCKER-1) — clear by component part AND all three
+        # synthetic supplier codes (feed + the two component suppliers) so nothing leaks.
+        "DELETE FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER IN ('%s','%s') "
+        "OR VC_SUPPLIER_CODE IN ('%s','%s','%s')" % (TIRE, WHEEL, SUPPLIER, TIRE_SUP, WHEEL_SUP),
+        "DELETE FROM INV_FORECAST_INF WHERE VC_PART_NUMBER IN ('%s','%s') OR VC_SUPPLIER_CODE='%s'"
+        % (ASSY, ASSY_NOBOM, SUPPLIER),
+        # synthetic SUPPLIER master rows (BLOCKER-1 / the IX_INV_SUPPLIER_MST UNIQUE collision this P11
+        # self-heal targets). The DELETE_SupplierCode trigger uses a scalar (SELECT .. FROM DELETED), so
+        # delete ONE supplier per statement (a multi-row delete would error).
+        "DELETE FROM INV_SUPPLIER_MST WHERE VC_SUPPLIER_CODE = '%s'" % TIRE_SUP,
+        "DELETE FROM INV_SUPPLIER_MST WHERE VC_SUPPLIER_CODE = '%s'" % WHEEL_SUP,
+        "DELETE FROM INV_EDI_ALARM_REJ WHERE VC_ALARM_TYPE IN ('830_FORECAST_GAP','830_FORECAST_STALE') "
+        "AND (VC_ASSY_PART_NUMBER IN ('%s','%s') OR VC_ERROR_TEXT LIKE '%%ZZF830%%' OR IN_SITE_ID IN (1,2))"
+        % (ASSY, ASSY_NOBOM),
+        "DELETE FROM INV_EDI_INBOUND_LOG WHERE VC_FILE_NAME LIKE 'zzf830%%' OR VC_DETAIL LIKE '%%ZZF830%%'",
+        # restore the last-import stamp the staleness test may have touched (set NULL as found).
+        "UPDATE INV_SITES SET VC_LAST_FORECAST_IMPORT = NULL WHERE IN_SITE_ID IN (1,2)",
+    ]
+
+
 def teardown_fixtures():
     """Delete EXACTLY the synthetic rows (by sentinel) + any breakdown/raw/alarm/ledger rows for the
     synthetic parts. Asserts nothing real is touched (all predicates are sentinel-scoped)."""
-    sql(INV, "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD = '%s' OR VC_ASSY_PART_NUMBER_CODE IN ('%s','%s')"
-        % (ADD_STAMP, ASSY, ASSY_NOBOM))
-    sql(INV, "DELETE FROM INV_PARTS_STOCK_MST WHERE VC_ADD = '%s' OR VC_PART_NUMBER IN ('%s','%s')"
-        % (ADD_STAMP, TIRE, WHEEL))
-    # breakdown rows now carry the COMPONENT suppliers (BLOCKER-1) — clear by component part AND by all
-    # three synthetic supplier codes (feed + the two component suppliers) so nothing leaks.
-    sql(INV, "DELETE FROM INV_BREAKDOWN_FC_INF WHERE VC_PART_NUMBER IN ('%s','%s') "
-        "OR VC_SUPPLIER_CODE IN ('%s','%s','%s')" % (TIRE, WHEEL, SUPPLIER, TIRE_SUP, WHEEL_SUP))
-    sql(INV, "DELETE FROM INV_FORECAST_INF WHERE VC_PART_NUMBER IN ('%s','%s') OR VC_SUPPLIER_CODE='%s'"
-        % (ASSY, ASSY_NOBOM, SUPPLIER))
-    # synthetic SUPPLIER master rows (BLOCKER-1). The DELETE_SupplierCode trigger uses a scalar
-    # (SELECT .. FROM DELETED), so delete ONE supplier per statement (a multi-row delete would error).
-    for code in (TIRE_SUP, WHEEL_SUP):
-        sql(INV, "DELETE FROM INV_SUPPLIER_MST WHERE VC_SUPPLIER_CODE = '%s'" % code)
-    sql(INV, "DELETE FROM INV_EDI_ALARM_REJ WHERE VC_ALARM_TYPE IN ('830_FORECAST_GAP','830_FORECAST_STALE') "
-        "AND (VC_ASSY_PART_NUMBER IN ('%s','%s') OR VC_ERROR_TEXT LIKE '%%ZZF830%%' OR IN_SITE_ID IN (1,2))"
-        % (ASSY, ASSY_NOBOM))
-    sql(INV, "DELETE FROM INV_EDI_INBOUND_LOG WHERE VC_FILE_NAME LIKE 'zzf830%%' OR VC_DETAIL LIKE '%%ZZF830%%'")
-    # restore the last-import stamp the staleness test may have touched (set NULL as found).
-    sql(INV, "UPDATE INV_SITES SET VC_LAST_FORECAST_IMPORT = NULL WHERE IN_SITE_ID IN (1,2)")
+    for stmt in _sentinel_statements():
+        sql(INV, stmt)
+
+
+def preclean_fixtures():
+    """P11 self-heal: pre-clean the synthetic rows at suite START via the shared error-swallowing helper,
+    so a DB left dirty by a KILLED prior run (the IX_INV_SUPPLIER_MST UNIQUE collision) drains to a clean
+    baseline even if that run's teardown never ran / aborted mid-way."""
+    preclean_sentinels(lambda s: sql(INV, s), _sentinel_statements(), label="forecast")
 
 
 def count_breakdown(part, week):

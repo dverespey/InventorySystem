@@ -458,6 +458,11 @@ def main():
     os.makedirs(lib.ARTIFACTS, exist_ok=True)
     rep = lib.Report()
 
+    # P11 self-heal: pre-clean the synthetic ZZTST round-trip row a KILLED prior run may have left (else
+    # the baseline count would be 17 and the whole suite would fail on a stale row). Sentinel-scoped;
+    # ZZTST has zero refs so the DELETE never touches real client rows. Independent of any prior teardown.
+    lib.preclean_sentinels(sqlq, ["DELETE FROM INV_SUPPLIER_MST WHERE VC_SUPPLIER_CODE='%s'" % TEST_CODE],
+                           label="supplier")
     print("== DB pre-state ==")
     pre = db_supplier_count()
     rep.check("Sandbox up + baseline (%d suppliers)" % EXPECTED_COUNT, pre == EXPECTED_COUNT,

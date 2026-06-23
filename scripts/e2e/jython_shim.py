@@ -87,11 +87,12 @@ def _esc(v):
 
 def _bind(sql, args):
     """Replace each ? PLACEHOLDER with the next escaped arg (left to right). A `?` inside a `--` line
-    comment or inside a '...' string literal is NOT a placeholder and is left untouched — exactly as the
-    real JDBC prepared-statement parser treats it. (Several deployed views carry a trailing
-    `-- IG-SITE: AND site_id = ?` comment on a query whose bound args count only the REAL placeholders;
-    a naive per-`?` bind would over-count and IndexError. This mirrors JDBC so the shim drives those
-    views faithfully.)"""
+    comment, a `/* ... */` block comment, or a '...' string literal is NOT a placeholder and is left
+    untouched — exactly as the real JDBC prepared-statement parser treats it. (Several deployed views
+    carry a `-- IG-SITE: AND site_id = ?` line comment OR a `/* IG-SITE: WHERE site_id = ? */` block
+    comment on a query whose bound args count only the REAL placeholders; a naive per-`?` bind would
+    over-count and IndexError. The 7 PartsStock/Supplier recordId.onChange dropdown loaders carry the
+    block-comment form. This mirrors JDBC so the shim drives those views faithfully.)"""
     out, i = [], 0
     n = len(sql)
     k = 0
@@ -116,6 +117,15 @@ def _bind(sql, args):
                 out.append(sql[k:]); k = n
             else:
                 out.append(sql[k:eol]); k = eol
+            continue
+        if ch == "/" and k + 1 < n and sql[k + 1] == "*":
+            # block comment: copy verbatim through the closing */ (any ? in here is NOT a placeholder).
+            # JDBC skips /* ... */ for placeholder parsing; the deployed IG-SITE block comments live here.
+            end = sql.find("*/", k + 2)
+            if end == -1:
+                out.append(sql[k:]); k = n
+            else:
+                out.append(sql[k:end + 2]); k = end + 2
             continue
         if ch == "?":
             out.append(_esc(args[i])); i += 1; k += 1; continue

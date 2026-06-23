@@ -40,7 +40,7 @@ import tempfile
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, preclean_sentinels   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -137,19 +137,29 @@ def file_824(tmmDuns, refs):
     return "\r\n".join(segs) + "\r\n"
 
 
+def _sentinel_statements():
+    """The ordered (child-before-parent), sentinel-scoped DELETEs that remove EXACTLY this suite's
+    synthetic rows (every predicate keyed on a ZZINB* VC_ADD / manifest / line / file-name sentinel).
+    Shared by cleanup() (end) AND the start-of-suite self-heal preclean (P11)."""
+    return [
+        "DELETE FROM INV_ASN_DETAIL_MST WHERE VC_ADD IN ('%s','%s','%s') "
+        "OR VC_MANIFEST_NUMBER IN ('%s','%s')"
+        % (ASN_ADD, ASN_FAN1_ADD, ASN2_ADD, MANIFEST, MANIFEST_FANOUT),
+        "DELETE FROM INV_ASN_MST WHERE VC_ADD IN ('%s','%s','%s') OR VC_LINE_NAME = '%s'"
+        % (ASN_ADD, ASN_FAN1_ADD, ASN2_ADD, TEST_LINE),
+        "DELETE FROM INV_INV_MST WHERE VC_ADD = '%s'" % INV_ADD,
+        # the ledger + alarm rows this test created (by the sentinel manifest/part or our file names).
+        "DELETE FROM INV_EDI_ALARM_REJ WHERE VC_MANIFEST_NUMBER IN ('%s','%s') "
+        "OR VC_SUMMARY LIKE '%%ZZINB%%' OR VC_ALARM_TYPE = '997_UNKNOWN_EIN'"
+        % (MANIFEST, MANIFEST_FANOUT),
+        "DELETE FROM INV_EDI_INBOUND_LOG WHERE VC_FILE_NAME LIKE 'zzinb_%'",
+    ]
+
+
 def cleanup():
     """Restore the spike as-found: drop the synthetic ASN/invoice/detail + the ledger/alarm rows we made."""
-    sql(INV, "DELETE FROM INV_ASN_DETAIL_MST WHERE VC_ADD IN ('%s','%s','%s') "
-             "OR VC_MANIFEST_NUMBER IN ('%s','%s')"
-             % (ASN_ADD, ASN_FAN1_ADD, ASN2_ADD, MANIFEST, MANIFEST_FANOUT))
-    sql(INV, "DELETE FROM INV_ASN_MST WHERE VC_ADD IN ('%s','%s','%s') OR VC_LINE_NAME = '%s'"
-             % (ASN_ADD, ASN_FAN1_ADD, ASN2_ADD, TEST_LINE))
-    sql(INV, "DELETE FROM INV_INV_MST WHERE VC_ADD = '%s'" % INV_ADD)
-    # the ledger + alarm rows this test created (by the sentinel manifest/part or our file names).
-    sql(INV, "DELETE FROM INV_EDI_ALARM_REJ WHERE VC_MANIFEST_NUMBER IN ('%s','%s') "
-             "OR VC_SUMMARY LIKE '%%ZZINB%%' OR VC_ALARM_TYPE = '997_UNKNOWN_EIN'"
-             % (MANIFEST, MANIFEST_FANOUT))
-    sql(INV, "DELETE FROM INV_EDI_INBOUND_LOG WHERE VC_FILE_NAME LIKE 'zzinb_%'")
+    for stmt in _sentinel_statements():
+        sql(INV, stmt)
 
 
 def main():
@@ -160,7 +170,9 @@ def main():
     rep = Report()
     edi = jython_shim.load_wrapper("edi_inbound_driver", EDI_PY)
 
-    cleanup()      # pre-clean any leftovers from a prior aborted run
+    # P11 self-heal: pre-clean leftovers from a KILLED prior run via the shared error-swallowing helper
+    # (so a partially-dirty DB still drains even if that run's cleanup() never ran / aborted mid-way).
+    preclean_sentinels(lambda s: sql(INV, s), _sentinel_statements(), label="edi_inbound")
 
     tmpdir = tempfile.mkdtemp(prefix="edi_inbound_e2e_")
     archiveDir = os.path.join(tmpdir, "Archive")

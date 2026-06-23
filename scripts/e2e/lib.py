@@ -118,6 +118,37 @@ def check_master_write_gate_live(page, rep, view_label, url, new_btn, save_btn, 
         rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "interaction failed: %s" % e)
 
 
+# ---------------------------------------------------------------------------
+# P11 (R18) — self-healing fixtures. A suite that seeds synthetic rows (forecast/supplier/master-CRUD/EDI)
+# tears them down at the END; but if a PRIOR run was KILLED mid-test (Ctrl-C, trial-expiry abort, a crash),
+# its synthetic rows survive and the next run collides — most visibly the forecast suite re-inserting a
+# ZZF83x supplier code into the IX_INV_SUPPLIER_MST UNIQUE index. The cure is to PRE-CLEAN by sentinel at
+# suite START, independent of any prior teardown having run. preclean_sentinels() is that shared helper:
+# the suite hands it the SAME idempotent, child-before-parent DELETE statements its own teardown uses
+# (every one keyed on the suite's ZZ*/VC_ADD sentinel), and we run them swallowing per-statement errors so
+# a partially-dirty DB still drains to a clean baseline before the run. SENTINEL convention: every
+# synthetic row a suite writes carries a greppable ZZ* business key and/or a VC_ADD stamp, so a pre-clean
+# can target exactly the synthetic rows and NEVER a real client row.
+def preclean_sentinels(exec_one, statements, label=""):
+    """Run an ordered list of idempotent sentinel DELETE statements at suite start (self-heal a DB left
+    dirty by a killed predecessor — P11/R18). `exec_one(stmt)` runs ONE SQL string (the suite's own
+    sqlcmd wrapper). `statements` MUST be child-before-parent ordered (same order the suite's teardown
+    uses) so FK/RESTRICT deletes succeed. Per-statement errors are swallowed (a missing table or a
+    not-yet-seeded row is fine) so the pre-clean never aborts the run; a count of attempted/failed is
+    returned for optional logging. NEVER pass a destructive statement that isn't sentinel-scoped."""
+    attempted = failed = 0
+    for stmt in statements:
+        attempted += 1
+        try:
+            exec_one(stmt)
+        except Exception:
+            failed += 1
+    if os.environ.get("PRECLEAN_ECHO") == "1":
+        print("  [preclean%s] %d sentinel DELETE(s) run, %d swallowed"
+              % ((" " + label) if label else "", attempted, failed))
+    return attempted, failed
+
+
 class Report:
     """Accumulates per-check PASS/FAIL/SKIP and prints a summary + exit code."""
     def __init__(self):

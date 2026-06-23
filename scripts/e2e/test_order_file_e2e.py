@@ -376,6 +376,69 @@ def main():
         rep.check("RISK-1: all 3 .tmp staged files retained for re-drop (none deleted)",
                   len(tmp6) == 3, "tmp count=%d files=%s" % (len(tmp6), tmp6))
         cleanup()
+
+        # ============ (7) P10: rollback-of-rollback — an UN-rename ITSELF fails -> TRUE-state error =====
+        # When the publish fails AND the compensating un-rename (final -> .tmp) of an already-published
+        # copy ALSO fails, that destination still holds a FINAL .ord on disk. The OLD error blanket-claimed
+        # "NO destination was left partially published" + listed a .tmp that doesn't exist. P10 fix: the
+        # error must report the TRUE on-disk state — the dest that STILL holds a final .ord, and the .tmp
+        # that ACTUALLY remain. We fail publish-rename #2 (mid fan-out) AND the un-rename of dest #1 (so
+        # dest #1 is stuck published), then assert the error names the stuck final + does NOT falsely claim
+        # a clean rollback, and that the .tmp it lists actually exist on disk.
+        print("\n--- (7) P10: rollback-of-rollback (un-rename fails) -> error reports TRUE on-disk state ---")
+        seed_orders(["98R040"], ORDER_QTY)
+        of.system = jython_shim._System()
+        rr_dir = os.path.join(tmproot, "rr_fail")
+        rr_log = os.path.join(tmproot, "rr_log")
+        of.resolve_logistics_dir = lambda partNum, supplierInfo, database=None: rr_log
+        real_rename7 = os.rename
+        rr = {"n": 0}
+
+        def faulty_rename7(src, dst):
+            rr["n"] += 1
+            # call #1: dest1 .tmp -> final SUCCEEDS (dest1 now published).
+            # call #2: dest2 .tmp -> final FAILS (mid fan-out) -> triggers the un-rename rollback.
+            # call #3: un-rename dest1 final -> .tmp ALSO FAILS -> dest1 STAYS published (the P10 case).
+            if rr["n"] in (2, 3):
+                raise OSError("simulated failure on rename #%d (publish#2 + un-rename of #1)" % rr["n"])
+            return real_rename7(src, dst)
+
+        os.rename = faulty_rename7
+        threw7 = False
+        try:
+            of.generate_order_files(database=INV, calDatabase="VehicleOrder", localFtp=True,
+                                    runDate=runDate, dirOverride={SUPCODE: rr_dir})
+        except Exception as e7:
+            threw7 = True
+            err7 = str(e7)
+            print("    generate_order_files raised (expected P10): %s" % err7[:120])
+        finally:
+            os.rename = real_rename7
+            of.resolve_logistics_dir = orig_resolve
+        rep.check("P10: rollback-of-rollback raised LOUDLY", threw7,
+                  "FAIL means generate_order_files did NOT raise when both publish#2 and un-rename#1 failed")
+        # The error must report the TRUE PARTIAL state — NOT the old blanket "NO destination was left
+        # partially published". It must say the emit is PARTIAL and name a final still on disk.
+        rep.check("P10: error reports the TRUE partial state (PARTIAL/INCOMPLETE), not a false clean-rollback claim",
+                  threw7 and ("PARTIAL" in err7 or "INCOMPLETE" in err7)
+                  and "NO destination was left partially published" not in err7,
+                  err7 if threw7 else "")
+        # there IS a final .ord stuck on disk (dest #1's un-rename failed) — the error must reflect that.
+        final7 = (glob.glob(os.path.join(rr_dir, "**", "*.ord"), recursive=True) +
+                  glob.glob(os.path.join(rr_log, "**", "*.ord"), recursive=True))
+        rep.check("P10: a FINAL .ord really is stuck on disk (un-rename failed) AND the error names it",
+                  len(final7) >= 1 and threw7 and any(os.path.basename(f) in err7 for f in final7),
+                  "stuck finals=%s" % final7)
+        # every .tmp the error lists must ACTUALLY exist on disk (no phantom .tmp in the message). The
+        # paths are emitted inside a repr'd list (['...']); strip the surrounding quotes/brackets so we
+        # test the real path, not '['/path...'.
+        import re as _re7
+        listed_tmp = [p.strip("[]'\" ") for p in _re7.findall(r"[^\s'\"\[\]]+\.tmp", err7)] if threw7 else []
+        phantom = [p for p in listed_tmp if not os.path.exists(p)]
+        rep.check("P10: every .tmp the error lists actually exists on disk (no phantom .tmp claim)",
+                  threw7 and listed_tmp and not phantom,
+                  "listed=%d phantom=%s" % (len(listed_tmp), phantom))
+        cleanup()
     finally:
         cleanup()
         shutil.rmtree(tmproot, ignore_errors=True)
