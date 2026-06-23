@@ -15,6 +15,8 @@
       "rail_belowlot_meta": "",
       "rail_stocktake_title": "",
       "rail_stocktake_meta": "",
+      "rail_renban_title": "",
+      "rail_renban_meta": "",
       "mod_orders": "",
       "mod_shipasn": "",
       "mod_stock": "",
@@ -32,7 +34,7 @@
         "transforms": [
           {
             "type": "script",
-            "code": "\tsystem.util.getLogger(\"KPI\").info(\"Home KPI load via runNamedQuery\")\n\tdata = system.db.runNamedQuery(\"Home/kpiSummary\", {})\n\ttop  = system.db.runNamedQuery(\"Home/kpiTopShort\", {})\n\tdef g(col): return int(data.getValueAt(0, col))\n\topenOrders=g(\"OpenOrders\"); openSuppliers=g(\"OpenSuppliers\"); asns=g(\"ActiveAsns\")\n\tasnLines=g(\"AsnLines\"); shipments=g(\"Shipments\"); partsTotal=g(\"PartsTotal\")\n\tpartsShort=g(\"PartsShort\"); belowLot=g(\"PartsBelowLot\"); stocktake=g(\"StocktakeEntries\"); suppliers=g(\"Suppliers\")\n\ttopShort = (\"%s (qty %d)\" % (top.getValueAt(0,\"PartName\"), int(top.getValueAt(0,\"Qty\")))) if top.rowCount else \"none\"\n\tdef c(n): return \"{:,}\".format(n)\n\treturn {\n\t\t\"openOrders_num\": c(openOrders), \"openOrders_foot\": \"across %d suppliers\" % openSuppliers,\n\t\t\"asns_num\": c(asns), \"asns_foot\": \"%s ASN lines\" % c(asnLines),\n\t\t\"shipments_num\": c(shipments),\n\t\t\"partsShort_num\": c(partsShort), \"partsShort_foot\": \"of %d parts tracked\" % partsTotal,\n\t\t\"stocktake_num\": c(stocktake),\n\t\t\"rail_short_title\": \"%d parts at/below zero stock\" % partsShort, \"rail_short_meta\": \"Lowest: %s\" % topShort,\n\t\t\"rail_belowlot_title\": \"%d parts below one lot\" % belowLot, \"rail_belowlot_meta\": \"Master Data - review reorder\",\n\t\t\"rail_stocktake_title\": \"%d stocktake entries to review\" % stocktake, \"rail_stocktake_meta\": \"Stocktaking - cycle counts\",\n\t\t\"mod_orders\": \"%s open\" % c(openOrders), \"mod_shipasn\": \"%s ASNs\" % c(asns),\n\t\t\"mod_stock\": \"%d entries\" % stocktake, \"mod_master\": \"%d parts - %d suppliers\" % (partsTotal, suppliers),\n\t}\n"
+            "code": "\tsystem.util.getLogger(\"KPI\").info(\"Home KPI load via runNamedQuery\")\n\tdata = system.db.runNamedQuery(\"Home/kpiSummary\", {})\n\ttop  = system.db.runNamedQuery(\"Home/kpiTopShort\", {})\n\tdef g(col): return int(data.getValueAt(0, col))\n\topenOrders=g(\"OpenOrders\"); openSuppliers=g(\"OpenSuppliers\"); asns=g(\"ActiveAsns\")\n\tasnLines=g(\"AsnLines\"); shipments=g(\"Shipments\"); partsTotal=g(\"PartsTotal\")\n\tpartsShort=g(\"PartsShort\"); belowLot=g(\"PartsBelowLot\"); stocktake=g(\"StocktakeEntries\"); suppliers=g(\"Suppliers\")\n\trenbanCollisions=g(\"RenbanCollisions\")\n\ttopShort = (\"%s (qty %d)\" % (top.getValueAt(0,\"PartName\"), int(top.getValueAt(0,\"Qty\")))) if top.rowCount else \"none\"\n\tdef c(n): return \"{:,}\".format(n)\n\treturn {\n\t\t\"openOrders_num\": c(openOrders), \"openOrders_foot\": \"across %d suppliers\" % openSuppliers,\n\t\t\"asns_num\": c(asns), \"asns_foot\": \"%s ASN lines\" % c(asnLines),\n\t\t\"shipments_num\": c(shipments),\n\t\t\"partsShort_num\": c(partsShort), \"partsShort_foot\": \"of %d parts tracked\" % partsTotal,\n\t\t\"stocktake_num\": c(stocktake),\n\t\t\"rail_short_title\": \"%d parts at/below zero stock\" % partsShort, \"rail_short_meta\": \"Lowest: %s\" % topShort,\n\t\t\"rail_belowlot_title\": \"%d parts below one lot\" % belowLot, \"rail_belowlot_meta\": \"Master Data - review reorder\",\n\t\t\"rail_stocktake_title\": \"%d stocktake entries to review\" % stocktake, \"rail_stocktake_meta\": \"Stocktaking - cycle counts\",\n\t\t\"rail_renban_title\": (\"%d renban collision(s) to resolve\" % renbanCollisions) if renbanCollisions else \"No renban collisions\", \"rail_renban_meta\": \"Order - Renban Breakdown\" if renbanCollisions else \"all renbans clear\",\n\t\t\"mod_orders\": \"%s open\" % c(openOrders), \"mod_shipasn\": \"%s ASNs\" % c(asns),\n\t\t\"mod_stock\": \"%d entries\" % stocktake, \"mod_master\": \"%d parts - %d suppliers\" % (partsTotal, suppliers),\n\t}\n"
           }
         ]
       }
@@ -1971,7 +1973,7 @@
                       "name": "rc"
                     },
                     "props": {
-                      "text": "3",
+                      "text": "4",
                       "style": {
                         "fontSize": "11px",
                         "color": "var(--tai-text-muted)"
@@ -2042,7 +2044,7 @@
                             "binding": {
                               "type": "property",
                               "config": {
-                                "path": "view.custom.kpi.rail_short_title"
+                                "path": "view.custom.kpi.rail_renban_title"
                               }
                             }
                           }
@@ -2066,7 +2068,7 @@
                             "binding": {
                               "type": "property",
                               "config": {
-                                "path": "view.custom.kpi.rail_short_meta"
+                                "path": "view.custom.kpi.rail_renban_meta"
                               }
                             }
                           }
@@ -2102,7 +2104,7 @@
                     "props": {
                       "direction": "column",
                       "style": {
-                        "backgroundColor": "var(--tai-status-warning)",
+                        "backgroundColor": "var(--tai-status-danger)",
                         "width": "8px",
                         "height": "8px",
                         "borderRadius": "50%",
@@ -2142,7 +2144,7 @@
                             "binding": {
                               "type": "property",
                               "config": {
-                                "path": "view.custom.kpi.rail_belowlot_title"
+                                "path": "view.custom.kpi.rail_short_title"
                               }
                             }
                           }
@@ -2166,7 +2168,7 @@
                             "binding": {
                               "type": "property",
                               "config": {
-                                "path": "view.custom.kpi.rail_belowlot_meta"
+                                "path": "view.custom.kpi.rail_short_meta"
                               }
                             }
                           }
@@ -2202,7 +2204,7 @@
                     "props": {
                       "direction": "column",
                       "style": {
-                        "backgroundColor": "var(--tai-status-info)",
+                        "backgroundColor": "var(--tai-status-warning)",
                         "width": "8px",
                         "height": "8px",
                         "borderRadius": "50%",
@@ -2242,7 +2244,7 @@
                             "binding": {
                               "type": "property",
                               "config": {
-                                "path": "view.custom.kpi.rail_stocktake_title"
+                                "path": "view.custom.kpi.rail_belowlot_title"
                               }
                             }
                           }
@@ -2252,6 +2254,106 @@
                         "type": "ia.display.label",
                         "meta": {
                           "name": "am2"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "11.5px",
+                            "color": "var(--tai-text-faint)",
+                            "margin": "2px 0 0 0"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_belowlot_meta"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "position": {
+                      "grow": 1,
+                      "basis": "0px"
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "ia.container.flex",
+                "meta": {
+                  "name": "attn3"
+                },
+                "props": {
+                  "direction": "row",
+                  "gap": 11,
+                  "style": {
+                    "padding": "13px 0",
+                    "borderBottom": "1px solid var(--tai-border)"
+                  }
+                },
+                "children": [
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ad3"
+                    },
+                    "props": {
+                      "direction": "column",
+                      "style": {
+                        "backgroundColor": "var(--tai-status-info)",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "50%",
+                        "margin": "5px 0 0 0"
+                      }
+                    },
+                    "children": [],
+                    "position": {
+                      "shrink": 0,
+                      "basis": "8px"
+                    }
+                  },
+                  {
+                    "type": "ia.container.flex",
+                    "meta": {
+                      "name": "ab3"
+                    },
+                    "props": {
+                      "direction": "column"
+                    },
+                    "children": [
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "at3"
+                        },
+                        "props": {
+                          "text": "\u2014",
+                          "style": {
+                            "fontSize": "13px",
+                            "fontWeight": "500",
+                            "color": "var(--tai-text)"
+                          }
+                        },
+                        "propConfig": {
+                          "props.text": {
+                            "binding": {
+                              "type": "property",
+                              "config": {
+                                "path": "view.custom.kpi.rail_stocktake_title"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "ia.display.label",
+                        "meta": {
+                          "name": "am3"
                         },
                         "props": {
                           "text": "\u2014",

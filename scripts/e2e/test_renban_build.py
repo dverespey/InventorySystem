@@ -185,35 +185,60 @@ def main():
     rep.check("the exhaustive set is real (>5000 scenarios, incl. multi-part spill paths)",
               total > 5000 and spill_probe > 100, "total=%d spill_probe=%d" % (total, spill_probe))
 
-    # --- 8b. COUNTER-ROLLOVER PARITY (BLOCKER 1) — Format('%.3d') min-width + varchar(3) left-trunc ---
-    # The legacy persists Format('%.3d',[next_count]) into @RenbanCount varchar(3); the proc keeps the
-    # LEFTMOST 3 chars. For next_count >= 1000 this is str(N)[:3], NOT N % 1000. PROVEN on the live proc:
-    # EXEC UPDATE_RenbanGroupCount @RenbanCount='1002' -> stored '100' (not '002').
-    # Scenario: seed 'CMWA997', 5 trailers x 2 pallets, one 5-lot part -> Phase A gives each truck 1 lot
-    # -> rcounts 997,998,999,1000,1001 -> next_count = 1001 + 1 = 1002.
+    # --- 8b. COUNTER-ROLLOVER — P4 CLEAN WRAP (999->000), oracle derived from spec §12.7 ring math -----
+    # POST-CUTOVER (P4): the persisted count and the renban-number tail both RING-WRAP `% 1000`. The
+    # expected values below are derived INDEPENDENTLY from the spec's clean-wrap ORACLE (renban-breakdown-
+    # spec.md §12.7 — `next_count % 1000` for the count, `group_code + '%03d' % (rcount % 1000)` for the
+    # renban), NOT recomputed by the code under test (R15: derive the expectation from the SOURCE/spec, not
+    # the rebuild). A SEPARATE ring-math helper here (ring3 / ring_renban) is the oracle; the rebuild's
+    # output is compared against it. Non-vacuity: REVERT the wrap (restore str(N)[:3] + the 4-digit emit)
+    # and these checks FAIL — proven below + by reverting renban/code.py (see the run note).
+    #
+    # Scenario (spec §12.7 worked example): seed 'CMWA997', 5 trailers x 2 pallets, one 5-lot part ->
+    # Phase A gives each truck 1 lot -> RAW rcounts 997, 998, 999, 1000, 1001 -> next_count = 1001 + 1 =
+    # 1002. The RAW rcount is the running count (next_count carries it forward UNWRAPPED); the wrap is
+    # applied ONLY on render (renban string) and on persist (the % 1000 count).
+    def ring3(n):
+        """SPEC ORACLE: the persisted varchar(3) count under the clean wrap = '%03d' % (n % 1000)."""
+        return "%03d" % (n % 1000)
+    def ring_renban(group, raw_rcount):
+        """SPEC ORACLE: the rendered renban string under the clean wrap = group + 3-digit (rcount % 1000)."""
+        return group + ("%03d" % (raw_rcount % 1000))
+
     res = renban.compute_trailer_breakdown([_part("Q5100", 30, 150, seed="CMWA997")], 5, 2, "CMWA")
-    rep.check("rollover: next_count crosses 1000 (seed 997 + 5 trailers -> 1002)",
+    # next_count carries the RAW running count forward (max raw rcount + 1) — UNCHANGED by the wrap.
+    rep.check("rollover: next_count carries the RAW running count across 1000 (seed 997 + 5 trailers -> 1002)",
               res["next_count"] == 1002, str(res["next_count"]))
-    # the PERSISTED count = the legacy reduction: ('%03d' % next_count)[:3]  (1002 -> '100', matching the
-    # live proc), NOT '%03d' % (next_count % 1000) (which would wrongly give '002').
-    persisted = ("%03d" % res["next_count"])[:3]
-    rep.check("rollover: persisted count = '100' (legacy Format('%.3d')+varchar(3) left-trunc, PROVEN live)",
-              persisted == "100", "persisted=%r (would be '002' under the OLD %% 1000 bug)" % persisted)
-    rep.check("rollover: the OLD '%% 1000' reduction would have WRONGLY persisted '002' (regression guard)",
-              ("%03d" % (res["next_count"] % 1000)) == "002")
-    # the renban NUMBER itself is UNAFFECTED — CMWA1000/CMWA1001 are 8 chars, fit VC_RENBAN_NUMBER(8).
+    # PERSISTED count under the clean wrap = the SPEC ring oracle ring3(1002) = '002', NOT the pre-cutover
+    # str(1002)[:3]='100'. NOTE the persist itself (UPDATE_RenbanGroupCount step (c)) is a DB write only
+    # exercised by test_renban_e2e.py, which reads the ACTUAL stored value back (the persist-step non-vacuity
+    # lives there — revert step (c) -> the DB stores '100' -> that e2e check flips red). Here in the PURE
+    # test we pin the ORACLE itself (so a wrong oracle is caught) and that ring3 != the pre-cutover trunc.
+    rep.check("rollover (clean wrap): spec persist oracle ring3(1002) = '002' (ring-wrap), NOT pre-cutover '100'",
+              ring3(1002) == "002" and ring3(1002) != ("%03d" % 1002)[:3] and ("%03d" % 1002)[:3] == "100",
+              "ring3(1002)=%r pre-cutover=%r" % (ring3(1002), ("%03d" % 1002)[:3]))
+    # the renban NUMBERS ring-wrap: 997/998/999 stay, 1000->000, 1001->001 (3-digit, NO 4-digit CMWA1000).
     renban_strings = sorted(r["renban"] for r in res["rows"])
-    rep.check("rollover: renban NUMBER for the >=1000 trailers is the full CMWA1000/CMWA1001 (varchar(8) OK)",
-              "CMWA1000" in renban_strings and "CMWA1001" in renban_strings,
-              "renbans=%s" % renban_strings)
-    rep.check("rollover: in-run renban strings climb cleanly 997..1001 (no string truncation here)",
-              renban_strings == ["CMWA1000", "CMWA1001", "CMWA997", "CMWA998", "CMWA999"],
-              str(renban_strings))
-    # other persisted-count values render correctly under the new reduction (sub-1000 unchanged):
-    rep.check("rollover: sub-1000 persisted count unchanged (5 -> '005', 634 -> '634')",
-              ("%03d" % 5)[:3] == "005" and ("%03d" % 634)[:3] == "634")
-    rep.check("rollover: next_count EXACTLY 1000 also persists '100' (str(1000)[:3])",
-              ("%03d" % 1000)[:3] == "100")
+    expected_renbans = sorted(ring_renban("CMWA", rc) for rc in (997, 998, 999, 1000, 1001))  # spec oracle
+    rep.check("rollover (clean wrap): renban strings = spec oracle CMWA997/998/999/000/001 (ring-wrapped)",
+              renban_strings == expected_renbans and renban_strings ==
+              ["CMWA000", "CMWA001", "CMWA997", "CMWA998", "CMWA999"], str(renban_strings))
+    rep.check("rollover (clean wrap): NO 4-digit renban emitted (CMWA1000 never appears; CMWA000 instead)",
+              "CMWA1000" not in renban_strings and "CMWA000" in renban_strings, str(renban_strings))
+    # sub-1000 is byte-for-byte UNCHANGED (N % 1000 == N for N<1000 == str(N)[:3]): the wrap touches ONLY
+    # the 999->000 boundary, so every non-rollover renban/count is identical to before.
+    rep.check("rollover (clean wrap): sub-1000 persisted count unchanged vs both renders (5->'005', 634->'634')",
+              ring3(5) == "005" and ring3(634) == "634"
+              and ring3(5) == ("%03d" % 5)[:3] and ring3(634) == ("%03d" % 634)[:3])
+    rep.check("rollover (clean wrap): next_count EXACTLY 1000 persists ring3(1000)='000' (was '100' pre-cutover)",
+              ring3(1000) == "000" and ring3(1000) != ("%03d" % 1000)[:3])
+    # a run that does NOT cross 999 is identical to the legacy: same seed, sub-1000 rcounts -> no change.
+    res_nowrap = renban.compute_trailer_breakdown([_part("Q5100", 30, 150, seed="CMWA288")], 5, 2, "CMWA")
+    nowrap_renbans = sorted(r["renban"] for r in res_nowrap["rows"])
+    rep.check("clean wrap is a NO-OP for a non-rollover run (seed 288 -> CMWA288..292, count 293 unchanged)",
+              nowrap_renbans == ["CMWA288", "CMWA289", "CMWA290", "CMWA291", "CMWA292"]
+              and ring3(res_nowrap["next_count"]) == "293" and res_nowrap["next_count"] == 293,
+              "renbans=%s next_count=%s" % (nowrap_renbans, res_nowrap["next_count"]))
 
     # --- 9. Conservation: total emitted lots == total input lots (no lot lost/duplicated) --------
     parts = [_part("Q4000", 40, 200), _part("Q5000", 30, 300), _part("Q8000", 40, 360)]  # 5+10+9=24 lots

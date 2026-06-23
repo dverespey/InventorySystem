@@ -31,7 +31,11 @@ SELECT
     (SELECT COUNT(*)                       FROM INV_PARTS_STOCK_MST WHERE IN_QTY <= 0)                  AS PartsShort,
     (SELECT COUNT(*)                       FROM INV_PARTS_STOCK_MST WHERE IN_QTY < IN_1LOTQTY)          AS PartsBelowLot,
     (SELECT COUNT(*)                       FROM INV_STOCKTAKING_INF)                                    AS StocktakeEntries,
-    (SELECT COUNT(*)                       FROM INV_SUPPLIER_MST)                                       AS Suppliers;
+    (SELECT COUNT(*)                       FROM INV_SUPPLIER_MST)                                       AS Suppliers,
+    -- P4: active (unresolved) RENBAN_COLLISION alarms -> the home-hub attention rail. Reuses the
+    -- INV_EDI_ALARM_REJ surface the 824/997 inbound alarms use (BIT_RESOLVED=0 = active).
+    (SELECT COUNT(*) FROM INV_EDI_ALARM_REJ
+       WHERE VC_ALARM_TYPE = 'RENBAN_COLLISION' AND BIT_RESOLVED = 0)                                   AS RenbanCollisions;
 
 -- ---- Home/kpiTopShort --------------------------------------------------------
 SELECT TOP 1 VC_PARTS_NAME AS PartName, IN_QTY AS Qty

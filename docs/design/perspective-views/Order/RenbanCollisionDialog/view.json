@@ -1,0 +1,260 @@
+{
+  "custom": {
+    "warn": "",
+    "nextFreeText": "",
+    "confirmOverride": false,
+    "result": ""
+  },
+  "params": {
+    "group": "",
+    "trailers": 0,
+    "pallets": 0,
+    "collisions": [],
+    "nextFree": null,
+    "alarmId": null,
+    "acknowledged": []
+  },
+  "propConfig": {},
+  "props": {
+    "defaultSize": {
+      "width": 560,
+      "height": 460
+    }
+  },
+  "root": {
+    "type": "ia.container.flex",
+    "meta": {
+      "name": "root",
+      "domId": "renban-collision-root"
+    },
+    "props": {
+      "direction": "column",
+      "gap": 8,
+      "style": {
+        "backgroundColor": "var(--tai-bg, #F5F6F8)",
+        "padding": "18px",
+        "minHeight": "100%",
+        "minWidth": "520px"
+      }
+    },
+    "children": [
+      {
+        "type": "ia.display.label",
+        "meta": {
+          "name": "dh"
+        },
+        "props": {
+          "text": "Renban collision",
+          "style": {
+            "fontSize": "16px",
+            "fontWeight": "700",
+            "color": "var(--tai-danger, #C0392B)"
+          }
+        }
+      },
+      {
+        "type": "ia.display.label",
+        "meta": {
+          "name": "warn",
+          "domId": "rcd-warn"
+        },
+        "props": {
+          "text": "\u2014",
+          "style": {
+            "fontSize": "13.5px",
+            "color": "var(--tai-text, #1F2933)",
+            "margin": "6px 0"
+          }
+        },
+        "propConfig": {
+          "props.text": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.warn"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "ia.display.label",
+        "meta": {
+          "name": "nf",
+          "domId": "rcd-nextfree"
+        },
+        "props": {
+          "text": "Next free run base: \u2014",
+          "style": {
+            "fontSize": "13px",
+            "color": "var(--tai-accent, #2A6FB0)",
+            "fontWeight": "600",
+            "margin": "8px 0"
+          }
+        },
+        "propConfig": {
+          "props.text": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.nextFreeText"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "ia.display.label",
+        "meta": {
+          "name": "gl"
+        },
+        "props": {
+          "text": "Next free run + the colliding open release(s):",
+          "style": {
+            "fontSize": "12px",
+            "color": "var(--tai-text-muted, #6B7785)",
+            "margin": "8px 0 2px"
+          }
+        }
+      },
+      {
+        "type": "ia.display.table",
+        "meta": {
+          "name": "guideTable",
+          "domId": "rcd-guide-table"
+        },
+        "props": {
+          "data": []
+        },
+        "propConfig": {
+          "props.data": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.params.collisions"
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "ia.input.checkbox",
+        "meta": {
+          "name": "confirmOverride",
+          "domId": "rcd-confirm"
+        },
+        "props": {
+          "text": "I understand this reuses an open renban",
+          "selected": false
+        },
+        "propConfig": {
+          "props.selected": {
+            "binding": {
+              "type": "property",
+              "config": {
+                "path": "view.custom.confirmOverride"
+              },
+              "bidirectional": true
+            }
+          }
+        }
+      },
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "fix"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 12
+        },
+        "children": [
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "useNextFree",
+              "domId": "rcd-use-next-free"
+            },
+            "props": {
+              "text": "Use next free",
+              "style": {
+                "backgroundColor": "var(--tai-accent, #2A6FB0)",
+                "color": "var(--tai-on-accent, #FFFFFF)",
+                "border": "1px solid var(--tai-border, #D7DCE2)",
+                "borderRadius": "8px",
+                "padding": "8px 16px"
+              }
+            },
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "config": {
+                    "script": "\tlog = system.util.getLogger(\"SPIKE.renban.ui\")\n\tp = self.view.params\n\timport renban\n\timport auth as A\n\tif p.nextFree is None:\n\t\tself.view.custom.warn = \"No free run available \u2014 close a stale release first, then cancel.\"; return\n\ttry:\n\t\tA.requireWrite(self.session)   # SERVER-SIDE WRITE GATE (BLOCKER-2)\n\t\tsiteId = self.session.custom.siteId if hasattr(self.session.custom, \"siteId\") else None\n\t\tres = renban.commit_renban_breakdown(p.group, int(p.trailers), int(p.pallets), \"Inventory_Spike\",\n\t\t\tresolution={\"action\": \"use_next_free\", \"base\": int(p.nextFree), \"alarm_id\": p.alarmId},\n\t\t\tsiteId=siteId, session=self.session)\n\t\tself.view.custom.result = res[\"status\"]\n\t\tif res[\"status\"] == \"COLLISION\":\n\t\t\tself.view.custom.warn = \"Lost race: the suggested run was taken. Re-run the breakdown.\"; return\n\t\tlog.info(\"SPIKE renban use_next_free committed base=%s\" % p.nextFree)\n\t\tsystem.perspective.closePopup(\"renbanCollision\")\n\texcept A.AuthError, ae:\n\t\tself.view.custom.warn = \"DENIED (server-side): %s\" % ae\n\t\tlog.warn(\"SPIKE renban use_next_free DENIED (server-side gate): %s\" % ae)\n\texcept Exception, e:\n\t\tself.view.custom.warn = \"Use-next-free failed: %s\" % e\n"
+                  },
+                  "scope": "G",
+                  "type": "script"
+                }
+              }
+            }
+          },
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "override",
+              "domId": "rcd-override"
+            },
+            "props": {
+              "text": "Proceed anyway",
+              "style": {
+                "backgroundColor": "var(--tai-danger, #C0392B)",
+                "color": "var(--tai-on-accent, #FFFFFF)",
+                "border": "1px solid var(--tai-border, #D7DCE2)",
+                "borderRadius": "8px",
+                "padding": "8px 16px"
+              }
+            },
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "config": {
+                    "script": "\t# PROCEED ANYWAY: requires the confirm checkbox (a second confirm \u2014 they may know the old release\n\t# is closing). Acknowledged set = the renbans the operator SAW colliding (params.acknowledged), so\n\t# the in-tx re-check still aborts on a DIFFERENT number taken newly since the WARN.\n\tlog = system.util.getLogger(\"SPIKE.renban.ui\")\n\tc = self.view.custom; p = self.view.params\n\tif not c.confirmOverride:\n\t\tc.warn = \"Tick 'I understand this reuses an open renban' to proceed anyway.\"; return\n\timport renban\n\timport auth as A\n\ttry:\n\t\tA.requireWrite(self.session)   # SERVER-SIDE WRITE GATE (BLOCKER-2)\n\t\tsiteId = self.session.custom.siteId if hasattr(self.session.custom, \"siteId\") else None\n\t\tres = renban.commit_renban_breakdown(p.group, int(p.trailers), int(p.pallets), \"Inventory_Spike\",\n\t\t\tresolution={\"action\": \"override\", \"alarm_id\": p.alarmId, \"acknowledged\": list(p.acknowledged or [])},\n\t\t\tsiteId=siteId, actor=\"operator\", session=self.session)\n\t\tc.result = res[\"status\"]\n\t\tif res[\"status\"] == \"COLLISION\":\n\t\t\tc.warn = \"Lost race: a NEW number was taken since the warning. Re-run the breakdown.\"; return\n\t\tlog.info(\"SPIKE renban override committed group=%s\" % p.group)\n\t\tsystem.perspective.closePopup(\"renbanCollision\")\n\texcept A.AuthError, ae:\n\t\tc.warn = \"DENIED (server-side): %s\" % ae\n\t\tlog.warn(\"SPIKE renban override DENIED (server-side gate): %s\" % ae)\n\texcept Exception, e:\n\t\tc.warn = \"Override failed: %s\" % e\n"
+                  },
+                  "scope": "G",
+                  "type": "script"
+                }
+              }
+            }
+          },
+          {
+            "type": "ia.input.button",
+            "meta": {
+              "name": "cancel",
+              "domId": "rcd-cancel"
+            },
+            "props": {
+              "text": "Cancel",
+              "style": {
+                "backgroundColor": "var(--tai-surface, #FFFFFF)",
+                "color": "var(--tai-text, #1F2933)",
+                "border": "1px solid var(--tai-border, #D7DCE2)",
+                "borderRadius": "8px",
+                "padding": "8px 16px"
+              }
+            },
+            "events": {
+              "component": {
+                "onActionPerformed": {
+                  "config": {
+                    "script": "\t# CANCEL is purely client-side: NO driver call. The RENBAN_COLLISION alarm STAYS active\n\t# (BIT_RESOLVED=0) on the home hub as a standing reminder to go close the stale release.\n\tsystem.util.getLogger(\"SPIKE.renban.ui\").info(\"SPIKE renban collision CANCELLED (alarm left active)\")\n\tsystem.perspective.closePopup(\"renbanCollision\")\n"
+                  },
+                  "scope": "G",
+                  "type": "script"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
