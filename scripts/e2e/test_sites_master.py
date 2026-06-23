@@ -353,7 +353,7 @@ def _deployed_save_script():
     """Pull the sites-save-btn onActionPerformed script from the DEPLOYED gateway view.json, so we can
     assert the harness drives the SAME source the running session serves (not just the generator)."""
     import json
-    gw = os.path.join("/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective"
+    gw = os.path.join("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
                       "/views/Master/Sites/Sites/view.json")
     if not os.path.exists(gw):
         return None

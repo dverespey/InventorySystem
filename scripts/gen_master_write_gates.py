@@ -56,7 +56,7 @@ VIEWS = ["Size", "Supplier", "PartsStock", "ManifestCost", "RenbanGroup", "Assem
 
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REPO_BASE = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views", "Master")
-GW_BASE = ("/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective"
+GW_BASE = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
            "/views/Master")
 
 # The button components whose onActionPerformed scripts get the gate. Save + Delete are the DB writes
