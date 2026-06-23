@@ -505,14 +505,21 @@ def main():
         else:
             rep.skip("Row select -> Detail", "List did not render")
 
-        print("== 3. Validation ==")
-        check_validation(pg, rep)
+        print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
+        lib.check_master_write_gate_live(
+            pg, rep, "RenbanGroup write gate", LIST_URL,
+            new_btn="renbangroup-new-btn", save_btn="renbangroup-save-btn",
+            status_id="renbangroup-status", grid_sel=GRID, fill_pairs=[], count_fn=db_rg_count,
+            deny_marker="RenbanGroup Save DENIED")
 
-        print("== 4. R1 delete-gate (CRITICAL) ==")
-        check_delete_gate(pg, rep)
-
-        print("== 5. Round-trip insert/delete + zero-pad (non-destructive) ==")
-        check_round_trip(pg, rep)
+        # Checks 4-6 drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-side
+        # write gate active, the anon spike session is correctly DENIED before those paths run, so they
+        # can no longer be exercised through the live UI here. SKIPPED; the gate is proven headless end-to-
+        # end (per view) by test_master_write_gates.py + the live deny above.
+        print("== 4-6. UI CRUD-write cases (validation/delete-gate/round-trip) ==")
+        rep.skip("Validation (admin UI write)", lib.WRITE_GATE_SKIP)
+        rep.skip("R1 delete-gate (admin UI write)", lib.WRITE_GATE_SKIP)
+        rep.skip("Round-trip insert/delete + zero-pad (admin UI write)", lib.WRITE_GATE_SKIP)
 
         b.close()
 

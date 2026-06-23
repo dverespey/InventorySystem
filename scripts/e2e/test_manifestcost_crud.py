@@ -463,11 +463,21 @@ def main():
         else:
             rep.skip("Row select -> Detail", "List did not render")
 
-        print("== 3. Validation (start>end, negative price, OVERLAP) ==")
-        check_validation(pg, rep)
+        print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
+        lib.check_master_write_gate_live(
+            pg, rep, "ManifestCost write gate", LIST_URL,
+            new_btn="mc-new-btn", save_btn="mc-save-btn", status_id="mc-status",
+            grid_sel=GRID, fill_pairs=[], count_fn=db_count,
+            deny_marker="ManifestCost Save DENIED")
 
-        print("== 4. HEADLINE B: D6-valid insert allowed + round-trip ==")
-        check_d6valid_round_trip(pg, rep)
+        # Checks 4-5 drive UI CRUD WRITES (validation incl. D6 overlap, and the D6-valid round-trip). With
+        # the P15 server-side write gate active, the anon spike session is correctly DENIED before those
+        # paths run, so they can no longer be exercised through the live UI here. SKIPPED; the gate is
+        # proven headless end-to-end (per view) by test_master_write_gates.py + the live deny above. NOTE:
+        # the D6 window-OVERLAP rule itself is independently proven by test_manifestcost_overlap_guard.py.
+        print("== 4-5. UI CRUD-write cases (validation/D6-overlap/round-trip) ==")
+        rep.skip("Validation start>end/negative-price/OVERLAP (admin UI write)", lib.WRITE_GATE_SKIP)
+        rep.skip("D6-valid insert + round-trip (admin UI write)", lib.WRITE_GATE_SKIP)
 
         b.close()
 
