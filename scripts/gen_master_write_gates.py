@@ -60,8 +60,12 @@ GW_BASE = ("/usr/local/ignition/data/projects/spike/com.inductiveautomation.pers
            "/views/Master")
 
 # The button components whose onActionPerformed scripts get the gate. Save + Delete are the DB writes
-# (the required security boundary); New is a form-reset gated for UI defense-in-depth parity with Sites.
-GATED_BUTTONS = ("SaveButton", "DeleteButton", "NewButton")
+# (the required security boundary). NewButton is NOT gated: it is a NO-DB-WRITE form reset (identical to
+# the ungated ClearButton), so gating it was inconsistent with Clear and would deny a read-only viewer
+# from starting a new entry. P16 NIT: gate the WRITES, not the resets — New + Clear are consistent = NEITHER
+# gated. UNGATE_BUTTONS below is the idempotent REMOVAL of the gate previously injected into NewButton.
+GATED_BUTTONS = ("SaveButton", "DeleteButton")
+UNGATE_BUTTONS = ("NewButton",)
 
 # The unambiguous anchor: this exact line occurs ONCE in every gated script. The guard is inserted
 # immediately AFTER it (so `c` is already bound for the deny-message statusMsg write).
@@ -124,6 +128,34 @@ def inject_gate(script, view_name, button_name):
     return "\n".join(new_lines), True
 
 
+def remove_gate(script, view_name, button_name):
+    """Idempotent REMOVAL of the injected write-gate block from a script (the P16 NIT: New is no longer
+    gated). Returns (new_script, changed). The injected block is the contiguous run of lines from the
+    "# ---- SERVER-SIDE WRITE GATE" marker through the DENIED-log `... ; return` line (8 lines, exactly as
+    guard_block emits). Defensive: if the marker is absent -> no-op; if present we strip the marker line
+    through the first line that ends with `); return` (the deny-log terminator)."""
+    if GATED_MARKER not in script:
+        return script, False
+    lines = script.split("\n")
+    starts = [i for i, ln in enumerate(lines)
+              if ln.strip().startswith("# ---- SERVER-SIDE WRITE GATE")]
+    if len(starts) != 1:
+        raise ValueError("IRREGULAR gate to remove in %s/%s: marker found %d times (expected 1)"
+                         % (view_name, button_name, len(starts)))
+    i = starts[0]
+    # find the terminator: the deny-log line ending with `); return` after the marker.
+    j = None
+    for k in range(i, len(lines)):
+        if lines[k].rstrip().endswith("); return"):
+            j = k
+            break
+    if j is None:
+        raise ValueError("IRREGULAR gate to remove in %s/%s: no deny-log terminator after the marker"
+                         % (view_name, button_name))
+    new_lines = lines[:i] + lines[j + 1:]
+    return "\n".join(new_lines), True
+
+
 def _find_button_node(node, button_name):
     """Return the component dict whose meta.name == button_name (depth-first), else None."""
     if isinstance(node, dict):
@@ -141,26 +173,35 @@ def _find_button_node(node, button_name):
     return None
 
 
+def _button_cfg(view, view_name, btn):
+    comp = _find_button_node(view.get("root", {}), btn)
+    if comp is None:
+        raise ValueError("%s: expected button component %r not found (irregular structure)"
+                         % (view_name, btn))
+    try:
+        cfg = comp["events"]["component"]["onActionPerformed"]["config"]
+    except (KeyError, TypeError):
+        raise ValueError("%s/%s: no onActionPerformed script (irregular structure)" % (view_name, btn))
+    if cfg.get("script") is None:
+        raise ValueError("%s/%s: onActionPerformed has no script string" % (view_name, btn))
+    return cfg
+
+
 def process_view(view, view_name):
-    """Mutate `view` (a parsed view.json dict) in place: gate each of GATED_BUTTONS. Returns a list of
-    (button_name, changed) results. Raises if a targeted button is missing or its script is irregular."""
+    """Mutate `view` (a parsed view.json dict) in place: GATE each of GATED_BUTTONS (Save/Delete writes)
+    and UNGATE each of UNGATE_BUTTONS (New — the P16 no-DB-write reset). Returns a list of
+    (button_name, action, changed) results. Raises if a targeted button is missing or irregular."""
     results = []
     for btn in GATED_BUTTONS:
-        comp = _find_button_node(view.get("root", {}), btn)
-        if comp is None:
-            raise ValueError("%s: expected button component %r not found (irregular structure)"
-                             % (view_name, btn))
-        try:
-            cfg = comp["events"]["component"]["onActionPerformed"]["config"]
-        except (KeyError, TypeError):
-            raise ValueError("%s/%s: no onActionPerformed script (irregular structure)"
-                             % (view_name, btn))
-        src = cfg.get("script")
-        if src is None:
-            raise ValueError("%s/%s: onActionPerformed has no script string" % (view_name, btn))
-        new_src, changed = inject_gate(src, view_name, btn)
+        cfg = _button_cfg(view, view_name, btn)
+        new_src, changed = inject_gate(cfg["script"], view_name, btn)
         cfg["script"] = new_src
-        results.append((btn, changed))
+        results.append((btn, "gate", changed))
+    for btn in UNGATE_BUTTONS:
+        cfg = _button_cfg(view, view_name, btn)
+        new_src, changed = remove_gate(cfg["script"], view_name, btn)
+        cfg["script"] = new_src
+        results.append((btn, "ungate", changed))
     return results
 
 
@@ -195,27 +236,32 @@ def _normalize_repo_resource(path):
 
 def run(check_only=False):
     any_change = False
-    any_ungated = False
+    bad = False
     for V in VIEWS:
         repo_path = os.path.join(REPO_BASE, V, V, "view.json")
         view = json.load(open(repo_path))
         if check_only:
-            # report-only: is every gated button already gated?
+            # report-only: Save/Delete must be GATED; New must be UNGATED (P16).
             states = []
             for btn in GATED_BUTTONS:
-                comp = _find_button_node(view.get("root", {}), btn)
-                src = comp["events"]["component"]["onActionPerformed"]["config"]["script"] if comp else ""
+                src = _button_cfg(view, V, btn)["script"]
                 gated = GATED_MARKER in src
                 states.append("%s=%s" % (_op_label(btn), "GATED" if gated else "UNGATED"))
                 if not gated:
-                    any_ungated = True
+                    bad = True
+            for btn in UNGATE_BUTTONS:
+                src = _button_cfg(view, V, btn)["script"]
+                ungated = GATED_MARKER not in src
+                states.append("%s=%s" % (_op_label(btn), "UNGATED" if ungated else "GATED"))
+                if not ungated:
+                    bad = True
             print("  %-15s %s" % (V, ", ".join(states)))
             continue
 
         results = process_view(view, V)
-        changed = [b for b, c in results if c]
-        skipped = [b for b, c in results if not c]
-        # write the gated view to BOTH the committed repo copy AND the deployed gateway copy.
+        changed = ["%s:%s" % (_op_label(b), act) for b, act, c in results if c]
+        skipped = ["%s:%s" % (_op_label(b), act) for b, act, c in results if not c]
+        # write the view to BOTH the committed repo copy AND the deployed gateway copy.
         _write_view(repo_path, view)
         gw_path = os.path.join(GW_BASE, V, V, "view.json")
         _write_view(gw_path, view)
@@ -224,12 +270,12 @@ def run(check_only=False):
         res_changed = _normalize_repo_resource(os.path.join(REPO_BASE, V, V, "resource.json"))
         if changed:
             any_change = True
-        print("  %-15s gated=%s skipped(already)=%s repo-resource-stripped=%s -> wrote repo + gateway"
-              % (V, [_op_label(b) for b in changed], [_op_label(b) for b in skipped], res_changed))
+        print("  %-15s changed=%s noop=%s repo-resource-stripped=%s -> wrote repo + gateway"
+              % (V, changed, skipped, res_changed))
 
     if check_only:
-        return 1 if any_ungated else 0
-    print("\nDONE. %s" % ("changes applied" if any_change else "no changes (all already gated — idempotent no-op)"))
+        return 1 if bad else 0
+    print("\nDONE. %s" % ("changes applied" if any_change else "no changes (idempotent no-op)"))
     return 0
 
 
