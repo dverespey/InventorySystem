@@ -482,12 +482,175 @@ class _Date(object):
         return d.strftime(py)
 
 
+# ---------------------------------------------------------------------------
+# system.user / system.perspective stand-ins (M4 auth). The auth project-library module
+# (docs/analysis/production-readiness/project-library/auth/code.py) calls system.user.* (the user-mgmt
+# ops) and resolves the caller's roles from the SESSION (server-side). These stand-ins back those calls
+# with an in-memory user source so test_m4_auth.py drives the REAL gateway-side gate + user ops headless
+# WITHOUT mutating the live gateway user source. Mirrors the 8.1 PyUser / UIResponse / addUser shape.
+# ---------------------------------------------------------------------------
+
+class _UIResponse(object):
+    """Minimal system.user.* UIResponse: getErrors()/getWarns()/getInfos()."""
+    def __init__(self, errors=None, warns=None, infos=None):
+        self._e, self._w, self._i = list(errors or []), list(warns or []), list(infos or [])
+
+    def getErrors(self): return self._e
+    def getWarns(self): return self._w
+    def getInfos(self): return self._i
+
+
+class _PyUser(object):
+    """Minimal PyUser: username, roles, a 'password' marker (HASHED — we store a sentinel, NEVER the
+    plaintext, mirroring the Internal source which hashes), and contact info (type,value) pairs.
+    The auth module uses addRole / set('password', ..) / getContactInfo / setContactInfo."""
+    PasswordLastChanged = "PasswordLastChanged"
+
+    def __init__(self, username):
+        self.username = username
+        self._roles = []
+        self._contacts = []                 # list of (type, value)
+        self._password_set = False
+        self._password_changed = None       # epoch-ish marker; the harness only checks set/never-set
+
+    # --- the API the auth module + the User Admin list builder use ---
+    def getUsername(self):
+        return self.username
+
+    def getRoles(self):
+        return list(self._roles)
+
+    def addRole(self, r):
+        if r not in self._roles:
+            self._roles.append(r)
+
+    def set(self, key, value):
+        if key == "password":
+            # CRITICAL: never store the plaintext. Record only that a (hashed) password now exists.
+            self._password_set = True
+            self._password_changed = time.time()
+        else:
+            setattr(self, "_" + key, value)
+
+    def get(self, key):
+        if key == self.PasswordLastChanged:
+            return self._password_changed
+        return getattr(self, "_" + str(key), None)
+
+    def getContactInfo(self):
+        # 8.1: returns ContactInfo objects exposing .contactType / .value
+        return [_ContactInfo(t, v) for (t, v) in self._contacts]
+
+    def addContactInfo(self, ctype, value):
+        # 8.1: addContactInfo(contactType, value)
+        self._contacts.append((ctype, value))
+
+    def removeContactInfo(self, ctype, value):
+        # 8.1: removeContactInfo(type, value) — exact-match delete
+        self._contacts = [c for c in self._contacts if c != (ctype, value)]
+
+    # --- harness introspection ---
+    def roles(self): return list(self._roles)
+    def password_set(self): return self._password_set
+
+
+class _ContactInfo(object):
+    """8.1 ContactInfo: exposes .contactType / .value (properties) AND the getter shape for portability."""
+    def __init__(self, t, v):
+        self.contactType, self.value = t, v
+    def getContactType(self): return self.contactType
+    def getValue(self): return self.value
+
+
+class _UserModule(object):
+    """In-memory stand-in for system.user (per-source dicts of _PyUser). Seed test users via add_seed()."""
+    def __init__(self):
+        self._sources = {}                   # source name -> {username: _PyUser}
+
+    def _src(self, source):
+        return self._sources.setdefault(source, {})
+
+    def getNewUser(self, source, username):
+        return _PyUser(username)
+
+    def addUser(self, source, user):
+        s = self._src(source)
+        if user.username in s:
+            return _UIResponse(errors=["User '%s' already exists" % user.username])
+        s[user.username] = user
+        return _UIResponse(infos=["added %s" % user.username])
+
+    def editUser(self, source, user):
+        s = self._src(source)
+        s[user.username] = user
+        return _UIResponse(infos=["edited %s" % user.username])
+
+    def removeUser(self, source, username):
+        s = self._src(source)
+        if username in s:
+            del s[username]
+            return _UIResponse(infos=["removed %s" % username])
+        return _UIResponse(errors=["No such user '%s'" % username])
+
+    def getUser(self, source, username):
+        return self._src(source).get(username)
+
+    def getUsers(self, source):
+        return list(self._src(source).values())
+
+    # --- harness helpers ---
+    def add_seed(self, source, username, roles, password_set=True):
+        u = _PyUser(username)
+        for r in roles:
+            u.addRole(r)
+        if password_set:
+            u.set("password", "x")
+        self._src(source)[username] = u
+        return u
+
+    def usernames(self, source):
+        return sorted(self._src(source).keys())
+
+
+class _PerspectiveModule(object):
+    """Minimal system.perspective for the gate. isAuthorized(isAllOf, securityLevels, sessionId) maps a
+    session's roles -> the Authenticated/Roles/<Role> security levels (the convention the auth module +
+    the Sites view both use). The harness registers a session's roles via register_session()."""
+    def __init__(self):
+        self._sessions = {}                  # sessionId -> set(roles)
+
+    def register_session(self, sessionId, roles):
+        self._sessions[sessionId] = set(roles or [])
+
+    def isAuthorized(self, isAllOf, securityLevels, sessionId=None):
+        roles = self._sessions.get(sessionId, set())
+        have = set("Authenticated/Roles/" + r for r in roles)
+        if not roles:
+            return False
+        want = set(securityLevels)
+        return want <= have if isAllOf else bool(want & have)
+
+
 class _System(object):
     def __init__(self):
         self.db = _DB()
         self.util = _Util()
         self.file = _File()
         self.date = _Date()
+        self.user = _UserModule()
+        self.perspective = _PerspectiveModule()
+
+
+def _py2_builtins():
+    """Jython 2.7 builtins the gateway provides but CPython3 does not, so a project-library module
+    written for the gateway (which legitimately uses unicode/basestring/xrange) loads + runs under the
+    CPython3 harness exactly as the gateway runs it. Injected into the loaded module's namespace."""
+    return {
+        "unicode": str,
+        "basestring": str,
+        "xrange": range,
+        "unichr": chr,
+    }
 
 
 def load_wrapper(name, code_path, extra_globals=None):
@@ -496,6 +659,8 @@ def load_wrapper(name, code_path, extra_globals=None):
     spec = importlib.util.spec_from_file_location(name, code_path)
     mod = importlib.util.module_from_spec(spec)
     mod.system = _System()
+    for k, v in _py2_builtins().items():
+        setattr(mod, k, v)
     if extra_globals:
         for k, v in extra_globals.items():
             setattr(mod, k, v)

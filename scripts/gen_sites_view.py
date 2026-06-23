@@ -22,10 +22,19 @@ config editor for that deployment's site. Practically:
 
 SITES-MASTER-SPECIFIC (differs from every other master — see the SQL header in
 docs/analysis/master-data/master-crud-namedqueries.sql):
-  #1 ADMIN-GATED  -> in-view custom.isAdmin gate (defense-in-depth; the enforced
-                     role-gate + the production-control user land in M4 piece 2 —
-                     needs Designer view-permissions + an IdP this spike lacks —
-                     reported, not faked).
+  #1 ROLE-GATED  -> the WRITE (Save/Delete/New) is enforced SERVER-SIDE: each write
+                     button calls auth.requireWrite(self.session) FIRST, which resolves
+                     the caller's roles FROM THE SESSION (gateway-side) and authorizes
+                     ProductionControl|Admin, raising AuthError on deny — BEFORE any
+                     system.db write. This closes the reintroduced legacy H3 hole (the
+                     write was previously authorized CLIENT-SIDE only via custom.isAdmin).
+                     The in-view custom.mayEdit prop (now PROTECTED, so it cannot be
+                     browser-forged) STAYS but ONLY as UI defense-in-depth (hide the
+                     form/buttons); it is NOT the security boundary. A forged client prop
+                     or an anonymous session is rejected by the server-side gate
+                     regardless. (Page-level role-permission in the Designer is the
+                     authoritative UI gate; the qaAdmin URL hatch is spike-only for the
+                     headless harness and does NOT affect the server-side write gate.)
   #2 NO SITE FILTER on list/get (moot under single-site; see above).
   #3 read-only system fields shown disabled (IN_SITE_ID, IN_EIN_SEQ,
                      VC_LAST_FORECAST_IMPORT, VC_LAST_UPDATE, VC_ADD).
@@ -142,7 +151,10 @@ WRITABLE = [f for f in F if f[3] not in ("ro_text", "ro_num")]
 
 
 def custom_defaults():
-    c = {"recordId": 0, "runNonce": 0, "searchTerm": "", "statusMsg": "", "isAdmin": False}
+    # `mayEdit` (renamed from isAdmin) is the UI-visibility prop ONLY — gateway-bound + PROTECTED so it
+    # cannot be browser-forged; it is NOT the write boundary (that is the server-side auth.requireWrite
+    # call in Save/Delete/New). Defaults False (fails closed in the headless spike with no IdP).
+    c = {"recordId": 0, "runNonce": 0, "searchTerm": "", "statusMsg": "", "mayEdit": False}
     for key, _, _, kind, _, default, _, _ in F:
         c[key] = default
     return c
@@ -325,15 +337,22 @@ def new_script():
     # mode default 'AUTO' should be a string literal
     return (
         "\t# New record: same-view prop write (NO navigation). recordId=0 -> insert mode.\n"
-        "\t# Admin-gate (rule #1, defense-in-depth): non-admins cannot start a new site.\n"
+        "\t# SERVER-SIDE WRITE GATE (rule #1): auth.requireWrite resolves the SESSION's roles gateway-\n"
+        "\t# side and authorizes ProductionControl|Admin, raising AuthError on deny. A forged client prop\n"
+        "\t# or an anon session is rejected HERE, not by the UI. The c.mayEdit check below is UI defense-\n"
+        "\t# in-depth only (and mayEdit is PROTECTED, so it can't be browser-forged anyway).\n"
+        "\timport auth as A\n"
+        "\tlog = system.util.getLogger(\"SPIKE\")\n"
         "\tc = self.view.custom\n"
-        "\tif not c.isAdmin:\n"
-        "\t\tc.statusMsg = \"Admin only — you do not have permission to add sites.\"\n"
-        "\t\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Sites New BLOCKED: not admin\"); return\n"
+        "\ttry:\n"
+        "\t\tA.requireWrite(self.session)\n"
+        "\texcept A.AuthError, e:\n"
+        "\t\tc.statusMsg = \"DENIED (server-side): %s\" % unicode(e)\n"
+        "\t\tlog.warn(\"SPIKE Sites New DENIED (server-side gate): %s\" % unicode(e)); return\n"
         + clears + "\n"
         "\tc.recordId = 0\n"
         "\tc.statusMsg = \"New site — enter details and Save.\"\n"
-        "\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Sites New -> recordId=0 (insert mode)\")\n"
+        "\tlog.info(\"SPIKE Sites New -> recordId=0 (insert mode)\")\n"
     )
 
 
@@ -418,14 +437,21 @@ def save_script():
         "\t# recordId==0 -> insert (IDENTITY assigns id, VC_ADD stamped); >0 -> update\n"
         "\t# (VC_LAST_UPDATE stamped). RULE #3: IN_SITE_ID/IN_EIN_SEQ/VC_LAST_FORECAST_IMPORT\n"
         "\t# are NEVER written by the form. RULE #2: no site predicate.\n"
+        "\timport auth as A\n"
         "\tlog = system.util.getLogger(\"SPIKE\")\n"
         "\tDB = \"Inventory_Spike\"\n"
         "\tc = self.view.custom\n"
         "\trecId = int(c.recordId or 0)\n"
-        "\t# Admin-gate (rule #1, defense-in-depth):\n"
-        "\tif not c.isAdmin:\n"
-        "\t\tc.statusMsg = \"Admin only — you do not have permission to save sites.\"\n"
-        "\t\tlog.info(\"SPIKE Sites save BLOCKED: not admin\"); return\n"
+        "\t# ---- SERVER-SIDE WRITE GATE (rule #1, the H3 hole-closer) ----\n"
+        "\t# auth.requireWrite resolves the SESSION's roles GATEWAY-SIDE (not the client mayEdit prop)\n"
+        "\t# and authorizes ProductionControl|Admin, raising AuthError on deny — BEFORE any system.db\n"
+        "\t# write. A forged client prop (mayEdit=true via devtools) or an anon session is rejected HERE.\n"
+        "\t# The c.mayEdit / form-hide is UI defense-in-depth only; this call is the enforcement boundary.\n"
+        "\ttry:\n"
+        "\t\tA.requireWrite(self.session)\n"
+        "\texcept A.AuthError, e:\n"
+        "\t\tc.statusMsg = \"DENIED (server-side): %s\" % unicode(e)\n"
+        "\t\tlog.warn(\"SPIKE Sites save DENIED (server-side gate): %s\" % unicode(e)); return\n"
         "\tdef _str(v):\n"
         "\t\ts = (unicode(v) if v is not None else u\"\").strip()\n"
         "\t\treturn s\n"
@@ -527,14 +553,20 @@ def delete_script():
         "\t# refCount counts the THROWAWAY INV_PARTS_STOCK_MST.site_id (no FK yet).\n"
         "\t# ⚠️ MUST be EXTENDED to every IN_SITE_ID child once M4 wires the FKs.\n"
         "\t# Block on any non-zero total; never delete a referenced site.\n"
+        "\timport auth as A\n"
         "\tlog = system.util.getLogger(\"SPIKE\")\n"
         "\tDB = \"Inventory_Spike\"\n"
         "\tc = self.view.custom\n"
         "\trecId = int(c.recordId or 0)\n"
         "\tabbr = (unicode(c.form_abbr) if c.form_abbr is not None else u\"\").strip()\n"
-        "\tif not c.isAdmin:\n"
-        "\t\tc.statusMsg = \"Admin only — you do not have permission to delete sites.\"\n"
-        "\t\tlog.info(\"SPIKE Sites DELETE BLOCKED: not admin\"); return\n"
+        "\t# ---- SERVER-SIDE WRITE GATE (rule #1, the H3 hole-closer) ----\n"
+        "\t# Roles from the SESSION (gateway-side), NOT the client mayEdit prop. Rejected before the\n"
+        "\t# refCount read + the DELETE. A forged prop / anon session cannot delete a site.\n"
+        "\ttry:\n"
+        "\t\tA.requireWrite(self.session)\n"
+        "\texcept A.AuthError, e:\n"
+        "\t\tc.statusMsg = \"DENIED (server-side): %s\" % unicode(e)\n"
+        "\t\tlog.warn(\"SPIKE Sites DELETE DENIED (server-side gate): %s\" % unicode(e)); return\n"
         "\tif recId == 0:\n"
         "\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n"
         "\t\treturn\n"
@@ -575,18 +607,31 @@ def build_view():
                     "type": "expr",
                 }
             },
-            # ---- Admin-gate (rule #1, defense-in-depth) ----
-            # AUTHORITATIVE prod gate is isAuthorized(false,"Authenticated/Roles/Admin"),
-            # which needs an IdP + an "Admin" security level THIS HEADLESS SPIKE LACKS
-            # (anonymous sessions, no IdP) -> it fails CLOSED (false) here, the correct
-            # prod behavior. The OR-branch is a SPIKE-ONLY escape hatch: the e2e harness
-            # opens /sites?qaAdmin=1 (page.props.urlParams.qaAdmin). In prod the page is
-            # role-gated in the Designer so the URL hatch is unreachable by non-admins.
-            # IG83-TODO: drop the qaAdmin branch + enforce via Designer view permissions.
-            "custom.isAdmin": {
+            # ---- UI-VISIBILITY GATE (defense-in-depth ONLY — NOT the write boundary) ----
+            # CONFIRMED MODEL (David 2026-06-22): Admin = user add/delete/reset ONLY; ProductionControl
+            # = EVERYTHING ELSE in the app — INCLUDING the Sites config. So the Sites screen is
+            # ProductionControl-editable, NOT Admin-only.
+            #   * `mayEdit` (renamed from isAdmin) hides the form/buttons from a viewer who can't edit. It
+            #     is UI defense-in-depth ONLY. The ENFORCED write gate is the SERVER-SIDE
+            #     auth.requireWrite(self.session) call in Save/Delete/New (resolves SESSION roles gateway-
+            #     side, authorizes ProductionControl|Admin, raises on deny). A forged client prop or anon
+            #     session CANNOT write regardless of this binding.
+            #   * `access: PROTECTED` -> the back-end IGNORES any browser write to mayEdit (devtools /
+            #     websocket), so the UI gate itself can't be forged either. (Per IA docs: a Public prop is
+            #     browser-writable; Protected is read-only from the client.) This hardens the old H3 hole
+            #     where a Public isAdmin prop could be flipped client-side.
+            #   * The binding is evaluated GATEWAY-SIDE: isAuthorized(false,
+            #     "Authenticated/Roles/ProductionControl") needs the IdP + security level THIS HEADLESS
+            #     SPIKE LACKS -> fails CLOSED (false), the correct prod behavior. The OR-branch is the
+            #     SPIKE-ONLY harness hatch (/sites?qaAdmin=1) for UI VISIBILITY; it does NOT affect the
+            #     server-side WRITE gate (which never reads this prop). IG83-TODO: drop the qaAdmin UI
+            #     hatch once Designer page-permissions are configured (then this binding is plain
+            #     isAuthorized(...) and the page is unreachable to a non-ProductionControl user).
+            "custom.mayEdit": {
+                "access": "PROTECTED",
                 "binding": {
                     "config": {
-                        "expression": "isAuthorized(false, \"Authenticated/Roles/Admin\") || {page.props.urlParams.qaAdmin} = \"1\""
+                        "expression": "isAuthorized(false, \"Authenticated/Roles/ProductionControl\") || {page.props.urlParams.qaAdmin} = \"1\""
                     },
                     "type": "expr",
                 }
@@ -611,7 +656,7 @@ def build_view():
                         {
                             "meta": {"name": "Title"},
                             "props": {"style": {"color": "#222222", "fontSize": "15px", "fontWeight": "bold"},
-                                      "text": "Sites Master — List + Detail  ·  INV_SITES (Inventory_Spike)  ·  ADMIN-ONLY · ALL SITES (not site-scoped)"},
+                                      "text": "Sites Master — List + Detail  ·  INV_SITES (Inventory_Spike)  ·  ProductionControl (site config)  ·  single-site deployment"},
                             "type": "ia.display.label",
                         },
                         # admin banner (visible only to non-admins)
@@ -619,10 +664,10 @@ def build_view():
                             "meta": {"domId": "sites-admin-banner", "name": "AdminBanner"},
                             "propConfig": {
                                 "props.text": {"binding": {"config": {
-                                    "expression": "if({view.custom.isAdmin}, '', 'ADMIN ONLY — this screen is restricted. (Enforced role-gate pending Designer view permissions + IdP.)')"},
+                                    "expression": "if({view.custom.mayEdit}, '', 'RESTRICTED — editing the site configuration requires the ProductionControl role.')"},
                                     "type": "expr"}},
                                 "meta.visible": {"binding": {"config": {
-                                    "expression": "!{view.custom.isAdmin}"}, "type": "expr"}},
+                                    "expression": "!{view.custom.mayEdit}"}, "type": "expr"}},
                             },
                             "props": {"style": {"backgroundColor": "#FFF3CD", "border": "1px solid #FFC107",
                                                 "color": "#7A5C00", "fontSize": "12px", "fontWeight": "bold",
@@ -691,7 +736,7 @@ def build_view():
                         },
                         {"meta": {"name": "FooterNote"},
                          "props": {"style": {"color": "#37474F", "fontSize": "11px", "fontStyle": "italic"},
-                                   "text": "Admin-only. NOT site-scoped — shows ALL sites (inverted IG-SITE seam). Single combined view; row-select is an in-view prop write, no navigation. IN_SITE_ID / IN_EIN_SEQ / last-forecast-import / audit fields are read-only (system-maintained)."},
+                                   "text": "ProductionControl-editable (site config). Single-site deployment (one gateway = the site). Single combined view; row-select is an in-view prop write, no navigation. IN_SITE_ID / IN_EIN_SEQ / last-forecast-import / audit fields are read-only (system-maintained)."},
                          "type": "ia.display.label"},
                     ],
                 },
@@ -713,7 +758,7 @@ def build_view():
                         {
                             "meta": {"domId": "sites-form", "name": "Form"},
                             "propConfig": {"meta.visible": {"binding": {"config": {
-                                "expression": "{view.custom.isAdmin}"}, "type": "expr"}}},
+                                "expression": "{view.custom.mayEdit}"}, "type": "expr"}}},
                             "props": {"direction": "column",
                                       "style": {"backgroundColor": "#FFFFFF", "border": "1px solid #D0D4DA",
                                                 "borderRadius": "4px", "gap": "6px", "padding": "12px",
@@ -726,7 +771,7 @@ def build_view():
                             "meta": {"name": "ActionBar"},
                             "position": {"shrink": 0},
                             "propConfig": {"meta.visible": {"binding": {"config": {
-                                "expression": "{view.custom.isAdmin}"}, "type": "expr"}}},
+                                "expression": "{view.custom.mayEdit}"}, "type": "expr"}}},
                             "props": {"alignItems": "center", "style": {"gap": "12px", "padding": "8px 0"}},
                             "type": "ia.container.flex",
                             "children": [

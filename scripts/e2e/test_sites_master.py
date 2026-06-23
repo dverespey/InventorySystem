@@ -238,13 +238,15 @@ FORM_TO_COL = {key: dbcol for (key, _, _, _, dbcol, _, _, _) in gsv.F}
 # ---------------------------------------------------------------------------
 
 class _Custom(object):
-    """Attribute-style stand-in for self.view.custom; seeded from a value map."""
-    def __init__(self, values, is_admin=True, record_id=0):
+    """Attribute-style stand-in for self.view.custom; seeded from a value map.
+    `may_edit` models the (PROTECTED) UI prop — kept settable so we can also FORGE it true while the
+    SESSION carries no write role, proving the SERVER-SIDE gate (not the prop) is what blocks the write."""
+    def __init__(self, values, may_edit=True, record_id=0):
         self.recordId = record_id
         self.runNonce = 0
         self.searchTerm = ""
         self.statusMsg = ""
-        self.isAdmin = is_admin
+        self.mayEdit = may_edit
         for k in FORM_TO_COL:
             setattr(self, k, values.get(k, ""))
 
@@ -254,9 +256,17 @@ class _View(object):
         self.custom = custom
 
 
+# Default session = a ProductionControl operator (a legitimate writer), so the existing data/validation
+# round-trip cases (which assume the write is authorized) pass through the server-side gate untouched.
+_PC_SESSION = {"auth": {"user": {"userName": "op1", "roles": ["ProductionControl"]}}}
+
+
 class _Self(object):
-    def __init__(self, view):
+    def __init__(self, view, session=None):
         self.view = view
+        # self.session is what auth.requireWrite(self.session) reads (server-side roles). Defaults to a
+        # ProductionControl writer for the data/validation cases.
+        self.session = _PC_SESSION if session is None else session
 
 
 class _StubDB(object):
@@ -298,24 +308,44 @@ class _StubSystem(object):
         self.util = _StubUtil()
 
 
+def _register_auth():
+    """Make `import auth as A` (inside the deployed Save/Delete/New scripts) resolve to the REAL auth
+    Project Library module, loaded through the jython_shim. So the server-side write gate the test drives
+    is the EXACT gate code the gateway runs (not a reimplementation). Registered once into sys.modules."""
+    import jython_shim
+    if "auth" not in sys.modules:
+        auth_code = os.path.join(REPO, "docs", "analysis", "production-readiness",
+                                 "project-library", "auth", "code.py")
+        sys.modules["auth"] = jython_shim.load_wrapper("auth", auth_code)
+    return sys.modules["auth"]
+
+
 def _compile_save(save_src):
-    """Wrap the save_script body into a callable under CPython3 (syntactic shims only)."""
-    body = save_src.replace("except Exception, e:", "except Exception as e:")
+    """Wrap the save_script body into a callable under CPython3 (syntactic shims only).
+    The body uses Py2 except syntax for BOTH `except Exception, e:` (the save/DB catch) and
+    `except A.AuthError, e:` (the server-side gate catch) — translate both to `as` so it runs unchanged
+    under CPython3. These are pure syntactic shims; no validation/gate semantics are touched."""
+    import re
+    body = re.sub(r"except (\S+), e:", r"except \1 as e:", save_src)
     src = "def _save(self, system, unicode):\n" + body
     ns = {}
     exec(compile(src, "<sites-save_script>", "exec"), ns)
     return ns["_save"]
 
 
-def run_save_path(values, save_src=None, record_id=0):
+def run_save_path(values, save_src=None, record_id=0, session=None, may_edit=True):
     """Run the deployed save_script over `values`. Returns (write_attempted, statusMsg).
-    write_attempted=False -> the save path REJECTED the input (early return, no db write)."""
+    write_attempted=False -> the save path REJECTED the input (early return, no db write).
+    `session` is the SESSION object auth.requireWrite reads (server-side roles); defaults to a
+    ProductionControl writer. `may_edit` forges the (UI-only) client prop — set it True with a
+    non-write session to prove the SERVER gate, not the prop, is what blocks the write."""
+    _register_auth()
     if save_src is None:
         save_src = gsv.save_script()
     fn = _compile_save(save_src)
     db = _StubDB()
-    cust = _Custom(values, is_admin=True, record_id=record_id)
-    fn(_Self(_View(cust)), _StubSystem(db), str)
+    cust = _Custom(values, may_edit=may_edit, record_id=record_id)
+    fn(_Self(_View(cust), session=session), _StubSystem(db), str)
     return db.write_attempted, cust.statusMsg
 
 
