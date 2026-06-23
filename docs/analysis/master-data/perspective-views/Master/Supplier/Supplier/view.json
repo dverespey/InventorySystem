@@ -154,7 +154,7 @@
          "component": {
           "onActionPerformed": {
            "config": {
-            "script": "\t# New record: same-view prop write (NO navigation). Setting recordId=0 fires the\n\t# custom.recordId onChange -> insert-mode (combos load, form left at seed). If it was\n\t# already 0 we still clear the form so a stale edit doesn't linger.\n\tc = self.view.custom\n\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\tc.recordId = 0\n\tc.statusMsg = \"New supplier \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Supplier New -> recordId=0 (insert mode)\")\n"
+            "script": "\t# New record: same-view prop write (NO navigation). Setting recordId=0 fires the\n\t# custom.recordId onChange -> insert-mode (combos load, form left at seed). If it was\n\t# already 0 we still clear the form so a stale edit doesn't linger.\n\tc = self.view.custom\n\t# ---- SERVER-SIDE WRITE GATE (M4 P15 sweep \u2014 the H3 hole-closer) ----\n\t# auth.requireWrite resolves the caller's roles FROM THE SESSION (gateway-side, NOT a client\n\t# prop) and authorizes ProductionControl|Admin, raising AuthError on deny \u2014 BEFORE any\n\t# system.db write. A forged client prop or an anonymous session is rejected HERE, not by the\n\t# UI. This closes the reintroduced legacy H3 hole (the write was previously authorized client-\n\t# side only). Same gate the Sites Save/Delete/New carry (gen_sites_view.py rule #1).\n\timport auth as A\n\ttry:\n\t\tA.requireWrite(self.session)\n\texcept A.AuthError, e:\n\t\tc.statusMsg = \"DENIED (server-side): \" + unicode(e)\n\t\tsystem.util.getLogger(\"SPIKE\").warn(\"SPIKE Supplier New DENIED (server-side gate): \" + unicode(e)); return\n\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\tc.recordId = 0\n\tc.statusMsg = \"New supplier \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Supplier New -> recordId=0 (insert mode)\")\n"
            },
            "scope": "G",
            "type": "script"
@@ -358,8 +358,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_code",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_code"
              },
              "type": "property"
             }
@@ -411,8 +411,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_name",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_name"
              },
              "type": "property"
             }
@@ -464,8 +464,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_address",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_address"
              },
              "type": "property"
             }
@@ -517,8 +517,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_city",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_city"
              },
              "type": "property"
             }
@@ -570,8 +570,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_state",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_state"
              },
              "type": "property"
             }
@@ -623,8 +623,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_zip",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_zip"
              },
              "type": "property"
             }
@@ -676,8 +676,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_country",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_country"
              },
              "type": "property"
             }
@@ -729,8 +729,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_tel",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_tel"
              },
              "type": "property"
             }
@@ -782,8 +782,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_fax",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_fax"
              },
              "type": "property"
             }
@@ -835,8 +835,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_person",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_person"
              },
              "type": "property"
             }
@@ -888,8 +888,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_email",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_email"
              },
              "type": "property"
             }
@@ -941,8 +941,8 @@
            "props.text": {
             "binding": {
              "config": {
-              "path": "view.custom.form_directory",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_directory"
              },
              "type": "property"
             }
@@ -1002,8 +1002,8 @@
            "props.value": {
             "binding": {
              "config": {
-              "path": "view.custom.form_logisticsId",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_logisticsId"
              },
              "type": "property"
             }
@@ -1055,8 +1055,8 @@
            "props.value": {
             "binding": {
              "config": {
-              "path": "view.custom.form_outputFile",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_outputFile"
              },
              "type": "property"
             }
@@ -1118,8 +1118,8 @@
            "props.selected": {
             "binding": {
              "config": {
-              "path": "view.custom.form_orderFileTimestamp",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_orderFileTimestamp"
              },
              "type": "property"
             }
@@ -1165,8 +1165,8 @@
            "props.selected": {
             "binding": {
              "config": {
-              "path": "view.custom.form_siteNumberInOrder",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_siteNumberInOrder"
              },
              "type": "property"
             }
@@ -1223,8 +1223,8 @@
            "props.value": {
             "binding": {
              "config": {
-              "path": "view.custom.form_createOrderSheet",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_createOrderSheet"
              },
              "type": "property"
             }
@@ -1276,8 +1276,8 @@
            "props.value": {
             "binding": {
              "config": {
-              "path": "view.custom.form_invAddPoint",
-              "bidirectional": true
+              "bidirectional": true,
+              "path": "view.custom.form_invAddPoint"
              },
              "type": "property"
             }
@@ -1332,7 +1332,7 @@
          "component": {
           "onActionPerformed": {
            "config": {
-            "script": "\t# ---- Supplier Save (insert-or-update) \u2014 \u00a7B.3/B.4 (reused from Detail view) ----\n\t# recordId==0 -> insert; >0 -> update. On success: flip recordId to the saved id\n\t# (edit mode) and refresh the grid by bumping runNonce (same-view, no navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\tcode = (c.form_code or \"\").strip()\n\tname = (c.form_name or \"\").strip()\n\tinvAdd = (c.form_invAddPoint or \"\").strip()\n\n\t# ---- B.4 validation (client-side fast-fail; DB unique index is the backstop) ----\n\tif len(code) != 5:\n\t\tc.statusMsg = \"Supplier code must be exactly 5 characters.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: code len=%d\" % len(code)); return\n\tif name == \"\":\n\t\tc.statusMsg = \"Supplier name is required.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: blank name\"); return\n\tif invAdd not in (\"S\", \"A\"):\n\t\tc.statusMsg = \"Inventory Add Point is required (S or A).\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: invAddPoint=%r\" % invAdd); return\n\n\texcludeId = recId if recId > 0 else 0\n\tchkSql = (\"SELECT COUNT(*) AS n FROM INV_SUPPLIER_MST \"\n\t          \"WHERE VC_SUPPLIER_CODE = ? AND IN_SUPPLIER_ID <> ? \"\n\t          \"-- IG-SITE: AND site_id = ?\")\n\tdup = system.db.runPrepQuery(chkSql, [code, excludeId], DB)\n\tif dup.rowCount > 0 and int(dup.getValueAt(0, 0)) > 0:\n\t\tc.statusMsg = \"Supplier code already exists.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: dup code=%s\" % code); return\n\n\tdef s(v):\n\t\treturn (v if v is not None else \"\")\n\tlogId = c.form_logisticsId\n\tif logId in (None, \"\", 0):\n\t\tlogId = None   # blank Logistics -> NULL (legacy behavior, \u00a7A.6)\n\telse:\n\t\tlogId = int(logId)\n\tbitTs = 1 if c.form_orderFileTimestamp else 0\n\tbitSn = 1 if c.form_siteNumberInOrder else 0\n\taudit = (\"CONVERT(char(8),GETDATE(),112) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)\")\n\n\tdataArgs = [code, name, s(c.form_address), s(c.form_city), s(c.form_state), s(c.form_zip),\n\t            s(c.form_country), s(c.form_tel), s(c.form_fax), s(c.form_person), s(c.form_email),\n\t            s(c.form_directory), logId, s(c.form_outputFile), bitTs, bitSn,\n\t            s(c.form_createOrderSheet), invAdd]\n\n\ttry:\n\t\tif recId == 0:\n\t\t\tinsSql = (\"INSERT INTO INV_SUPPLIER_MST \"\n\t\t\t          \"(VC_SUPPLIER_CODE, VC_SUPPLIER_NAME, VC_ADDRESS, VC_CITY, VC_STATE, VC_ZIP, VC_COUNTRY, \"\n\t\t\t          \" VC_TEL, VC_FAX, VC_PERSON, VC_EMAIL_ADDRESS, VC_BREAKDOWN_ORDER_DIRECTORY, \"\n\t\t\t          \" IN_LOGISTICS_ID, VC_OUTPUT_FILE, BIT_ORDER_FILE_TIMESTAMP, BIT_SITE_NUMBER_IN_ORDER, \"\n\t\t\t          \" VC_CREATE_ORDER_SHEET, VC_INVENTORY_ADD_POINT, VC_ADD) \"\n\t\t\t          \"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, \" + audit + \"); \"\n\t\t\t          \"SELECT CAST(SCOPE_IDENTITY() AS int) AS newId\")\n\t\t\trs = system.db.runPrepQuery(insSql, dataArgs, DB)\n\t\t\tnewId = int(rs.getValueAt(0, 0))\n\t\t\tc.statusMsg = \"Inserted supplier %s (id %d).\" % (code, newId)\n\t\t\tlog.info(\"SPIKE Supplier INSERT ok: code=%s newId=%d\" % (code, newId))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\t\t\tc.recordId = newId                    # flip to edit mode -> fires onChange reload\n\t\telse:\n\t\t\tupdSql = (\"UPDATE INV_SUPPLIER_MST SET \"\n\t\t\t          \"VC_SUPPLIER_CODE=?, VC_SUPPLIER_NAME=?, VC_ADDRESS=?, VC_CITY=?, VC_STATE=?, VC_ZIP=?, \"\n\t\t\t          \"VC_COUNTRY=?, VC_TEL=?, VC_FAX=?, VC_PERSON=?, VC_EMAIL_ADDRESS=?, \"\n\t\t\t          \"VC_BREAKDOWN_ORDER_DIRECTORY=?, IN_LOGISTICS_ID=?, VC_OUTPUT_FILE=?, \"\n\t\t\t          \"BIT_ORDER_FILE_TIMESTAMP=?, BIT_SITE_NUMBER_IN_ORDER=?, VC_CREATE_ORDER_SHEET=?, \"\n\t\t\t          \"VC_INVENTORY_ADD_POINT=?, VC_LASTUPDATE = \" + audit + \" \"\n\t\t\t          \"WHERE IN_SUPPLIER_ID = ? \"\n\t\t\t          \"-- IG-SITE: AND site_id = ?\")\n\t\t\tn = system.db.runPrepUpdate(updSql, dataArgs + [recId], DB)\n\t\t\tc.statusMsg = \"Updated supplier %s (%d row).\" % (code, n)\n\t\t\tlog.info(\"SPIKE Supplier UPDATE ok: id=%d code=%s rows=%d\" % (recId, code, n))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\texcept Exception, e:\n\t\tmsg = unicode(e)\n\t\tif \"IX_INV_SUPPLIER_MST\" in msg or \"duplicate key\" in msg.lower() or \"UNIQUE\" in msg.upper():\n\t\t\tc.statusMsg = \"Supplier code already exists.\"\n\t\t\tlog.info(\"SPIKE Supplier save: unique-index backstop fired for code=%s\" % code)\n\t\telse:\n\t\t\tc.statusMsg = \"Save failed: %s\" % msg\n\t\t\tlog.warn(\"SPIKE Supplier save FAILED: %s\" % msg)\n"
+            "script": "\t# ---- Supplier Save (insert-or-update) \u2014 \u00a7B.3/B.4 (reused from Detail view) ----\n\t# recordId==0 -> insert; >0 -> update. On success: flip recordId to the saved id\n\t# (edit mode) and refresh the grid by bumping runNonce (same-view, no navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\t# ---- SERVER-SIDE WRITE GATE (M4 P15 sweep \u2014 the H3 hole-closer) ----\n\t# auth.requireWrite resolves the caller's roles FROM THE SESSION (gateway-side, NOT a client\n\t# prop) and authorizes ProductionControl|Admin, raising AuthError on deny \u2014 BEFORE any\n\t# system.db write. A forged client prop or an anonymous session is rejected HERE, not by the\n\t# UI. This closes the reintroduced legacy H3 hole (the write was previously authorized client-\n\t# side only). Same gate the Sites Save/Delete/New carry (gen_sites_view.py rule #1).\n\timport auth as A\n\ttry:\n\t\tA.requireWrite(self.session)\n\texcept A.AuthError, e:\n\t\tc.statusMsg = \"DENIED (server-side): \" + unicode(e)\n\t\tsystem.util.getLogger(\"SPIKE\").warn(\"SPIKE Supplier Save DENIED (server-side gate): \" + unicode(e)); return\n\trecId = int(c.recordId or 0)\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\tcode = (c.form_code or \"\").strip()\n\tname = (c.form_name or \"\").strip()\n\tinvAdd = (c.form_invAddPoint or \"\").strip()\n\n\t# ---- B.4 validation (client-side fast-fail; DB unique index is the backstop) ----\n\tif len(code) != 5:\n\t\tc.statusMsg = \"Supplier code must be exactly 5 characters.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: code len=%d\" % len(code)); return\n\tif name == \"\":\n\t\tc.statusMsg = \"Supplier name is required.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: blank name\"); return\n\tif invAdd not in (\"S\", \"A\"):\n\t\tc.statusMsg = \"Inventory Add Point is required (S or A).\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: invAddPoint=%r\" % invAdd); return\n\n\texcludeId = recId if recId > 0 else 0\n\tchkSql = (\"SELECT COUNT(*) AS n FROM INV_SUPPLIER_MST \"\n\t          \"WHERE VC_SUPPLIER_CODE = ? AND IN_SUPPLIER_ID <> ? \"\n\t          \"-- IG-SITE: AND site_id = ?\")\n\tdup = system.db.runPrepQuery(chkSql, [code, excludeId], DB)\n\tif dup.rowCount > 0 and int(dup.getValueAt(0, 0)) > 0:\n\t\tc.statusMsg = \"Supplier code already exists.\"\n\t\tlog.info(\"SPIKE Supplier save REJECTED: dup code=%s\" % code); return\n\n\tdef s(v):\n\t\treturn (v if v is not None else \"\")\n\tlogId = c.form_logisticsId\n\tif logId in (None, \"\", 0):\n\t\tlogId = None   # blank Logistics -> NULL (legacy behavior, \u00a7A.6)\n\telse:\n\t\tlogId = int(logId)\n\tbitTs = 1 if c.form_orderFileTimestamp else 0\n\tbitSn = 1 if c.form_siteNumberInOrder else 0\n\taudit = (\"CONVERT(char(8),GETDATE(),112) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2) \"\n\t         \"+ SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)\")\n\n\tdataArgs = [code, name, s(c.form_address), s(c.form_city), s(c.form_state), s(c.form_zip),\n\t            s(c.form_country), s(c.form_tel), s(c.form_fax), s(c.form_person), s(c.form_email),\n\t            s(c.form_directory), logId, s(c.form_outputFile), bitTs, bitSn,\n\t            s(c.form_createOrderSheet), invAdd]\n\n\ttry:\n\t\tif recId == 0:\n\t\t\tinsSql = (\"INSERT INTO INV_SUPPLIER_MST \"\n\t\t\t          \"(VC_SUPPLIER_CODE, VC_SUPPLIER_NAME, VC_ADDRESS, VC_CITY, VC_STATE, VC_ZIP, VC_COUNTRY, \"\n\t\t\t          \" VC_TEL, VC_FAX, VC_PERSON, VC_EMAIL_ADDRESS, VC_BREAKDOWN_ORDER_DIRECTORY, \"\n\t\t\t          \" IN_LOGISTICS_ID, VC_OUTPUT_FILE, BIT_ORDER_FILE_TIMESTAMP, BIT_SITE_NUMBER_IN_ORDER, \"\n\t\t\t          \" VC_CREATE_ORDER_SHEET, VC_INVENTORY_ADD_POINT, VC_ADD) \"\n\t\t\t          \"VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, \" + audit + \"); \"\n\t\t\t          \"SELECT CAST(SCOPE_IDENTITY() AS int) AS newId\")\n\t\t\trs = system.db.runPrepQuery(insSql, dataArgs, DB)\n\t\t\tnewId = int(rs.getValueAt(0, 0))\n\t\t\tc.statusMsg = \"Inserted supplier %s (id %d).\" % (code, newId)\n\t\t\tlog.info(\"SPIKE Supplier INSERT ok: code=%s newId=%d\" % (code, newId))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\t\t\tc.recordId = newId                    # flip to edit mode -> fires onChange reload\n\t\telse:\n\t\t\tupdSql = (\"UPDATE INV_SUPPLIER_MST SET \"\n\t\t\t          \"VC_SUPPLIER_CODE=?, VC_SUPPLIER_NAME=?, VC_ADDRESS=?, VC_CITY=?, VC_STATE=?, VC_ZIP=?, \"\n\t\t\t          \"VC_COUNTRY=?, VC_TEL=?, VC_FAX=?, VC_PERSON=?, VC_EMAIL_ADDRESS=?, \"\n\t\t\t          \"VC_BREAKDOWN_ORDER_DIRECTORY=?, IN_LOGISTICS_ID=?, VC_OUTPUT_FILE=?, \"\n\t\t\t          \"BIT_ORDER_FILE_TIMESTAMP=?, BIT_SITE_NUMBER_IN_ORDER=?, VC_CREATE_ORDER_SHEET=?, \"\n\t\t\t          \"VC_INVENTORY_ADD_POINT=?, VC_LASTUPDATE = \" + audit + \" \"\n\t\t\t          \"WHERE IN_SUPPLIER_ID = ? \"\n\t\t\t          \"-- IG-SITE: AND site_id = ?\")\n\t\t\tn = system.db.runPrepUpdate(updSql, dataArgs + [recId], DB)\n\t\t\tc.statusMsg = \"Updated supplier %s (%d row).\" % (code, n)\n\t\t\tlog.info(\"SPIKE Supplier UPDATE ok: id=%d code=%s rows=%d\" % (recId, code, n))\n\t\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\texcept Exception, e:\n\t\tmsg = unicode(e)\n\t\tif \"IX_INV_SUPPLIER_MST\" in msg or \"duplicate key\" in msg.lower() or \"UNIQUE\" in msg.upper():\n\t\t\tc.statusMsg = \"Supplier code already exists.\"\n\t\t\tlog.info(\"SPIKE Supplier save: unique-index backstop fired for code=%s\" % code)\n\t\telse:\n\t\t\tc.statusMsg = \"Save failed: %s\" % msg\n\t\t\tlog.warn(\"SPIKE Supplier save FAILED: %s\" % msg)\n"
            },
            "scope": "G",
            "type": "script"
@@ -1358,7 +1358,7 @@
          "component": {
           "onActionPerformed": {
            "config": {
-            "script": "\t# ---- Supplier Delete \u2014 D3 RESTRICT gate (R1-critical), \u00a7B.5 (reused from Detail view) ----\n\t# refCount counts ALL THREE tables the live DELETE_SupplierCode trigger touches:\n\t#   parts (by IN_SUPPLIER_ID) + INV_BREAKDOWN_FC_INF + INV_FORECAST_INF (both by code).\n\t# Block on any non-zero total; NEVER let a delete reach the trigger while refs exist.\n\t# On success: reset to insert mode + refresh grid (same-view, no navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\trecId = int(c.recordId or 0)\n\tcode = (c.form_code or \"\").strip()\n\tif recId == 0:\n\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n\t\treturn\n\trefSql = (\"SELECT \"\n\t          \"  (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST  WHERE IN_SUPPLIER_ID   = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_SUPPLIER_CODE = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_FORECAST_INF     WHERE VC_SUPPLIER_CODE = ?) AS n\")\n\trs = system.db.runPrepQuery(refSql, [recId, code, code], DB)\n\tn = int(rs.getValueAt(0, 0))\n\tlog.info(\"SPIKE Supplier refCount: id=%d code=%s n=%d\" % (recId, code, n))\n\tif n > 0:\n\t\tc.statusMsg = (\"Cannot delete supplier %s \u2014 still referenced by %d part(s) / forecast row(s). \"\n\t\t               \"Reassign or archive those rows first.\") % (code, n)\n\t\tlog.info(\"SPIKE Supplier DELETE BLOCKED: id=%d code=%s refs=%d\" % (recId, code, n)); return\n\ttry:\n\t\tdelN = system.db.runPrepUpdate(\"DELETE FROM INV_SUPPLIER_MST WHERE IN_SUPPLIER_ID = ? -- IG-SITE: AND site_id = ?\", [recId], DB)\n\t\tlog.info(\"SPIKE Supplier DELETE ok: id=%d code=%s rows=%d\" % (recId, code, delN))\n\t\tc.statusMsg = \"Deleted supplier %s.\" % code\n\t\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\t\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\t\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\t\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\t\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\t\tc.recordId = 0                        # back to insert mode\n\texcept Exception, e:\n\t\tc.statusMsg = \"Delete failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE Supplier DELETE FAILED: %s\" % unicode(e))\n"
+            "script": "\t# ---- Supplier Delete \u2014 D3 RESTRICT gate (R1-critical), \u00a7B.5 (reused from Detail view) ----\n\t# refCount counts ALL THREE tables the live DELETE_SupplierCode trigger touches:\n\t#   parts (by IN_SUPPLIER_ID) + INV_BREAKDOWN_FC_INF + INV_FORECAST_INF (both by code).\n\t# Block on any non-zero total; NEVER let a delete reach the trigger while refs exist.\n\t# On success: reset to insert mode + refresh grid (same-view, no navigation).\n\tlog = system.util.getLogger(\"SPIKE\")\n\tDB = \"Inventory_Spike\"\n\tc = self.view.custom\n\t# ---- SERVER-SIDE WRITE GATE (M4 P15 sweep \u2014 the H3 hole-closer) ----\n\t# auth.requireWrite resolves the caller's roles FROM THE SESSION (gateway-side, NOT a client\n\t# prop) and authorizes ProductionControl|Admin, raising AuthError on deny \u2014 BEFORE any\n\t# system.db write. A forged client prop or an anonymous session is rejected HERE, not by the\n\t# UI. This closes the reintroduced legacy H3 hole (the write was previously authorized client-\n\t# side only). Same gate the Sites Save/Delete/New carry (gen_sites_view.py rule #1).\n\timport auth as A\n\ttry:\n\t\tA.requireWrite(self.session)\n\texcept A.AuthError, e:\n\t\tc.statusMsg = \"DENIED (server-side): \" + unicode(e)\n\t\tsystem.util.getLogger(\"SPIKE\").warn(\"SPIKE Supplier Delete DENIED (server-side gate): \" + unicode(e)); return\n\trecId = int(c.recordId or 0)\n\tcode = (c.form_code or \"\").strip()\n\tif recId == 0:\n\t\tc.statusMsg = \"Nothing to delete (unsaved new record).\"\n\t\treturn\n\trefSql = (\"SELECT \"\n\t          \"  (SELECT COUNT(*) FROM INV_PARTS_STOCK_MST  WHERE IN_SUPPLIER_ID   = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_BREAKDOWN_FC_INF WHERE VC_SUPPLIER_CODE = ?) \"\n\t          \"+ (SELECT COUNT(*) FROM INV_FORECAST_INF     WHERE VC_SUPPLIER_CODE = ?) AS n\")\n\trs = system.db.runPrepQuery(refSql, [recId, code, code], DB)\n\tn = int(rs.getValueAt(0, 0))\n\tlog.info(\"SPIKE Supplier refCount: id=%d code=%s n=%d\" % (recId, code, n))\n\tif n > 0:\n\t\tc.statusMsg = (\"Cannot delete supplier %s \u2014 still referenced by %d part(s) / forecast row(s). \"\n\t\t               \"Reassign or archive those rows first.\") % (code, n)\n\t\tlog.info(\"SPIKE Supplier DELETE BLOCKED: id=%d code=%s refs=%d\" % (recId, code, n)); return\n\ttry:\n\t\tdelN = system.db.runPrepUpdate(\"DELETE FROM INV_SUPPLIER_MST WHERE IN_SUPPLIER_ID = ? -- IG-SITE: AND site_id = ?\", [recId], DB)\n\t\tlog.info(\"SPIKE Supplier DELETE ok: id=%d code=%s rows=%d\" % (recId, code, delN))\n\t\tc.statusMsg = \"Deleted supplier %s.\" % code\n\t\tc.form_code = \"\"; c.form_name = \"\"; c.form_address = \"\"; c.form_city = \"\"; c.form_state = \"\"\n\t\tc.form_zip = \"\"; c.form_country = \"\"; c.form_tel = \"\"; c.form_fax = \"\"; c.form_person = \"\"\n\t\tc.form_email = \"\"; c.form_directory = \"\"; c.form_logisticsId = None\n\t\tc.form_outputFile = \"T\"; c.form_orderFileTimestamp = False; c.form_siteNumberInOrder = False\n\t\tc.form_createOrderSheet = \"\"; c.form_invAddPoint = \"S\"\n\t\tc.runNonce = (c.runNonce or 0) + 1   # refresh grid (same-view)\n\t\tc.recordId = 0                        # back to insert mode\n\texcept Exception, e:\n\t\tc.statusMsg = \"Delete failed: %s\" % unicode(e)\n\t\tlog.warn(\"SPIKE Supplier DELETE FAILED: %s\" % unicode(e))\n"
            },
            "scope": "G",
            "type": "script"

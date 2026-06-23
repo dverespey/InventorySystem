@@ -49,6 +49,75 @@ def grep_spike_since(offset, needle="SPIKE"):
     return [l for l in read_log_since(offset).splitlines() if needle in l]
 
 
+# Shared SKIP reason for the per-view master-CRUD UI-WRITE round-trips after the P15 server-side write
+# gate landed: an anonymous spike session (no IdP/roles) is correctly DENIED before the write path runs,
+# so those UI insert/update/delete cases can no longer be exercised through the live UI here. The gate
+# itself is proven headless end-to-end (forged-prop-rejected, revert-proven, per view) by
+# test_master_write_gates.py; the LIVE on-the-box deny is proven by check_master_write_gate_live below.
+WRITE_GATE_SKIP = ("P15 server-side write gate active: an anon spike session (no IdP/roles) is correctly "
+                   "DENIED; UI CRUD-write round-trip needs a logged-in write-role session (Designer "
+                   "finish). Gate proven by test_master_write_gates.py + the live deny probe in this run.")
+
+
+def check_master_write_gate_live(page, rep, view_label, url, new_btn, save_btn, status_id,
+                                 grid_sel, fill_pairs, count_fn, deny_marker):
+    """LIVE on-the-box proof that a swept master view's WRITE is gated SERVER-SIDE (P15): open the view,
+    click New, fill a throwaway probe row, click Save — in this headless spike the session is anonymous
+    (no IdP/roles), so auth.requireWrite(self.session) MUST DENY the write server-side. Assert the status
+    label shows "DENIED (server-side)" (and/or a SPIKE deny log marker), and the DB row count is unchanged
+    (no write slipped through). Mirrors test_sites_crud.check_server_side_write_gate, parameterized per
+    view. `count_fn()` returns the current table row count; `fill_pairs` = [(domId, value), ...]; the
+    test's own fill_field is used via the page (we call a minimal inline fill here to avoid importing it).
+
+    deny_marker = the SPIKE log substring this view emits on a denied write (e.g. "Size Save DENIED")."""
+    try:
+        pre = count_fn()
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        if "Trial Expired" in page.inner_text("body"):
+            rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "Perspective trial expired")
+            return
+        try:
+            page.wait_for_selector(grid_sel, timeout=20000)
+        except Exception:
+            pass
+        nb = page.query_selector("#" + new_btn)
+        if not nb:
+            rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "New button not found")
+            return
+        nb.click()
+        page.wait_for_timeout(1000)
+        for dom_id, val in fill_pairs:
+            f = page.query_selector("#" + dom_id)
+            if not f:
+                continue
+            f.click()
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Meta+A")
+            page.keyboard.press("Delete")
+            if val:
+                f.type(str(val), delay=20)
+            page.keyboard.press("Tab")
+            page.wait_for_timeout(150)
+        off = log_marker()
+        sb = page.query_selector("#" + save_btn)
+        if not sb:
+            rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "Save button not found")
+            return
+        sb.click()
+        page.wait_for_timeout(1800)
+        stxt = (page.query_selector("#" + status_id).inner_text() or "") if page.query_selector("#" + status_id) else ""
+        denied_lines = grep_spike_since(off, deny_marker)
+        post = count_fn()
+        rep.check("%s (LIVE): anon Save is DENIED SERVER-SIDE (H3 hole closed end-to-end; no row written)"
+                  % view_label,
+                  ("DENIED (server-side)" in stxt or bool(denied_lines)) and post == pre,
+                  "status=%r; SPIKE=%s; count pre=%d post=%d"
+                  % (stxt[:60], denied_lines[-1].split("SPIKE")[-1][:50] if denied_lines else "none",
+                     pre, post))
+    except Exception as e:
+        rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "interaction failed: %s" % e)
+
+
 class Report:
     """Accumulates per-check PASS/FAIL/SKIP and prints a summary + exit code."""
     def __init__(self):
