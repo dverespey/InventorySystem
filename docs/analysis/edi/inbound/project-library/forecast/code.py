@@ -547,7 +547,8 @@ def _as_str(v):
 
 
 def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, siteId=None,
-               supplier=None, historicalWeeks=None, useFirstProductionDay=True, tx=None):
+               supplier=None, historicalWeeks=None, useFirstProductionDay=True, tx=None,
+               emitFeed=False, emitFeedKwargs=None):
     """Process ONE 830 file body end-to-end. ONE transaction per file (the caller may pass tx; else we
     open + commit our own). Reproduces the legacy Execute flow (ForecastBreakdownF.pas:320-335) with the
     fixes (§F):
@@ -576,7 +577,20 @@ def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, s
         delete-then-accumulate idempotency lands under the wrong key.
 
     Returns a summary dict: {'entries': N, 'assembliesDeleted': N, 'breakdownWrites': N, 'rawWrites': N,
-    'gapAlarms': N, 'fileHash': fileHash}.
+    'gapAlarms': N, 'fileHash': fileHash, 'feed': <emit summary or None>}.
+
+    POST-IMPORT FORECAST-DISTRIBUTION FEED (P6 — the trigger wiring):
+      The legacy Execute IMPORTS the 830 then runs the OUTBOUND supplier emit in the SAME call
+      (ForecastBreakdownF.pas:149/320 then :340-568). We reproduce that side-effect: when emitFeed=True
+      AND we own the transaction (so the breakdown rows are COMMITTED before the emit reads them), call
+      forecast_distribution.emit_forecast_distribution at the very end — AFTER the commit, reading the
+      freshly-written INV_BREAKDOWN_FC_INF future-week buckets. The emit is a SEPARATE module/callable
+      (testable independently — and matching the legacy two-phase Execute); a failure in the emit is
+      LOGGED, not fatal to the (already-committed) import — the legacy emit's outer try/except likewise
+      logs + returns FALSE without un-doing the import. When called WITH a caller tx (the poll path passes
+      its own tx), the feed is the caller's responsibility AFTER its commit (see _process_one_830) — we do
+      NOT emit mid-tx (the rows are not yet committed). emitFeedKwargs threads through to the feed driver
+      (database/localFtp/runDate/outRoot/dirOverride/renderModule for the spike sandbox).
 
     !!! HONEST: there is NO captured golden 830 on disk (the D10 sample is gitignored client data), so
     BYTE/OFFSET parity vs a real TEMA 830 is UNPROVABLE — not claimed. The parse/explode/spread are
@@ -617,7 +631,7 @@ def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, s
             raise ForecastImportError("import_830: siteId is required when called without a tx")
         tx = system.db.beginTransaction(db)
     summary = {"entries": len(entries), "assembliesDeleted": 0, "breakdownWrites": 0,
-               "rawWrites": 0, "gapAlarms": 0, "fileHash": fileHash}
+               "rawWrites": 0, "gapAlarms": 0, "fileHash": fileHash, "feed": None}
     try:
         # 1. DELETE FIRST — per assembly WITH a recipe (the delete resolves assembly->components via the
         #    recipe; an assembly with no recipe has nothing to delete, and gets gap alarms below).
@@ -704,10 +718,39 @@ def import_830(text, fileName, database=None, calDatabase=None, fileHash=None, s
         if ownTx:
             system.db.closeTransaction(tx)
 
+    # POST-IMPORT (P6): the outbound forecast-distribution emit, ONLY after our own commit (so the
+    # breakdown rows the feed reads are committed). Side-effect of a successful import (legacy Execute
+    # :320 import -> :340 emit). A feed failure is LOGGED, not fatal (the import is already committed; the
+    # legacy emit's try/except logs + returns FALSE without un-doing the import).
+    if ownTx and emitFeed:
+        summary["feed"] = _emit_forecast_feed(db, emitFeedKwargs, log)
+
     log.info("import_830 file=%s site=%s -> %d entries, %d assys deleted, %d raw, %d breakdown, %d gaps"
              % (fileName, siteId, summary["entries"], summary["assembliesDeleted"],
                 summary["rawWrites"], summary["breakdownWrites"], summary["gapAlarms"]))
     return summary
+
+
+def _emit_forecast_feed(db, emitFeedKwargs, log):
+    """Run the outbound forecast-distribution feed (P6) as the post-import side-effect. Imports the
+    forecast_distribution project-library module at CALL time (so this module imports cleanly without it),
+    and threads emitFeedKwargs (database/localFtp/runDate/weekDate/outRoot/dirOverride/renderModule). A
+    failure is caught + logged (the import is already committed; the legacy emit is likewise non-fatal to
+    the import). Returns the feed summary dict, or {'error': ...} on a caught failure."""
+    kw = dict(emitFeedKwargs or {})
+    kw.setdefault("database", db)
+    try:
+        # Prefer a module injected into this module's globals (the headless shim / a test injects
+        # `forecast_distribution` via extra_globals so no real import path is needed); fall back to the
+        # real gateway project-library import. On the gateway both resolve to the same project-library.
+        _fd = globals().get("forecast_distribution")
+        if _fd is None:
+            import forecast_distribution as _fd       # gateway project-library module (P6)
+        return _fd.emit_forecast_distribution(**kw)
+    except Exception as e:
+        log.error("import_830: forecast-distribution feed FAILED post-import (import IS committed): %s"
+                  % (e,))
+        return {"error": str(e)}
 
 
 def _hist_week_date(db, histWeeks, tx):
@@ -779,12 +822,19 @@ def stale_sites(database=None, staleDays=8, raiseAlarms=True, tx=None):
 
 
 def process_forecast_dir(inDir, database=None, calDatabase=None, archiveDir=None, quarantineDir=None,
-                         supplierBySite=None):
+                         supplierBySite=None, emitFeed=False, emitFeedKwargs=None):
     """The SCHEDULED POLL entry (Q11 — replaces the legacy manual button). List inDir; for each FILE,
     envelope-check (ISA on line 1) + DUNS-guard + idempotency, then dispatch to import_830 for an '830'
     body. Mirrors the M1 edi_inbound.process_inbound shape (a non-830 / no-DUNS file is QUARANTINED, not
     silently dropped). The per-site supplier is looked up from supplierBySite (a {siteId: supplierCode}
     map the caller supplies from INV_SITES.VC_SUPPLIER_CODE).
+
+    P6 TRIGGER: emitFeed=True runs the outbound forecast-distribution feed
+    (forecast_distribution.emit_forecast_distribution) once per successfully-PROCESSED 830, AFTER that
+    file's import commits — matching the legacy EDIUpload operational path (import the inbound 830 then
+    emit each affected supplier's .frc/Excel; ForecastBreakdownF.pas via EDIUpload.pas:94-99). The emit is
+    a non-fatal side-effect (a feed failure is logged, the import stays committed). emitFeedKwargs threads
+    the feed driver's localFtp/runDate/outRoot/dirOverride/renderModule.
 
     IG83-TODO: on 8.3 prefer an Event Stream + system.file move/archive; this 8.1-safe shape uses a
     gateway timer script + os-level listing/rename. IG81-COMPAT: the timer script + system.db APIs are
@@ -817,7 +867,8 @@ def process_forecast_dir(inDir, database=None, calDatabase=None, archiveDir=None
             results.append({"fileName": name, "outcome": "READ_ERROR", "detail": str(e)})
             continue
         try:
-            r = _process_one_830(text, name, db, calDb, srcPath, archiveDir, quarantineDir, supplierBySite)
+            r = _process_one_830(text, name, db, calDb, srcPath, archiveDir, quarantineDir,
+                                 supplierBySite, emitFeed=emitFeed, emitFeedKwargs=emitFeedKwargs)
             r["fileName"] = name
             results.append(r)
         except Exception as e:
@@ -826,7 +877,8 @@ def process_forecast_dir(inDir, database=None, calDatabase=None, archiveDir=None
     return results
 
 
-def _process_one_830(text, fileName, db, calDb, srcPath, archiveDir, quarantineDir, supplierBySite):
+def _process_one_830(text, fileName, db, calDb, srcPath, archiveDir, quarantineDir, supplierBySite,
+                     emitFeed=False, emitFeedKwargs=None):
     """One file, one tx: envelope + DUNS + idempotency, then import_830. Quarantine a non-830 / no-DUNS
     file (Q11). Mirrors edi_inbound.process_one_file. Returns an outcome dict.
 
@@ -888,7 +940,10 @@ def _process_one_830(text, fileName, db, calDb, srcPath, archiveDir, quarantineD
     finally:
         system.db.closeTransaction(tx)
     _move(srcPath, archiveDir, log)
-    return {"outcome": "PROCESSED", "siteId": siteId, "summary": summary}
+    # P6: outbound forecast-distribution emit AFTER this file's import committed (the feed reads the
+    # freshly-committed INV_BREAKDOWN_FC_INF future-week buckets). Non-fatal side-effect (logged on error).
+    feed = _emit_forecast_feed(db, emitFeedKwargs, log) if emitFeed else None
+    return {"outcome": "PROCESSED", "siteId": siteId, "summary": summary, "feed": feed}
 
 
 def _detect_type(lines):
