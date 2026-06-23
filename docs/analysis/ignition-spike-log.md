@@ -945,3 +945,43 @@ ALTER broke no 856/810/order/forecast/report/inbound consumer. **Spike restored 
 MAS/HERO, all CRUD rolled back; the path columns are an intended permanent addition, left in place).
 
 ---
+
+## M4 hardening piece-3 + P16 coverage (2026-06-22) ✅
+
+The final M4 piece (security/multi-site hardening, single-site) + the P16 test-coverage follow-on.
+
+- **HD1 secrets → gateway** (`m4-hardening-secrets.md`). The legacy holds SQL conn strings WITH passwords
+  in the INI (`[DATABASE]`, `DataModule.pas:731-733`) / `DataModule.dfm`. The rebuild uses the **named
+  gateway DB connection** (`Inventory_Spike`; cross-DB reads use `VehicleOrder`), creds encrypted gateway-
+  side. **Grep-CONFIRMED: ZERO hardcoded JDBC/passwords/INI-conn-strings in any project-library driver**
+  (incl. the new `auto_purge`) — every driver references the connection by logical NAME only.
+- **HD7 backup runbook** (`m4-backup-runbook.md`): the two tiers (SQL `.bak` nightly+log / Ignition
+  `.gwbk` nightly+pre-change), schedule/retention (≥12-mo to match the purge floor)/offsite, the paired
+  restore drill, and the redundancy posture (Q14: invisible to the app — note, don't build HA).
+- **HD4 DATAPURGE** — BUILT + verified. Driver
+  `docs/analysis/production-readiness/project-library/auto_purge/code.py` faithfully reproduces
+  `DELETE_AutoPurge` (`CreateInventory.sql:7682`) SCOPE: the 16-char `VC_ADD<=cutoff` predicate
+  (style112+114 substrings) over the SAME 4 statements (terminate-then-delete `INV_OPEN_ORDER_INF`,
+  delete `_HIST` + `INV_PARTS_STOCK_MST_HIST`), single-site = NO site filter (faithful), the `@DataRentention`
+  NEGATIVE sign-flip, the ≥12 floor (`DataModule.pas:6890`). HARDENED: all 4 in ONE transaction (any
+  failure → rollback ALL → nothing purged, closing the legacy partial-purge hole); retention + enable/prompt
+  read from `INV_SITES` (Q17); schedulable via a gateway Timer/Scheduled script (8.1-safe).
+  Test `scripts/e2e/test_auto_purge.py` (29/0): oracle = the SOURCE predicate (independent SQL), old purged
+  / recent kept in every scoped table, transactional rollback, INV_SITES read, ≥12 floor, revert-proven at
+  the cutoff level. **Runs at retention 600 (cutoff ~1976, older than ALL real data) so it only ever
+  deletes synthetic 1970 rows — real data untouched (proven: real-row counts unchanged).**
+- **P16 coverage restoration** — `scripts/e2e/test_master_crud_logic.py` (22/0/1) re-covers what the P15
+  write gate caused the live per-view tests to SKIP: drives the DEPLOYED Save/Delete scripts under a
+  seeded **ProductionControl** session against the real DB → validation rejects (7/7), the **D3 delete-gate
+  BLOCKED branch** refuses on a referenced row (6/6; ManifestCost skipped — no refCount gate, faithful), and
+  insert+zero-ref-delete round-trip (4/4). Shim gap fixed: `_bind` now ignores `?` in `--` comments/literals
+  (JDBC-faithful) so deployed views with a trailing `-- IG-SITE: ... ?` drive correctly.
+- **NIT — Clear/New consistency**: New was GATED while Clear was ungated; both are no-DB-write resets.
+  Fixed to gate NEITHER (the WRITES Save/Delete stay gated) across all 8 master views + the Sites generator.
+  Gateway restart: views deserialize clean (0 `Unable to deserialize`, 0 FAULTED); committed==deployed.
+- **NIT — PartsStock line dropdown**: `lineOptions` binds `SELECT DISTINCT LineName FROM VehicleOrder.dbo.LINE`;
+  the spike's VehicleOrder has only COROLLA. NOTED as a test-fixture/data-seed item (production VehicleOrder
+  carries all lines) — NOT a code defect; VehicleOrder not written.
+- **Regressions green**: m4_auth 39, sites_master 28, master_write_gates 86, edi856_e2e 52, m3_reports 50;
+  full headless suite 42/42 green. **Spike restored as-found** (max ASN 4715, INV_SITES 12/0/1, report procs
+  window-blind original, IX_INV_MANIFEST_COST_MST dropped + no-overlap trigger absent, no sentinels).

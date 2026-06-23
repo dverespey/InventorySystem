@@ -86,13 +86,40 @@ def _esc(v):
 
 
 def _bind(sql, args):
-    """Replace each ? with the next escaped arg (left to right)."""
+    """Replace each ? PLACEHOLDER with the next escaped arg (left to right). A `?` inside a `--` line
+    comment or inside a '...' string literal is NOT a placeholder and is left untouched — exactly as the
+    real JDBC prepared-statement parser treats it. (Several deployed views carry a trailing
+    `-- IG-SITE: AND site_id = ?` comment on a query whose bound args count only the REAL placeholders;
+    a naive per-`?` bind would over-count and IndexError. This mirrors JDBC so the shim drives those
+    views faithfully.)"""
     out, i = [], 0
-    for ch in sql:
-        if ch == "?":
-            out.append(_esc(args[i])); i += 1
-        else:
+    n = len(sql)
+    k = 0
+    in_str = False
+    while k < n:
+        ch = sql[k]
+        if in_str:
             out.append(ch)
+            if ch == "'":
+                # doubled '' is an escaped quote inside the literal
+                if k + 1 < n and sql[k + 1] == "'":
+                    out.append("'"); k += 2; continue
+                in_str = False
+            k += 1
+            continue
+        if ch == "'":
+            in_str = True; out.append(ch); k += 1; continue
+        if ch == "-" and k + 1 < n and sql[k + 1] == "-":
+            # line comment: copy verbatim to end-of-line (any ? in here is NOT a placeholder)
+            eol = sql.find("\n", k)
+            if eol == -1:
+                out.append(sql[k:]); k = n
+            else:
+                out.append(sql[k:eol]); k = eol
+            continue
+        if ch == "?":
+            out.append(_esc(args[i])); i += 1; k += 1; continue
+        out.append(ch); k += 1
     return "".join(out)
 
 

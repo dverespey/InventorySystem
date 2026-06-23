@@ -334,21 +334,18 @@ def field_clears(indent):
 
 def new_script():
     clears = field_clears("\t")
-    # mode default 'AUTO' should be a string literal
+    # NIT (P16): New is a NO-DB-WRITE form reset — IDENTICAL in effect to Clear (blank the form +
+    # recordId=0). It is NOT a write, so it carries NO server-side write gate (gate the WRITES — Save/Delete
+    # — not the resets). Gating New here was inconsistent with the ungated Clear and would deny a read-only
+    # viewer from even starting a new entry; the actual security boundary is auth.requireWrite on Save/Delete,
+    # which is unchanged. Decision documented in m4-auth-design.md / the P16 deliverable note: New + Clear are
+    # gated CONSISTENTLY = NEITHER (both no-DB-write resets); the Save/Delete writes remain server-side gated.
     return (
-        "\t# New record: same-view prop write (NO navigation). recordId=0 -> insert mode.\n"
-        "\t# SERVER-SIDE WRITE GATE (rule #1): auth.requireWrite resolves the SESSION's roles gateway-\n"
-        "\t# side and authorizes ProductionControl|Admin, raising AuthError on deny. A forged client prop\n"
-        "\t# or an anon session is rejected HERE, not by the UI. The c.mayEdit check below is UI defense-\n"
-        "\t# in-depth only (and mayEdit is PROTECTED, so it can't be browser-forged anyway).\n"
-        "\timport auth as A\n"
+        "\t# New record: same-view prop write (NO navigation, NO DB write). recordId=0 -> insert mode.\n"
+        "\t# No write gate: this is a form reset (identical to Clear), not a DB write — the WRITES\n"
+        "\t# (Save/Delete) carry the server-side auth.requireWrite gate. (P16 Clear/New consistency NIT.)\n"
         "\tlog = system.util.getLogger(\"SPIKE\")\n"
         "\tc = self.view.custom\n"
-        "\ttry:\n"
-        "\t\tA.requireWrite(self.session)\n"
-        "\texcept A.AuthError, e:\n"
-        "\t\tc.statusMsg = \"DENIED (server-side): %s\" % unicode(e)\n"
-        "\t\tlog.warn(\"SPIKE Sites New DENIED (server-side gate): %s\" % unicode(e)); return\n"
         + clears + "\n"
         "\tc.recordId = 0\n"
         "\tc.statusMsg = \"New site — enter details and Save.\"\n"
