@@ -1020,3 +1020,52 @@ for parallel-run parity. **P4 ships the post-cutover fix** (David pre-decided; p
   edi856_e2e 52/0. **Spike restored as-found** (CMWA count 297, no sentinel orders/groups/alarms,
   re-pointed part renban-id restored). *Pre-existing, unrelated:* `test_renbangroup_crud.py` has 1 FAIL — a
   stale hard-coded `count:'288'` anchor vs the live `297` (a fixture-data drift, not a P4 regression).
+
+## P6 — forecast-distribution feed (`.frc` text + `.xls` Excel outbound) (2026-06-23) ✅
+**GO unchanged.** The OUTBOUND complement of the M2 830 import — forwards TEMA's imported forecast DOWN
+to each sub-supplier. Cloned the two proven seams (the `.ord` order-file emit + the M3 POI report-render
+lane); no architect fork. `docs/analysis/order/project-library/forecast_distribution/code.py`
+(`emit_forecast_distribution`).
+- **Driving read:** `SELECT_ForecastSupplier @WeekDate=<today>` → `SELECT * FROM INV_BREAKDOWN_FC_INF
+  WHERE VC_WEEK_DATE > @WeekDate` (future weeks only, lexicographic `>` on yyyymmdd) — the SAME table the
+  830 import writes. Supplier-sorted → the `VC_SUPPLIER_CODE` break drives one file set per supplier.
+- **`.frc` byte format (spec §3, byte-faithful to ForecastBreakdownF.pas:484-508):** positional concat
+  `[siteSupplierCode if sendsite] + VC_SUPPLIER_CODE(raw) + VC_PART_NUMBER(raw) + VC_WEEK_DATE(raw) +
+  %.2d(IN_WEEK_NUMBER) + %.5d(IN_QTY1..7)`, CRLF after EVERY line incl. last (Writeln). The Pascal `%.Nd`
+  is MIN-WIDTH (`-5`→`-00005` not `-0005`; `100000`→`100000` widened not truncated; NULL→`00000`) — proven
+  on a negative + an >99999 overflow. Filename `<dir>\<name '/'-stripped>-<code>.frc` (H-CLEAN: strips ONLY
+  `/`, NOT the `.ord`'s broader clean). Archive `<dir>\Archive\<name>-<code><yyyymmdd>.frc` (no separator
+  before date, H-ARCH-SEP) when LocalFTP.
+- **`.xls` Excel (spec §4, POI fresh, no template):** the M3 `report_render` declarative lane — header
+  band row 1 + the 11-col data band row 2+ (`VC_SIZE_CODE`, part, weekdate, weeknum, qty1..7) ALL AsString.
+  **Excel INCLUDES `VC_SIZE_CODE` (col 1) which the `.frc` OMITS.** SaveAs `<name>-<code>-Forecast.xlsx`.
+  Header row-1 titles GOLDEN-PENDING (binary template, P7).
+- **SiteSupplierCode (the P6 crash fix):** the legacy `:488` read a PHANTOM `SiteSupplierCode` column
+  (exists in no table → crash for the 11/16 sendsite suppliers); the ORIGINAL commented-out line was
+  `tcl:=fiSupplierCode` (= `TSiteInfo.SiteSupplierCode` = **`INV_SITES.VC_SUPPLIER_CODE`**, per the spike
+  INV_SITES note `VC_SUPPLIER_CODE <- TSiteInfo.SiteSupplierCode`). So sendsite (`BIT_SITE_NUMBER_IN_ORDER=1`)
+  prepends `INV_SITES.VC_SUPPLIER_CODE` ('MAS' on the spike), non-sendsite has no lead — NOT the crash, NOT
+  dropped-for-all (which would break the sendsite positional parse). Exact byte/width GOLDEN-PENDING (P7),
+  same `_M4` stance as the `.ord` leading field. **NOTE: this DIVERGES from the source-truth spec §5** (which
+  said "non-sendsite for all, M4-deferred") — the brief + the commented-out `fiSupplierCode` line + the spike
+  INV_SITES mapping all point to the concrete `INV_SITES.VC_SUPPLIER_CODE`; built that (matching the `.ord`).
+- **Atomicity (H1 fix):** per-supplier temp-then-rename — stage main+archive(+xlsx) to `.tmp`, publish
+  (rename) only after the supplier's file(s) complete; a mid-emit failure deletes that supplier's staged
+  `.tmp` (no partial final). H2 (NULL Output File Type → BOTH) reproduced via `_file_kind`.
+- **Trigger wiring:** `import_830(..., emitFeed=True)` calls `emit_forecast_distribution` AFTER its own-tx
+  commit (reads the freshly-committed breakdown rows); `process_forecast_dir(..., emitFeed=True)` does the
+  same post-commit per processed 830 (the operational EDIUpload path). The emit is a SEPARATE callable
+  (testable independently) + non-fatal (a feed failure is logged, the import stays committed — legacy
+  Execute's try/except logs + returns FALSE without un-doing the import).
+- **Tests green:** `test_forecast_distribution_e2e.py` 35/0 — REAL `emit_forecast_distribution` via the
+  shim against the spike DB, Excel via the REAL POI lane (bundled jython) read back with openpyxl. Covers
+  the exact `.frc` byte format (widths + negative + >99999 overflow + NULL→0 + CRLF), TEXT/EXCEL/BOTH/
+  NULL→BOTH, the sendsite `INV_SITES.VC_SUPPLIER_CODE` prefix vs non-sendsite (byte-derived from the
+  SOURCE spec §3, R15), the per-supplier file break, future-weeks-only, atomicity (mid-emit render fail →
+  no partial), the archive copy, the Excel cols 1-11 + `VC_SIZE_CODE`, and the import trigger end-to-end.
+  Non-vacuity proven by reverting `_format_qty` to Python `'%05d'` (`-0005 != -00005` → check fails).
+  **Found + faithfully emitted the spike's 290 REAL future-dated breakdown rows for 11 live suppliers** (the
+  feed is correct against real committed data, not only synthetic). Regressions: forecast_import_e2e 35/0,
+  order_file_e2e 38/0. **Spike restored as-found** (0 synthetic rows; INV_SITES.VC_SUPPLIER_CODE untouched).
+- **Hand off** to `sql-adversary` (the SELECT_ForecastSupplier/SELECT_SupplierInfo query + `.frc` format
+  parity) + `ignition-code-reviewer` (the emit/atomicity/Excel/trigger wiring).
