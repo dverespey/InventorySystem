@@ -477,7 +477,7 @@ def test_user_admin_read_gate(rep):
 
 def _deployed_sites_script(dom_id):
     """Pull a button's onActionPerformed script from the DEPLOYED gateway Sites view.json."""
-    gw = ("/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective"
+    gw = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
           "/views/Master/Sites/Sites/view.json")
     if not os.path.exists(gw):
         return None

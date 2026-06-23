@@ -26,7 +26,7 @@ Writes the gateway copy + a repo copy (docs/design/perspective-views). Run:  pyt
 """
 import json, os
 
-PROJ_DIR  = os.environ.get("PROJ_DIR", "/usr/local/ignition/data/projects/spike")
+PROJ_DIR  = os.environ.get("PROJ_DIR", "/usr/local/ignition/data/projects/InventorySystem")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PERSP     = os.path.join(PROJ_DIR, "com.inductiveautomation.perspective")
 

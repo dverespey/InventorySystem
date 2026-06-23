@@ -58,7 +58,7 @@ import os
 #   REPO_OUT = the committed source-of-truth artifact (re-deploying from it must NOT drop anything).
 # Before this fix the generator wrote only GW_OUT, so the committed view.json went stale (had none of
 # the 7 path columns nor the load-bearing ISA/DUNS validation). Both are now generated from this one file.
-GW_OUT = "/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective/views/Master/Sites/Sites/view.json"
+GW_OUT = "/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective/views/Master/Sites/Sites/view.json"
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REPO_OUT = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views",
                         "Master", "Sites", "Sites", "view.json")

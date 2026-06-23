@@ -31,7 +31,7 @@ plus the committed resource.json.
 import json
 import os
 
-GW_OUT = "/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective/views/Admin/Users/Users/view.json"
+GW_OUT = "/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective/views/Admin/Users/Users/view.json"
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REPO_OUT = os.path.join(_REPO, "docs", "analysis", "production-readiness", "perspective-views",
                         "Admin", "Users", "Users", "view.json")

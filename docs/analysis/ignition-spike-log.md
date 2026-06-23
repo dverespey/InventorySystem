@@ -6,6 +6,13 @@ findings as they happen; this is the artifact the GO/STAY decision is written fr
 Dev env: Ignition **8.1.52** (dev ceiling; prod target 8.3 — see
 [`ignition-version-strategy.md`](ignition-version-strategy.md)). DB sandbox: Colima + SQL Server 2019.
 
+> **Project rename (2026-06-23):** the Ignition project was renamed `spike` → **`InventorySystem`**
+> (display title "Inventory System"). Gateway folder is now
+> `data/projects/InventorySystem/`; the generators' and e2e harness' gateway-path constants were
+> updated to match. References to `data/projects/spike/…` **below** are kept as accurate spike-phase
+> history (the path was `spike` at the time). The `Inventory_Spike` DB connection, the `mssql-spike`
+> container, and the `SPIKE` logger name are unchanged.
+
 ---
 
 ## Day 0 — environment & DB sandbox (2026-06-13) ✅

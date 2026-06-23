@@ -45,7 +45,7 @@ import jython_shim                            # noqa: E402
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 AUTH_CODE = os.path.join(REPO, "docs", "analysis", "production-readiness", "project-library", "auth", "code.py")
-GW_BASE = ("/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective"
+GW_BASE = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
            "/views/Master")
 REPO_BASE = os.path.join(REPO, "docs", "analysis", "master-data", "perspective-views", "Master")
 

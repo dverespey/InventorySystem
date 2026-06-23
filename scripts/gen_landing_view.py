@@ -22,7 +22,7 @@ signal in the schema, so those mockup tiles were dropped rather than faked.
 """
 import json, os
 
-PROJ_DIR  = os.environ.get("PROJ_DIR", "/usr/local/ignition/data/projects/spike")
+PROJ_DIR  = os.environ.get("PROJ_DIR", "/usr/local/ignition/data/projects/InventorySystem")
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PERSP     = os.path.join(PROJ_DIR, "com.inductiveautomation.perspective")
 DB        = os.environ.get("DBCONN", "Inventory_Spike")
