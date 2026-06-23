@@ -7,25 +7,64 @@ right), inline system.db.runPrepQuery, config.bidirectional:true on every input
 binding, RESTRICT refCount delete-gate, 16-char yyyymmddHHMMSSff audit stamp,
 same-view recordId prop-write (NO navigation).
 
+DIRECTION REVERSAL (David 2026-06-22): each site runs on its OWN gateway + DB
+(single-site deployments, NOT shared-DB multi-tenancy). So INV_SITES holds the ONE
+deployment's site config (one row); there is NO site_id surgery. This view is the
+config editor for that deployment's site. Practically:
+  * The grid shows the site row(s) present (a single-site deployment has 1; the
+    spike seed has 2 placeholder rows MAS/HERO so the list+detail mechanics are
+    exercised). On a real deployment it is one row.
+  * RULE #2 "NOT SITE-SCOPED" is moot under single-site (no session site to scope
+    by) — the list simply selects every INV_SITES row with no site filter. There
+    is deliberately NO site predicate; do not add one.
+  * "support edit + optionally insert-if-missing": the screen edits the existing
+    row and can insert one (Save with recordId=0) for the rare bootstrap case.
+
 SITES-MASTER-SPECIFIC (differs from every other master — see the SQL header in
 docs/analysis/master-data/master-crud-namedqueries.sql):
   #1 ADMIN-GATED  -> in-view custom.isAdmin gate (defense-in-depth; the enforced
-                     role-gate needs Designer view-permissions + an IdP this spike
-                     lacks — reported, not faked).
-  #2 NOT SITE-SCOPED (INVERTED IG-SITE seam) -> list/get have NO site filter.
+                     role-gate + the production-control user land in M4 piece 2 —
+                     needs Designer view-permissions + an IdP this spike lacks —
+                     reported, not faked).
+  #2 NO SITE FILTER on list/get (moot under single-site; see above).
   #3 read-only system fields shown disabled (IN_SITE_ID, IN_EIN_SEQ,
                      VC_LAST_FORECAST_IMPORT, VC_LAST_UPDATE, VC_ADD).
   #4 typed inputs: BIT_* -> checkbox; VC_FORECAST_IMPORT_MODE -> AUTO/MANUAL
                      dropdown; IN_* -> numeric (CHECKs enforced client-side:
-                     fill_days<=50, retention>=12); VC_SEP_* -> 1-char; rest text.
-  #6 refCount counts the throwaway INV_PARTS_STOCK_MST.site_id (no FK yet).
+                     fill_days<=50, retention>=12); VC_SEP_* / VC_EDI_MODE ->
+                     exactly-1-char (load-bearing positional ISA); DUNS format
+                     (9 or 9+4 digits); rest text. Path cols (M4 piece 1) -> text.
+  #6 refCount delete-gate counts the throwaway INV_PARTS_STOCK_MST.site_id (the
+                     only wired site reference today). Under single-site a site
+                     should rarely be deleted; the gate stays as a safety net.
 
-This writes view.json only; resource.json is written separately (Size shape).
+This writes view.json to BOTH the deployed gateway path AND the committed repo path (so the
+reviewable/redeployable artifact == runtime), plus the committed repo resource.json (Size shape).
 """
 import json
 import os
 
-OUT = "/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective/views/Master/Sites/Sites/view.json"
+# PROVENANCE: write BOTH copies so the committed (reviewable/redeployable) artifact == runtime.
+#   GW_OUT  = the DEPLOYED gateway view (what the running session serves).
+#   REPO_OUT = the committed source-of-truth artifact (re-deploying from it must NOT drop anything).
+# Before this fix the generator wrote only GW_OUT, so the committed view.json went stale (had none of
+# the 7 path columns nor the load-bearing ISA/DUNS validation). Both are now generated from this one file.
+GW_OUT = "/usr/local/ignition/data/projects/spike/com.inductiveautomation.perspective/views/Master/Sites/Sites/view.json"
+_REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+REPO_OUT = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views",
+                        "Master", "Sites", "Sites", "view.json")
+
+# resource.json companion for the committed repo copy. Only scope/version/files are load-bearing on
+# disk-load; the gateway fills `attributes` (lastModification + signature) and re-signs on restart, so
+# the committed copy deliberately omits them (do NOT chase the gateway-managed signature).
+REPO_RESOURCE = os.path.join(os.path.dirname(REPO_OUT), "resource.json")
+RESOURCE_JSON = {
+    "scope": "G",
+    "version": 1,
+    "restricted": False,
+    "overridable": True,
+    "files": ["view.json"],
+}
 
 DB = "Inventory_Spike"
 
@@ -75,6 +114,14 @@ F = [
     ("form_enpurge",   "sites-enpurge",   "Enable Data Purge",       "bit",     "BIT_ENABLE_DATA_PURGE",0,None,"purge"),
     ("form_prpurge",   "sites-prpurge",   "Prompt Data Purge",       "bit",     "BIT_PROMPT_DATA_PURGE",1,None,"purge"),
     ("form_retention", "sites-retention", "Data Retention (>= 12 mo)","num",    "IN_DATA_RETENTION",0,None,"purge"),
+    # directory paths (M4 piece 1 — relocated from the legacy INI [DIRECTORIES])
+    ("form_ediout",    "sites-ediout",    "EDI Out Dir (shared)",    "text",    "VC_EDIOUT_DIR", "", 260, "paths"),
+    ("form_ediin",     "sites-ediin",     "EDI In Dir (shared)",     "text",    "VC_EDIIN_DIR",  "", 260, "paths"),
+    ("form_forecastd", "sites-forecastd", "Forecast Input Dir",      "text",    "VC_FORECAST_DIR","", 260, "paths"),
+    ("form_logisticsd","sites-logisticsd","Logistics Input Dir",     "text",    "VC_LOGISTICS_DIR","",260, "paths"),
+    ("form_reportsd",  "sites-reportsd",  "Reports Output Dir",      "text",    "VC_REPORTS_DIR","", 260, "paths"),
+    ("form_shippingd", "sites-shippingd", "Shipping File Dir",       "text",    "VC_SHIPPING_DIR","", 260, "paths"),
+    ("form_templated", "sites-templated", "Template Dir",            "text",    "VC_TEMPLATE_DIR","", 260, "paths"),
     # audit (read-only)
     ("form_lastupd",   "sites-lastupd",   "Last Update (audit)",     "ro_text", "VC_LAST_UPDATE","",None, "audit"),
     ("form_add",       "sites-add",       "Created (audit)",         "ro_text", "VC_ADD",       "", None, "audit"),
@@ -85,6 +132,7 @@ GROUPS = [
     ("edi",      "EDI / Trading Identity"),
     ("order",    "Order / Forecast Config"),
     ("purge",    "Data Purge"),
+    ("paths",    "Directory Paths (from legacy INI [DIRECTORIES])"),
     ("audit",    "Audit (read-only)"),
 ]
 
@@ -261,10 +309,19 @@ def recordid_onchange():
     )
 
 
-def new_script():
-    clears = "\n".join(
-        "\tc.%s = %s" % (key, ('""' if kind in ("text", "char1", "ro_text", "mode") and default == "" else repr(default)))
+def field_clears(indent):
+    """Reset-to-default assignments for every WRITABLE form field (read-only system
+    fields rule #3 are skipped). Single source for the 3 places that clear the form:
+    new_script(), delete_script() (2-tab, inside try), and the Clear button (1-tab).
+    `indent` is the leading whitespace (e.g. "\\t" or "\\t\\t")."""
+    return "\n".join(
+        "%sc.%s = %s" % (indent, key,
+                         ('""' if kind in ("text", "char1", "mode") and default == "" else repr(default)))
         for (key, _, _, kind, _, default, _, _) in F if kind not in ("ro_text", "ro_num"))
+
+
+def new_script():
+    clears = field_clears("\t")
     # mode default 'AUTO' should be a string literal
     return (
         "\t# New record: same-view prop write (NO navigation). recordId=0 -> insert mode.\n"
@@ -280,19 +337,68 @@ def new_script():
     )
 
 
-def save_script():
-    # ordered param lists matching Sites/insert and Sites/update SQL
-    # Nullable "unset = NULL" INT columns (schema: all four INT cols are NULL-able and
-    # their CHECKs allow NULL; the table comment treats NULL as legacy "unset"). Blank/0
-    # MUST bind NULL, never literal 0 — 0 is rejected by CK_INV_SITES_DATA_RETENTION
-    # (>= 12) and is not the legacy "unset" value for the others (B1/N1 fix).
-    NULLABLE_UNSET = {"form_retention", "form_filldays", "form_fcusage", "form_maxseq"}
+# ---------------------------------------------------------------------------
+# SHARED SQL builders (module-level, pure) — the SINGLE source of truth for the
+# insert/update/get column lists. Both save_script() (the view) AND the e2e test
+# (test_sites_master.py) build SQL from these, so the test exercises the IDENTICAL
+# SQL the view runs (no drift). The AUDIT expr is appended by the view-side script
+# (the test stamps VC_ADD/VC_LAST_UPDATE explicitly with the same recipe).
+# ---------------------------------------------------------------------------
 
+# Nullable "unset = NULL" INT columns (schema: all NULL-able; CHECKs allow NULL;
+# the table treats NULL as legacy "unset"). Blank/0 binds NULL, never literal 0 —
+# 0 is rejected by CK_INV_SITES_DATA_RETENTION (>=12) and is not the "unset" marker
+# for the others (B1/N1 fix).
+NULLABLE_UNSET = {"form_retention", "form_filldays", "form_fcusage", "form_maxseq"}
+
+# ordered (form_key, kind) args for insert (skip IN_EIN_SEQ -> literal 0; VC_ADD in SQL).
+INS_ORDER = [
+    ("form_name", "text"), ("form_abbr", "text"), ("form_street", "text"), ("form_city", "text"),
+    ("form_state", "text"), ("form_country", "text"), ("form_zip", "text"),
+    ("form_duns", "text"), ("form_supcode", "text"), ("form_dock", "text"),
+    ("form_edimode", "text"),
+    ("form_sepseg", "text"), ("form_sepelem", "text"), ("form_sepsub", "text"),
+    ("form_tmmname", "text"), ("form_tmmabbr", "text"), ("form_tmmduns", "text"), ("form_maxseq", "num"),
+    ("form_acceptasn", "bit"), ("form_delivery", "text"), ("form_filldays", "num"),
+    ("form_fcusage", "num"), ("form_usefpd", "bit"), ("form_fcmode", "mode"),
+    ("form_enpurge", "bit"), ("form_prpurge", "bit"), ("form_retention", "num"),
+    # directory paths (M4 piece 1) — same order in insert + update column lists.
+    ("form_ediout", "text"), ("form_ediin", "text"), ("form_forecastd", "text"),
+    ("form_logisticsd", "text"), ("form_reportsd", "text"), ("form_shippingd", "text"),
+    ("form_templated", "text"),
+]
+
+INS_COLS = ("VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE, VC_COUNTRY, VC_ZIP, "
+            "VC_DUNS, VC_SUPPLIER_CODE, VC_DOCK_CODE, IN_EIN_SEQ, VC_EDI_MODE, "
+            "VC_SEP_SEGMENT, VC_SEP_ELEMENT, VC_SEP_SUBELEMENT, "
+            "VC_TMM_NAME, VC_TMM_ABBR, VC_TMM_DUNS, IN_MAX_SEQUENCE, "
+            "BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE, IN_FILL_DAYS, "
+            "IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY, VC_FORECAST_IMPORT_MODE, "
+            "BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE, IN_DATA_RETENTION, "
+            "VC_EDIOUT_DIR, VC_EDIIN_DIR, VC_FORECAST_DIR, VC_LOGISTICS_DIR, "
+            "VC_REPORTS_DIR, VC_SHIPPING_DIR, VC_TEMPLATE_DIR, VC_ADD")
+# VALUES placeholders: IN_EIN_SEQ is the literal 0 (rule #3); the 7 path cols are ?; VC_ADD is the audit expr.
+INS_VALS = "?,?,?,?,?,?,?, ?,?,?, 0, ?, ?,?,?, ?,?,?,?, ?,?, ?, ?,?,?, ?,?,?, ?,?,?,?, ?,?,?, "
+
+UPD_SET = ("VC_SITE_NAME=?, VC_SITE_ABBR=?, VC_STREET=?, VC_CITY=?, VC_STATE=?, VC_COUNTRY=?, VC_ZIP=?, "
+           "VC_DUNS=?, VC_SUPPLIER_CODE=?, VC_DOCK_CODE=?, VC_EDI_MODE=?, "
+           "VC_SEP_SEGMENT=?, VC_SEP_ELEMENT=?, VC_SEP_SUBELEMENT=?, "
+           "VC_TMM_NAME=?, VC_TMM_ABBR=?, VC_TMM_DUNS=?, IN_MAX_SEQUENCE=?, "
+           "BIT_ACCEPT_ANY_ORDER_ASN=?, VC_DELIVERY_METHOD_CODE=?, IN_FILL_DAYS=?, "
+           "IN_FORECAST_USAGE_COMPARE=?, BIT_USE_FIRST_PRODUCTION_DAY=?, VC_FORECAST_IMPORT_MODE=?, "
+           "BIT_ENABLE_DATA_PURGE=?, BIT_PROMPT_DATA_PURGE=?, IN_DATA_RETENTION=?, "
+           "VC_EDIOUT_DIR=?, VC_EDIIN_DIR=?, VC_FORECAST_DIR=?, VC_LOGISTICS_DIR=?, "
+           "VC_REPORTS_DIR=?, VC_SHIPPING_DIR=?, VC_TEMPLATE_DIR=?, ")
+
+# the full ordered column list for Sites/get (every column incl. read-only + paths) — F order.
+GET_COLS = ", ".join(dbcol for (_, _, _, _, dbcol, _, _, _) in F)
+
+
+def save_script():
     def pyval(key, kind):
         if kind == "bit":
             return "_bit(c.%s)" % key
         if kind == "num":
-            # nullable-unset INTs: blank/0 -> NULL; otherwise the typed value.
             if key in NULLABLE_UNSET:
                 return "_intn(c.%s)" % key
             return "_int(c.%s)" % key
@@ -300,37 +406,11 @@ def save_script():
             return "_mode(c.%s)" % key
         return "_str(c.%s)" % key
 
-    ins_cols = ("VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE, VC_COUNTRY, VC_ZIP, "
-                "VC_DUNS, VC_SUPPLIER_CODE, VC_DOCK_CODE, IN_EIN_SEQ, VC_EDI_MODE, "
-                "VC_SEP_SEGMENT, VC_SEP_ELEMENT, VC_SEP_SUBELEMENT, "
-                "VC_TMM_NAME, VC_TMM_ABBR, VC_TMM_DUNS, IN_MAX_SEQUENCE, "
-                "BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE, IN_FILL_DAYS, "
-                "IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY, VC_FORECAST_IMPORT_MODE, "
-                "BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE, IN_DATA_RETENTION, VC_ADD")
-    # the VALUES placeholders: IN_EIN_SEQ is the literal 0 (rule #3); VC_ADD is the audit expr.
-    ins_vals = ("?,?,?,?,?,?,?, ?,?,?, 0, ?, ?,?,?, ?,?,?,?, ?,?, ?, ?,?,?, ?,?,?, " + AUDIT)
-    # ordered python args for insert (skip IN_EIN_SEQ which is literal 0; VC_ADD is in SQL)
-    ins_order = [
-        ("form_name", "text"), ("form_abbr", "text"), ("form_street", "text"), ("form_city", "text"),
-        ("form_state", "text"), ("form_country", "text"), ("form_zip", "text"),
-        ("form_duns", "text"), ("form_supcode", "text"), ("form_dock", "text"),
-        ("form_edimode", "text"),
-        ("form_sepseg", "text"), ("form_sepelem", "text"), ("form_sepsub", "text"),
-        ("form_tmmname", "text"), ("form_tmmabbr", "text"), ("form_tmmduns", "text"), ("form_maxseq", "num"),
-        ("form_acceptasn", "bit"), ("form_delivery", "text"), ("form_filldays", "num"),
-        ("form_fcusage", "num"), ("form_usefpd", "bit"), ("form_fcmode", "mode"),
-        ("form_enpurge", "bit"), ("form_prpurge", "bit"), ("form_retention", "num"),
-    ]
+    ins_cols = INS_COLS
+    ins_vals = INS_VALS + AUDIT
+    ins_order = INS_ORDER
     ins_args = "[" + ", ".join(pyval(k, kd) for k, kd in ins_order) + "]"
-
-    upd_set = ("VC_SITE_NAME=?, VC_SITE_ABBR=?, VC_STREET=?, VC_CITY=?, VC_STATE=?, VC_COUNTRY=?, VC_ZIP=?, "
-               "VC_DUNS=?, VC_SUPPLIER_CODE=?, VC_DOCK_CODE=?, VC_EDI_MODE=?, "
-               "VC_SEP_SEGMENT=?, VC_SEP_ELEMENT=?, VC_SEP_SUBELEMENT=?, "
-               "VC_TMM_NAME=?, VC_TMM_ABBR=?, VC_TMM_DUNS=?, IN_MAX_SEQUENCE=?, "
-               "BIT_ACCEPT_ANY_ORDER_ASN=?, VC_DELIVERY_METHOD_CODE=?, IN_FILL_DAYS=?, "
-               "IN_FORECAST_USAGE_COMPARE=?, BIT_USE_FIRST_PRODUCTION_DAY=?, VC_FORECAST_IMPORT_MODE=?, "
-               "BIT_ENABLE_DATA_PURGE=?, BIT_PROMPT_DATA_PURGE=?, IN_DATA_RETENTION=?, "
-               "VC_LAST_UPDATE = " + AUDIT)
+    upd_set = UPD_SET + "VC_LAST_UPDATE = " + AUDIT
     upd_args = "[" + ", ".join(pyval(k, kd) for k, kd in ins_order) + ", recId]"
 
     return (
@@ -391,6 +471,30 @@ def save_script():
         "\tif mode not in (\"AUTO\", \"MANUAL\"):\n"
         "\t\tc.statusMsg = \"Forecast Import Mode must be AUTO or MANUAL.\"\n"
         "\t\tlog.info(\"SPIKE Sites save REJECTED: bad mode=%s\" % mode); return\n"
+        "\t# ---- LOAD-BEARING positional-ISA validation (source-truth §4) ----\n"
+        "\t# VC_EDI_MODE -> ISA15 verbatim; the 3 separators are ISA/GS structural\n"
+        "\t# chars. A 2+ char value emits a MALFORMED positional ISA (EDI856/810Object).\n"
+        "\t# Each must be EXACTLY 1 char if set. Blank is allowed (col is NULLable).\n"
+        "\tedimode = _str(c.form_edimode)\n"
+        "\tif edimode != \"\" and len(edimode) != 1:\n"
+        "\t\tc.statusMsg = \"EDI Mode must be exactly 1 character (positional ISA15, e.g. 'P' or 'T').\"\n"
+        "\t\tlog.info(\"SPIKE Sites save REJECTED: edimode len=%d\" % len(edimode)); return\n"
+        "\tfor _lbl, _v in ((\"Segment\", _str(c.form_sepseg)), (\"Element\", _str(c.form_sepelem)), (\"Sub-element\", _str(c.form_sepsub))):\n"
+        "\t\tif _v != \"\" and len(_v) != 1:\n"
+        "\t\t\tc.statusMsg = \"Separator (%s) must be exactly 1 character (ISA/GS structural).\" % _lbl\n"
+        "\t\t\tlog.info(\"SPIKE Sites save REJECTED: sep %s len=%d\" % (_lbl, len(_v))); return\n"
+        "\t# DUNS format: 9 digits (or 9+4 = 13 digits), if set. (Real DUNS load at cutover;\n"
+        "\t# the spike seed uses 9-digit placeholders.)\n"
+        "\tdef _duns_ok(d):\n"
+        "\t\treturn d == \"\" or (d.isdigit() and len(d) in (9, 13))\n"
+        "\tduns = _str(c.form_duns)\n"
+        "\tif not _duns_ok(duns):\n"
+        "\t\tc.statusMsg = \"DUNS must be 9 digits (or 9+4 = 13 digits).\"\n"
+        "\t\tlog.info(\"SPIKE Sites save REJECTED: bad DUNS=%r\" % duns); return\n"
+        "\ttmmduns = _str(c.form_tmmduns)\n"
+        "\tif not _duns_ok(tmmduns):\n"
+        "\t\tc.statusMsg = \"TMM DUNS must be 9 digits (or 9+4 = 13 digits).\"\n"
+        "\t\tlog.info(\"SPIKE Sites save REJECTED: bad TMM DUNS=%r\" % tmmduns); return\n"
         "\ttry:\n"
         "\t\tif recId == 0:\n"
         "\t\t\tinsSql = (\"INSERT INTO INV_SITES (" + ins_cols + ") \"\n"
@@ -417,9 +521,7 @@ def save_script():
 
 def delete_script():
     # NOTE: these clears are emitted INSIDE the try: block -> TWO tabs of indent.
-    clears = "\n".join(
-        "\t\tc.%s = %s" % (key, ('""' if kind in ("text", "char1", "mode") and default == "" else repr(default)))
-        for (key, _, _, kind, _, default, _, _) in F if kind not in ("ro_text", "ro_num"))
+    clears = field_clears("\t\t")
     return (
         "\t# ---- Sites Delete — RESTRICT gate (rule #6) ----\n"
         "\t# refCount counts the THROWAWAY INV_PARTS_STOCK_MST.site_id (no FK yet).\n"
@@ -640,7 +742,7 @@ def build_view():
                                  "type": "ia.input.button"},
                                 {"events": {"component": {"onActionPerformed": {"config": {
                                     "script": "\tc = self.view.custom\n" +
-                                              "\n".join("\tc.%s = %s" % (key, ('""' if kind in ("text","char1","mode") and default=="" else repr(default))) for (key,_,_,kind,_,default,_,_) in F if kind not in ("ro_text","ro_num")) +
+                                              field_clears("\t") +
                                               "\n\tc.recordId = 0\n\tc.statusMsg = \"Cleared — ready for a new site.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Sites form cleared\")\n"},
                                     "scope": "G", "type": "script"}}},
                                  "meta": {"domId": "sites-clear-btn", "name": "ClearButton"},
@@ -656,13 +758,25 @@ def build_view():
     return view
 
 
-def main():
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    view = build_view()
-    with open(OUT, "w") as f:
+def _write_view(path, view):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
         json.dump(view, f, indent=1, sort_keys=True)
         f.write("\n")
-    print("wrote", OUT)
+    print("wrote", path)
+
+
+def main():
+    view = build_view()
+    # 1) deployed gateway copy (what the running session serves)
+    _write_view(GW_OUT, view)
+    # 2) committed repo copy (the redeployable source of truth — must == runtime)
+    _write_view(REPO_OUT, view)
+    # 2b) the repo resource.json companion (scope/version/files only; gateway re-signs attributes)
+    with open(REPO_RESOURCE, "w") as f:
+        json.dump(RESOURCE_JSON, f, indent=2)
+        f.write("\n")
+    print("wrote", REPO_RESOURCE)
 
 
 if __name__ == "__main__":

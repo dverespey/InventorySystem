@@ -905,3 +905,43 @@ INSERT silently fails → its fan-out check was vacuously green. Fixing the SET 
 `legacy=2` vs `migrated=1` divergence in `REPORT_EDI856_D6`'s forecast fan-out. → for D6/sql-adversary.
 
 ---
+
+## M4 piece 1 — Sites master + path columns (2026-06-22) ✅
+
+**Direction reversal (David 2026-06-22):** each site runs on its OWN gateway + DB (single-site
+deployments, NOT shared-DB multi-tenancy). So NO `site_id` surgery — `INV_SITES` holds the ONE site's
+config per deployment (one row). Sites config stays in the DB (David's call). This piece adds the
+per-deployment directory columns + the Sites config CRUD; the role-gate (Admin + production-control user)
+lands in M4 piece 2.
+
+**Path columns added (`spike-inv-sites-paths.sql`, idempotent ALTER addendum — M2 forecast-config style):**
+7 varchar(260) columns relocating the legacy INI `[DIRECTORIES]` set (verified field-for-field in
+`DataModule.dfm`): `VC_EDIOUT_DIR`←EDIOut, `VC_EDIIN_DIR`←EDIIn, `VC_FORECAST_DIR`←ForecastInputDir,
+`VC_LOGISTICS_DIR`←LogisticsInputDir, `VC_REPORTS_DIR`←ReportsOutputDir, `VC_SHIPPING_DIR`←TextShippingFileDir,
+`VC_TEMPLATE_DIR`←TemplateDir. (`LocalFTP` is an `[INIT]` boolean, not a dir → excluded.) EDIOut/EDIIn are
+a SHARED EDI share for now (deployment-config fact, no schema flag); the rest are per-deployment. Placeholder
+seeds only (NEVER real client paths). Applied to spike, re-run-safe.
+
+**Sites CRUD:** the existing 8th-master combined view (`gen_sites_view.py`, route `/sites`) extended with
+the 7 path fields + the load-bearing positional-ISA validation the source-truth (§4) required and the prior
+build lacked: `VC_EDI_MODE` exactly 1 char, the 3 separators exactly 1 char each, DUNS 9-or-13-digit format.
+NQ SQL (`master-crud-namedqueries.sql` Sites/get/insert/update) mirrored to carry the path cols. View
+deserialized clean on `gwcmd -r` (gateway jvm 40, 2026/06/22 15:59:53; zero today-dated deserialize/error).
+
+**Driver wiring (deliverable #3) confirmed:** the 856/810/order/forecast/report drivers read site config
+from `INV_SITES` by COLUMN PROJECTION (`SELECT VC_SITE_ABBR, VC_DUNS, …`) keyed by `IN_SITE_ID`, and take
+their output dir as a parameter today (test temp dirs). The path columns are now the source for those dirs
+(deployment config). Adding columns is non-breaking — confirmed by the regression suites below.
+
+**Tests:** `scripts/e2e/test_sites_master.py` (shim/DB, headless) **20 PASS / 0 FAIL** — DDL idempotency;
+full CRUD round-trip running the IDENTICAL insert/update/get SQL the view emits (imported from the shared
+builders in `gen_sites_view.py`, no drift), every field type incl. the 7 paths read back as set; validation
+with an INDEPENDENT oracle (fill-days>50 / retention 1..11 rejected by the table CHECK; 1-char sep/EDI-mode
++ DUNS by the source-truth predicate). NON-VACUITY proven: a reverted rebuild that drops a path column
+stores NULL → the round-trip assertion fails; and `VC_EDI_MODE` is varchar(10) so the DB SILENTLY stores a
+2-char value (no backstop) → the save-path guard is genuinely load-bearing. **Regressions green** (edi856
+52, edi810 72, forecast_import 35, order_file 34, m3_reports 50, edi_inbound 41) — the INV_SITES path-column
+ALTER broke no 856/810/order/forecast/report/inbound consumer. **Spike restored as-found** (2 seed rows
+MAS/HERO, all CRUD rolled back; the path columns are an intended permanent addition, left in place).
+
+---

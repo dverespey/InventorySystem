@@ -1393,6 +1393,10 @@ ORDER BY VC_ASSY_PART_NUMBER_CODE;
    Author:  ignition-developer / 2026-06-19
    Source:  docs/analysis/master-data/spike-inv-sites-table.sql (the table artifact)
    View:    Master/Sites/Sites  (combined master-detail, route /sites)
+   Generator: scripts/gen_sites_view.py — the SINGLE source of truth for the Sites
+            view.json AND the insert/update/get SQL column lists (INS_COLS/INS_VALS/
+            UPD_SET/GET_COLS). The SQL below is the human-readable spec; the runnable
+            SQL the view executes is assembled by that generator. Keep the two in sync.
 
    SAME MECHANISM as the other masters: NOT on-disk NQ resources — this is the
    canonical SQL, executed at runtime via inline system.db.runPrepQuery inside the
@@ -1410,6 +1414,19 @@ ORDER BY VC_ASSY_PART_NUMBER_CODE;
        CK_INV_SITES_FILL_DAYS        IN_FILL_DAYS IS NULL OR <= 50
        CK_INV_SITES_DATA_RETENTION   IN_DATA_RETENTION IS NULL OR >= 12
        CK_INV_SITES_FC_IMPORT_MODE   VC_FORECAST_IMPORT_MODE IN ('AUTO','MANUAL')
+     SAVE-PATH validation (NOT table CHECKs — enforced in the view save script,
+     source-truth m4-auth-sites-sourcetruth.md §4 "load-bearing positional ISA"):
+       VC_EDI_MODE      EXACTLY 1 char if set (emitted verbatim into ISA15).
+       VC_SEP_SEGMENT / VC_SEP_ELEMENT / VC_SEP_SUBELEMENT  EXACTLY 1 char each if
+                        set (ISA/GS structural separators — a 2+ char value emits a
+                        malformed positional ISA per EDI856/810Object.pas).
+       VC_DUNS / VC_TMM_DUNS  9 digits (or 9+4 = 13 digits) if set.
+     M4 piece 1 — DIRECTORY PATH columns (legacy INI [DIRECTORIES], added by
+       spike-inv-sites-paths.sql): VC_EDIOUT_DIR, VC_EDIIN_DIR, VC_FORECAST_DIR,
+       VC_LOGISTICS_DIR, VC_REPORTS_DIR, VC_SHIPPING_DIR, VC_TEMPLATE_DIR
+       (varchar(260) NULLable). The 856/810 outDir + the order/forecast/report
+       dirs read FROM these (deployment config; EDIOut/EDIIn are a shared share
+       for now). Carried in Sites/get + Sites/insert + Sites/update below.
      NOT NULL (must always be supplied/defaulted on insert):
        VC_SITE_NAME, VC_SITE_ABBR, IN_EIN_SEQ (DEFAULT 0),
        BIT_ACCEPT_ANY_ORDER_ASN (DF 0), BIT_USE_FIRST_PRODUCTION_DAY (DF 0),
@@ -1497,6 +1514,9 @@ SELECT  IN_SITE_ID, VC_SITE_NAME, VC_SITE_ABBR, VC_STREET, VC_CITY, VC_STATE,
         IN_FILL_DAYS, IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY,
         VC_FORECAST_IMPORT_MODE, VC_LAST_FORECAST_IMPORT,
         BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE, IN_DATA_RETENTION,
+        /* M4 piece 1 — directory paths (legacy INI [DIRECTORIES]; spike-inv-sites-paths.sql) */
+        VC_EDIOUT_DIR, VC_EDIIN_DIR, VC_FORECAST_DIR, VC_LOGISTICS_DIR,
+        VC_REPORTS_DIR, VC_SHIPPING_DIR, VC_TEMPLATE_DIR,
         VC_LAST_UPDATE, VC_ADD
 FROM    INV_SITES
 WHERE   IN_SITE_ID = :recordId
@@ -1523,7 +1543,10 @@ INSERT INTO INV_SITES
      BIT_ACCEPT_ANY_ORDER_ASN, VC_DELIVERY_METHOD_CODE,
      IN_FILL_DAYS, IN_FORECAST_USAGE_COMPARE, BIT_USE_FIRST_PRODUCTION_DAY,
      VC_FORECAST_IMPORT_MODE, BIT_ENABLE_DATA_PURGE, BIT_PROMPT_DATA_PURGE,
-     IN_DATA_RETENTION, VC_ADD)
+     IN_DATA_RETENTION,
+     /* M4 piece 1 — directory paths */
+     VC_EDIOUT_DIR, VC_EDIIN_DIR, VC_FORECAST_DIR, VC_LOGISTICS_DIR,
+     VC_REPORTS_DIR, VC_SHIPPING_DIR, VC_TEMPLATE_DIR, VC_ADD)
 VALUES
     (:siteName, :siteAbbr, :street, :city, :state, :country, :zip,
      :duns, :supplierCode, :dockCode, 0 /* IN_EIN_SEQ default, rule #3 */, :ediMode,
@@ -1533,6 +1556,8 @@ VALUES
      :fillDays, :forecastUsageCompare, :useFirstProdDay,
      :forecastImportMode, :enableDataPurge, :promptDataPurge,
      :dataRetention,
+     :ediOutDir, :ediInDir, :forecastDir, :logisticsDir,
+     :reportsDir, :shippingDir, :templateDir,
      CONVERT(char(8),GETDATE(),112)
        + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
        + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2));
@@ -1559,6 +1584,10 @@ UPDATE INV_SITES SET
     VC_FORECAST_IMPORT_MODE=:forecastImportMode,
     BIT_ENABLE_DATA_PURGE=:enableDataPurge, BIT_PROMPT_DATA_PURGE=:promptDataPurge,
     IN_DATA_RETENTION=:dataRetention,
+    /* M4 piece 1 — directory paths */
+    VC_EDIOUT_DIR=:ediOutDir, VC_EDIIN_DIR=:ediInDir, VC_FORECAST_DIR=:forecastDir,
+    VC_LOGISTICS_DIR=:logisticsDir, VC_REPORTS_DIR=:reportsDir,
+    VC_SHIPPING_DIR=:shippingDir, VC_TEMPLATE_DIR=:templateDir,
     VC_LAST_UPDATE = CONVERT(char(8),GETDATE(),112)
        + SUBSTRING(CONVERT(varchar,GETDATE(),114),1,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),4,2)
        + SUBSTRING(CONVERT(varchar,GETDATE(),114),7,2) + SUBSTRING(CONVERT(varchar,GETDATE(),114),10,2)
