@@ -449,6 +449,114 @@ def main():
         rep.check("6. atomicity: the failing supplier's staged .tmp was cleaned up",
                   both_tmps == [], "tmp=%s" % both_tmps)
 
+        # =============== (6b) PUBLISH-PHASE all-or-nothing: a 2nd-rename (.xlsx) failure ============
+        # The code-reviewer RISK (mirrors order_file step-4 / P10): a BOTH supplier renames its .frc -> final
+        # SUCCESSFULLY, then the .xlsx rename THROWS. The driver must UN-RENAME the already-published .frc
+        # back to .tmp so the supplier is all-or-nothing (NO orphaned final .frc), and raise an accurate
+        # ForecastDistributionError reporting the TRUE on-disk state. We target SUP_NULL (NULL Output Type ->
+        # BOTH via H2, so it has .frc + .xlsx). The feed is supplier-sorted by VC_SUPPLIER_CODE, so the four
+        # synthetic suppliers flush in order ZZP6B, ZZP6E, ZZP6N(=SUP_NULL), ZZP6T — i.e. SUP_BOTH + SUP_EXCEL
+        # publish CLEANLY before SUP_NULL fails, which lets us prove per-supplier ISOLATION (a failure does
+        # not corrupt an already-completed supplier). We force the failure at the os.rename of SUP_NULL's
+        # .xlsx FINAL (its 2nd planned rename: .frc then .xlsx); staging (render/write) all SUCCEEDS, so the
+        # failure is purely in the publish/rename phase this fix governs, not staging.
+        print("\n--- (6b) publish-phase all-or-nothing: .xlsx rename fails AFTER .frc renamed -> un-rename ---")
+        import os as _os_mod
+        halfroot = os.path.join(tmproot, "half")
+        real_rename = _os_mod.rename
+
+        def _failing_rename(src, dst, *a, **k):
+            # Fail ONLY when publishing SUP_NULL's .xlsx FINAL (the 2nd rename). The .frc final rename (1st)
+            # succeeds first, so we reproduce a true mid-sequence half-emit. We key on the FINAL target (dst
+            # matches SUP_NULL's Excel name and has no .tmp suffix) so the driver's un-rename
+            # (final -> final+'.tmp') is NOT blocked.
+            if (("-%s-Forecast.xlsx" % SUP_NULL) in str(dst)) and not str(dst).endswith(".tmp"):
+                raise RuntimeError("simulated .xlsx rename failure mid-publish (synthetic BOTH supplier)")
+            return real_rename(src, dst, *a, **k)
+
+        fd.system = jython_shim._System()
+        _os_mod.rename = _failing_rename
+        half_threw = False
+        half_err = ""
+        try:
+            try:
+                fd.emit_forecast_distribution(database=INV, localFtp=False, runDate=runDate,
+                                              weekDate=WEEK_FLOOR, outRoot=halfroot, renderModule=rmod)
+            except Exception as e:
+                half_threw = True
+                half_err = str(e)
+                print("    emit_forecast_distribution raised (expected): %s" % half_err[:90])
+        finally:
+            _os_mod.rename = real_rename
+        rep.check("6b. publish-phase: the .xlsx rename failure was raised (not swallowed)", half_threw)
+        # The KEY non-vacuous assertion: NO final .frc left for SUP_NULL (un-renamed back to .tmp). Without
+        # the un-rename fix the .frc final would be orphaned (a half-emitted supplier) and this FAILS.
+        half_frc_final = glob.glob(os.path.join(halfroot, "**", "*-%s.frc" % SUP_NULL), recursive=True)
+        half_xlsx_final = glob.glob(os.path.join(halfroot, "**", "*-%s-Forecast.xlsx" % SUP_NULL),
+                                    recursive=True)
+        rep.check("6b. NO orphaned final .frc for SUP_NULL after the .xlsx rename failed (un-renamed)",
+                  half_frc_final == [], "orphaned .frc finals=%s" % half_frc_final)
+        rep.check("6b. NO final .xlsx for SUP_NULL (its rename is what failed)",
+                  half_xlsx_final == [], "xlsx finals=%s" % half_xlsx_final)
+        # The .frc payload is RETAINED as .tmp for operator re-drop (the un-rename target), FS-verified.
+        half_frc_tmp = glob.glob(os.path.join(halfroot, "**", "*-%s.frc.tmp" % SUP_NULL), recursive=True)
+        rep.check("6b. the un-renamed .frc is retained as .tmp (operator re-drop payload)",
+                  len(half_frc_tmp) == 1, "frc .tmp=%s" % half_frc_tmp)
+        # The error TRUTHFULLY reports the state: a clean rollback (no final stuck) -> names the supplier,
+        # 'all-or-nothing', and the retained .tmp path actually on disk (P10 true-state report, not blanket).
+        rep.check("6b. error names SUP_NULL + 'all-or-nothing' + the actual retained .tmp (true-state report)",
+                  (SUP_NULL in half_err) and ("all-or-nothing" in half_err)
+                  and any(os.path.basename(p) in half_err for p in half_frc_tmp),
+                  "err=%r" % half_err)
+        # PER-SUPPLIER ISOLATION: SUP_BOTH + SUP_EXCEL flush BEFORE SUP_NULL (ZZP6B/E < ZZP6N), so their
+        # finals must stay fully published — SUP_NULL's failure does NOT corrupt an already-completed
+        # supplier (the per-supplier all-or-nothing invariant, scoped to ONE supplier).
+        both_frc_ok = glob.glob(os.path.join(halfroot, "**", "*-%s.frc" % SUP_BOTH), recursive=True)
+        both_xlsx_ok = glob.glob(os.path.join(halfroot, "**", "*-%s-Forecast.xlsx" % SUP_BOTH), recursive=True)
+        excel_ok = glob.glob(os.path.join(halfroot, "**", "*-%s-Forecast.xlsx" % SUP_EXCEL), recursive=True)
+        rep.check("6b. per-supplier isolation: SUP_BOTH (flushed earlier) keeps BOTH finals (.frc + .xlsx)",
+                  len(both_frc_ok) == 1 and len(both_xlsx_ok) == 1,
+                  "frc=%s xlsx=%s" % (both_frc_ok, both_xlsx_ok))
+        rep.check("6b. per-supplier isolation: SUP_EXCEL (flushed earlier) keeps its final .xlsx",
+                  len(excel_ok) == 1, "SUP_EXCEL .xlsx finals=%s" % excel_ok)
+
+        # ---- 6b NON-VACUITY (self-contained, always runs): neutralize the un-rename -> the orphaned .frc
+        # final REMAINS, so the 6b "NO orphaned final .frc" assertion is genuinely contingent on the fix.
+        # We run the SAME scenario but ALSO fail the un-rename (final -> .tmp), which drops into the driver's
+        # 'still_final' path (rollback INCOMPLETE). Effect = "no un-rename happened": SUP_NULL's .frc final
+        # is left orphaned on disk + the error TRUTHFULLY reports it as a final still on disk (not blanket).
+        print("--- 6b NON-VACUITY: with the un-rename neutralized, the orphaned .frc final REMAINS ---")
+        nvroot = os.path.join(tmproot, "half_nv")
+
+        def _failing_rename_no_unrename(src, dst, *a, **k):
+            # Fail BOTH the .xlsx publish (final, no .tmp) AND the .frc un-rename (target ends .frc.tmp) for
+            # SUP_NULL. The .frc PUBLISH (frc final, no .tmp) still succeeds first -> orphaned final remains.
+            d = str(dst)
+            if ("-%s-Forecast.xlsx" % SUP_NULL) in d and not d.endswith(".tmp"):
+                raise RuntimeError("simulated .xlsx publish failure (non-vacuity)")
+            if d.endswith("-%s.frc.tmp" % SUP_NULL):
+                raise RuntimeError("simulated un-rename failure (non-vacuity: as if no un-rename)")
+            return real_rename(src, dst, *a, **k)
+
+        fd.system = jython_shim._System()
+        _os_mod.rename = _failing_rename_no_unrename
+        nv_err = ""
+        try:
+            try:
+                fd.emit_forecast_distribution(database=INV, localFtp=False, runDate=runDate,
+                                              weekDate=WEEK_FLOOR, outRoot=nvroot, renderModule=rmod)
+            except Exception as e:
+                nv_err = str(e)
+        finally:
+            _os_mod.rename = real_rename
+        nv_frc_final = glob.glob(os.path.join(nvroot, "**", "*-%s.frc" % SUP_NULL), recursive=True)
+        rep.check("6b NON-VACUITY: with un-rename neutralized, SUP_NULL's .frc final IS orphaned (fix matters)",
+                  len(nv_frc_final) == 1, "frc finals=%s" % nv_frc_final)
+        rep.check("6b NON-VACUITY: the error reports the INCOMPLETE rollback (still-final on disk), not a blanket",
+                  ("INCOMPLETE" in nv_err) and (SUP_NULL in nv_err)
+                  and any(os.path.basename(p) in nv_err for p in nv_frc_final),
+                  "err=%r" % nv_err)
+
         # =============== (9) TRIGGER WIRING: import_830 emits the feed post-commit ===============
         print("\n--- (9) trigger: import_830(emitFeed=True) emits the feed post-import ---")
         # The feed driver needs a renderModule for any BOTH/EXCEL supplier; the synthetic SUP_TEXT is TEXT

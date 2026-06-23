@@ -288,9 +288,17 @@ def _site_supplier_code(database):
     """The single site's own supplier code = INV_SITES.VC_SUPPLIER_CODE (the spike note maps
     VC_SUPPLIER_CODE <- TSiteInfo.SiteSupplierCode, i.e. the legacy Data_Module.fiSupplierCode the
     commented-out :489 line read). This is the leading field prepended for sendsite suppliers (the P6
-    fix). Single-site: there is exactly one INV_SITES row; we read its VC_SUPPLIER_CODE. Returns '' if no
-    site row or a NULL code (degrade gracefully — the sendsite line then carries an empty lead, flagged in
-    the summary). M4 multi-site: the site derives from the session, not a single SELECT — IG83-TODO."""
+    fix). Returns '' if no site row or a NULL code (degrade gracefully — the sendsite line then carries an
+    empty lead, flagged in the summary).
+
+    # IG-SITE (single-site-correct, NOT a bug): the TOP 1 ... ORDER BY IN_SITE_ID always returns the ONE
+    # INV_SITES row (e.g. 'MAS') for EVERY sendsite supplier — and that is CORRECT for our committed
+    # deployment model: single-site, exactly one INV_SITES row per gateway/DB (the M4 multi-site reversal;
+    # the separate-infra decision says multi-site won't return). The sendsite leading field is the SITE's
+    # own supplier code, which is genuinely site-global, so a single SELECT is right. If multi-site ever DID
+    # come back, this leading field would need PER-SUPPLIER site scoping — but there is NO site FK on
+    # INV_BREAKDOWN_FC_INF or INV_SUPPLIER_MST today, so that resolution does not exist to do per-supplier
+    # and would be a schema change, not a code tweak here. Do not "fix" this to a join."""
     rows = system.db.runPrepQuery(                                       # noqa: F821 (gateway global)
         "SELECT TOP 1 VC_SUPPLIER_CODE FROM INV_SITES ORDER BY IN_SITE_ID", [], database)
     if not len(rows):
@@ -468,25 +476,73 @@ def emit_forecast_distribution(database=None, localFtp=False, runDate=None, week
                     plannedTmps.append((archTmp, archFinal))
                     detail["files"].append({"kind": "xlsx-archive", "path": archFinal})
 
-            # --- publish: rename every .tmp -> final, all-or-nothing for THIS supplier ---
-            supPublished = []
+        except Exception:
+            # H1 fix: any failure WHILE STAGING (render/write to .tmp, before the publish phase) -> delete
+            # this supplier's staged .tmp (no partial final; nothing was renamed yet). The publish phase is
+            # handled separately BELOW (outside this try) so its retained-rollback .tmp are NOT cleaned away
+            # by this branch — they are the operator re-drop payload the publish error promises.
+            _cleanup_tmps([t for t, _ in plannedTmps])
+            log.error("emit_forecast_distribution: FAILED staging supplier %s — staged .tmp cleaned up"
+                      % supCode)
+            raise
+
+        # --- publish: rename every .tmp -> final, ALL-OR-NOTHING for THIS supplier ----------------------
+        # P6 (the code-reviewer RISK; mirrors order_file step-4 / P10/R26): a supplier's .frc + .xlsx (+
+        # archives) are INDEPENDENT files renamed in sequence. A naive loop that renames the .frc, then
+        # THROWS on the .xlsx rename, would leave the supplier HALF-EMITTED — a published .frc with no .xlsx
+        # (a partial supplier the downstream parser would mis-handle). So we make the rename phase all-or-
+        # nothing PER SUPPLIER: on any mid-sequence failure, UN-rename the finals already published back to
+        # .tmp (best-effort) so NO final is left for this supplier, then report the TRUE on-disk state (which
+        # finals are STUCK as final, which .tmp remain — all FS-verified, never a blanket claim). One
+        # supplier's failure never touches another supplier's already-completed files (published[] from
+        # earlier _flush_supplier calls is untouched). This phase is OUTSIDE the staging try/except so the
+        # retained-rollback .tmp survive (the H1 cleanup above only fires for a STAGING failure).
+        supPublished = []
+        try:
             for tmpPath, finalPath in plannedTmps:
                 # IG83-TODO: on 8.3 prefer system.file move/rename; os.rename is atomic on one filesystem.
                 if _os.path.exists(finalPath):
                     _os.remove(finalPath)            # legacy pre-deletes before SaveAs (:374/:521)
                 _os.rename(tmpPath, finalPath)
                 supPublished.append(finalPath)
-            published.extend(supPublished)
-        except Exception:
-            # H1 fix: any failure mid-supplier -> delete this supplier's staged .tmp (no partial final).
-            # NB: if a rename already published some finals before a LATER one failed, those finals stay
-            # (the .frc + .xlsx are independent files, not a multi-dest fan-out of ONE file). We delete the
-            # remaining .tmp so no half-written staging lingers. The per-supplier invariant the legacy
-            # cared about (a partial .frc) is held: a .frc is written whole to .tmp then atomically renamed.
-            _cleanup_tmps([t for t, _ in plannedTmps])
-            log.error("emit_forecast_distribution: FAILED emitting supplier %s — staged .tmp cleaned up"
-                      % supCode)
-            raise
+        except Exception as renameExc:
+            # Un-rename what already published so THIS supplier's file set is all-or-nothing (no half emit).
+            # The un-rename is itself best-effort: it CAN fail (e.g. the share vanished), leaving a final
+            # stuck on disk. Track which un-renames succeeded vs failed so the error reports the ACTUAL
+            # state, never the old blanket "staged .tmp cleaned up" (which over-claimed when a final had
+            # already been published — the P10 over-claim lesson, R20).
+            rolled_back = []     # finals successfully un-renamed back to .tmp (no longer a final on disk)
+            still_final = []     # finals whose un-rename FAILED -> STILL published on disk (half emit!)
+            for finalPath in supPublished:
+                try:
+                    _os.rename(finalPath, finalPath + ".tmp")
+                    rolled_back.append(finalPath + ".tmp")
+                except Exception:
+                    still_final.append(finalPath)
+            # .tmp actually retained on disk now = the rolled-back finals (now .tmp) + every dest that NEVER
+            # published (its .tmp was never renamed away). FS-verify so we never list a phantom .tmp.
+            never_published = [t for (t, f) in plannedTmps if f not in supPublished]
+            retained_tmp = [p for p in (rolled_back + never_published) if _os.path.exists(p)]
+            if still_final:
+                log.error("emit_forecast_distribution: PUBLISH FAILED for supplier %s and the file "
+                          "rollback was INCOMPLETE — %d final(s) still on disk (could not un-rename): %s | "
+                          ".tmp retained: %s"
+                          % (supCode, len(still_final), still_final, retained_tmp))
+                raise ForecastDistributionError(
+                    "emit_forecast_distribution: publish failed for supplier %s AND the file rollback was "
+                    "INCOMPLETE. The supplier is PARTIALLY emitted: %d final file(s) could NOT be rolled "
+                    "back and STILL HOLD a final on disk: %s. The rest are retained as .tmp: %s. Underlying "
+                    "error: %s" % (supCode, len(still_final), still_final, retained_tmp, renameExc))
+            # Clean rollback: every already-published final for this supplier was un-renamed.
+            log.error("emit_forecast_distribution: PUBLISH FAILED for supplier %s — rolled back the file "
+                      "publish (un-renamed %d already-published final(s); NO final left on disk for this "
+                      "supplier). Retained .tmp: %s" % (supCode, len(rolled_back), retained_tmp))
+            raise ForecastDistributionError(
+                "emit_forecast_distribution: publish failed for supplier %s (all-or-nothing per supplier). "
+                "No final was left on disk for this supplier (the %d already-published final(s) were rolled "
+                "back to .tmp); every staged file is retained as .tmp: %s. Underlying error: %s"
+                % (supCode, len(rolled_back), retained_tmp, renameExc))
+        published.extend(supPublished)
 
         suppliers.append(detail)
 
