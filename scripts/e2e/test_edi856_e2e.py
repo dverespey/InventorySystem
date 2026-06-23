@@ -61,7 +61,7 @@ Run:  export SA_PASS='Spike_Dev_2026!'  &&  python3 scripts/e2e/test_edi856_e2e.
 import os, subprocess, sys, tempfile, shutil
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, preclean_sentinels   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -157,13 +157,18 @@ def main():
 
     edi856 = jython_shim.load_wrapper("edi856_driver", EDI856_PY)
 
-    # --- pre-clean any leftovers from a prior aborted run ---------------------------------------
-    sql(INV, "DELETE FROM INV_ASN_DETAIL_MST WHERE IN_ASN_ID IN "
-             "(SELECT IN_ASN_ID FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')); "
-             "DELETE FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')"
-             % (TEST_LINE, DECOY_LINE, PROBE_LINE, TEST_LINE, DECOY_LINE, PROBE_LINE))
-    sql(INV, "DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ADD = '%s'" % COST_SENTINEL)
-    sql(INV, "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD = '%s'" % FC_SENTINEL)
+    # --- P11 self-heal pre-clean of any leftovers from a KILLED prior run (error-swallowing, so a
+    # partially-dirty DB still drains; child rows before parents). Every predicate is sentinel-scoped
+    # (the test line names + the VC_ADD cost/forecast stamps), so nothing real is touched. -------------
+    preclean_sentinels(lambda s: sql(INV, s), [
+        "DELETE FROM INV_ASN_DETAIL_MST WHERE IN_ASN_ID IN "
+        "(SELECT IN_ASN_ID FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s'))"
+        % (TEST_LINE, DECOY_LINE, PROBE_LINE),
+        "DELETE FROM INV_ASN_MST WHERE VC_LINE_NAME IN ('%s','%s','%s')"
+        % (TEST_LINE, DECOY_LINE, PROBE_LINE),
+        "DELETE FROM INV_MANIFEST_COST_MST WHERE VC_ADD = '%s'" % COST_SENTINEL,
+        "DELETE FROM INV_FORECAST_DETAIL_INF WHERE VC_ADD = '%s'" % FC_SENTINEL,
+    ], label="edi856")
 
     # --- (#8) DRIFT GUARD: code.py:_FEED_SQL is byte-identical to the .sql's marked SELECT body --
     # (modulo the single @ASNID<->? bind). If either is edited without the other, this fails.

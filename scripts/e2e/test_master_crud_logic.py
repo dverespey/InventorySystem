@@ -267,14 +267,72 @@ def test_validation(rep):
 # 2. DELETE-GATE BLOCKED (CRITICAL D3) — a referenced row (refCount>0) REFUSES delete; row survives.
 # ---------------------------------------------------------------------------
 
+# The 6 masters that DO carry a refCount delete-gate (everything but ManifestCost, which is faithfully
+# ungated — legacy DELETE_ManifestCost has no RESTRICT). For a GATED master, "no referenced row found at
+# runtime" is a FAIL, not a SKIP (P17.2): a green run must prove ALL 6 blocked branches actually ran. If a
+# referenced row genuinely can't be found, the test seeds a guaranteed one (or fails loudly) rather than
+# silently masking an unexercised D3 branch.
+GATED_MASTERS = ["Size", "Supplier", "PartsStock", "RenbanGroup", "AssemblyDetail", "Logistics"]
+
+# ZZ-sentinel synthetic rows seeded by _seed_referenced_row (so a CLEAN spike with no live referenced row
+# still exercises the D3 blocked branch); swept in teardown. Each entry: (table, key column, value).
+_SEEDED_SENTINELS = []
+
+
+def _seed_referenced_row(view):
+    """Best-effort GUARANTEED-referenced-row seed for a gated master when the live data happens to have
+    none (P17.2 fail-close fallback). Inserts ZZ-sentinel rows (a master + a child that references it) so
+    the deployed Delete's refCount predicate sees refCount>0, then returns (recordId, {form fields}). The
+    sentinels are registered in _SEEDED_SENTINELS and swept in teardown so the spike is left as-found.
+
+    Only the simplest single-table master (Logistics) is seeded here — its child relation is a single
+    clean FK (Supplier.IN_LOGISTICS_ID) with no trigger side-effects. The other five
+    (Size/Supplier/PartsStock/RenbanGroup/AssemblyDetail) carry abundant live refs (31/14/21/5/41
+    verified), so this fallback never fires for them. (Size's only clean child is INV_PARTS_STOCK_MST,
+    whose INSERT_PartsStockMST trigger snapshots into INV_PARTS_STOCK_MST_HIST with a cascade of NOT-NULL
+    columns — not worth a fragile synthetic seed when 31 live refs guarantee the branch runs.) For those
+    five, returning None makes test_delete_gate_blocked FAIL loudly (the correct fail-close — a SKIP would
+    mask an unexercised D3 branch)."""
+    if view == "Logistics":
+        # A Logistics row referenced by a synthetic Supplier row (Supplier.IN_LOGISTICS_ID FK -> Logistics).
+        sqlq("INSERT INTO INV_LOGISTICS_MST (VC_LOGISTICS_NAME, VC_ADD) VALUES ('ZZ Seed Logistics','ZZSEED');")
+        lid = scalar("SELECT IN_LOGISTICS_ID FROM INV_LOGISTICS_MST WHERE VC_LOGISTICS_NAME='ZZ Seed Logistics'")
+        sqlq("INSERT INTO INV_SUPPLIER_MST (VC_SUPPLIER_CODE, IN_LOGISTICS_ID, VC_ADD) "
+             "VALUES ('ZZSDL', %d, 'ZZSEED');" % lid)
+        # PARENT first, CHILD after (LIFO sweep -> child first).
+        _SEEDED_SENTINELS.append(("INV_LOGISTICS_MST", "VC_LOGISTICS_NAME", "ZZ Seed Logistics"))
+        _SEEDED_SENTINELS.append(("INV_SUPPLIER_MST", "VC_SUPPLIER_CODE", "ZZSDL"))
+        return (lid, {"form_name": "ZZ Seed Logistics"})
+    return None
+
+
+def _sweep_seeded_sentinels():
+    # Delete in LIFO order (children before the master they reference — see append order in the seed).
+    for tbl, key, val in reversed(_SEEDED_SENTINELS):
+        sqlq("DELETE FROM %s WHERE %s='%s';" % (tbl, key, val.replace("'", "''")))
+    del _SEEDED_SENTINELS[:]
+
+
 def test_delete_gate_blocked(rep):
     for V in VIEWS:
+        if V == "ManifestCost":
+            # ManifestCost is FAITHFULLY ungated (no refCount RESTRICT in legacy DELETE_ManifestCost).
+            # This SKIP is correct and intentional — there is no D3 blocked branch to exercise here.
+            rep.skip("%s delete-gate-blocked" % V,
+                     "no refCount gate (ManifestCost — faithful to legacy DELETE_ManifestCost)")
+            continue
         ref = referenced_row(V)
         if ref is None:
-            rep.skip("%s delete-gate-blocked" % V,
-                     "no refCount gate (ManifestCost — faithful to legacy DELETE_ManifestCost)"
-                     if V == "ManifestCost" else "no referenced row found")
-            continue
+            # GATED master with no referenced row found at runtime -> FAIL (P17.2). A SKIP here would let a
+            # green run pass while a D3 blocked branch went unexercised. Try to SEED a guaranteed referenced
+            # row before failing, so a clean spike still proves the branch.
+            ref = _seed_referenced_row(V)
+            if ref is None:
+                rep.check("%s DELETE-GATE BLOCKED (PC session): a referenced row was exercised "
+                          "(D3 branch ran)" % V, False,
+                          "GATED master but NO referenced row found and none could be seeded — the D3 "
+                          "blocked branch went UNEXERCISED (fail-close per P17.2)")
+                continue
         rid, fields = ref
         delete = deployed_script(V, "DeleteButton")
         # pre: prove this id exists in its master table (so 'still exists after' is meaningful)
@@ -344,6 +402,12 @@ def main():
     print("=== P16 master-CRUD logic re-coverage under a ProductionControl session "
           "(validation / D3 delete-gate-blocked / round-trip) ===\n")
     rep = Report()
+    # P11 self-heal: pre-clean the synthetic round-trip ZZ-sentinel rows + any guaranteed-ref seed rows a
+    # KILLED prior run may have left, independent of that run's teardown. Sentinel-scoped (ZZ* codes,
+    # zero-ref) so nothing real is touched. _sweep_round_trip() + _sweep_seeded_sentinels() are already
+    # idempotent; running them at START drains a dirty DB before validation/round-trip seed again.
+    _sweep_round_trip()
+    _sweep_seeded_sentinels()
     print("-- 1. Validation (bad input rejected past the gate) --")
     test_validation(rep)
     print("\n-- 2. Delete-gate BLOCKED (D3 critical — referenced row refuses delete, survives) --")
@@ -352,6 +416,7 @@ def main():
     test_round_trip(rep)
     print("\n-- teardown --")
     _sweep_round_trip()
+    _sweep_seeded_sentinels()                       # P17.2: drop any guaranteed-ref seed rows
     rep.check("teardown: round-trip sentinels swept (spike as-found)",
               all(scalar("SELECT COUNT(*) FROM %s WHERE %s='%s'"
                          % (ROUND_TRIP[V][0], ROUND_TRIP[V][1], ROUND_TRIP[V][2].replace("'", "''"))) == 0

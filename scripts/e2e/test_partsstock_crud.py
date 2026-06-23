@@ -75,10 +75,34 @@ DETAIL_ANCHOR = {
 # Valid FK selections for the throwaway round-trip (smallest id of each master).
 FK = {"supplier": 2, "logistics": 1, "size": 1, "renban": 7, "partType": 1}
 TEST_CODE = "ZZQATEST001"
-EXPECTED_LINES = ["CAMRY", "COROLLA", "HIGHLANDER", "TACOMA", "TUNDRA"]
+# P17.3 — Line dropdown reality. The Line list is a CROSS-DB read of VehicleOrder.dbo.Line (the real
+# ALC_Connection -> VehicleOrder read; faithful spike equivalent is the 3-part name). VehicleOrder is now
+# a FULLY-RESTORED REAL database in mssql-spike (165 objects, real client data) — NOT the old flat stub
+# the obsolete scripts/spike-vehicleorder-line-fixture.sql assumed didn't exist. The real Line table holds
+# exactly ONE line on this spike: COROLLA (the spike's working line, matching INV_PARTS_STOCK_MST). The
+# earlier 5-line EXPECTED set was the now-obsolete stub's fabricated seed. VehicleOrder is READ-ONLY (real
+# client data — we never write fake lines into it), so the assertion is reality-based: COROLLA (the real,
+# only line) must be present + selectable. Multi-line dropdown coverage is a DATA-SEED carry: it needs a
+# real multi-line VehicleOrder restore (a fixture/data-seed item), not a fabricated row — SKIPPED with
+# this reason rather than writing the RO real DB. (See the P17.3 verdict in the punch-list drain.)
+EXPECTED_LINES = ["COROLLA"]            # the real, only line on the restored VehicleOrder spike
+MULTILINE_SEED_SKIP = ("P17.3 data-seed carry: VehicleOrder is a RESTORED REAL RO DB with only COROLLA on "
+                       "this spike; multi-line Line-dropdown coverage needs a real multi-line VehicleOrder "
+                       "restore, not a fabricated row (we do NOT write the RO real DB). COROLLA selectable "
+                       "is proven; the >1-line case is a fixture/data-seed item.")
 
 GRID = "#ps-grid"
 ROW = "div.ia_table__row"
+
+
+def _combo_line_ge1(marker_line):
+    """Parse the 'line=N' field out of the SPIKE 'PartsStock Detail combos ... line=N' marker and return
+    True if N>=1. P17.3: the Line dropdown is the cross-DB VehicleOrder.dbo.Line read; on the restored real
+    RO VehicleOrder spike that is 1 (COROLLA). We assert >=1 (the dropdown populated from the live cross-DB
+    read) rather than a fabricated count."""
+    import re as _re
+    m = _re.search(r"line=(\d+)", marker_line)
+    return bool(m) and int(m.group(1)) >= 1
 
 
 # ---- selector helper (domId first, then text/role) -----------------------
@@ -253,8 +277,10 @@ def open_detail_via_row(page, rep, code):
               load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no Detail-loaded marker")
 
     combo_lines = lib.grep_spike_since(off, "PartsStock Detail combos")
-    rep.check("All 5 FK combos + Line dropdown populated (SPIKE 'combos sup=.. line=..')",
-              any(("sup=16" in l and "line=5" in l) for l in combo_lines),
+    # Line dropdown is the cross-DB VehicleOrder.dbo.Line read — 1 line (COROLLA) on the restored real
+    # RO VehicleOrder (P17.3). The 5 FK combos still populate from the Inventory masters (sup=16 etc.).
+    rep.check("All 5 FK combos + Line dropdown populated (SPIKE 'combos sup=16 .. line>=1')",
+              any(("sup=16" in l and _combo_line_ge1(l)) for l in combo_lines),
               combo_lines[-1].split("SPIKE")[-1][:90] if combo_lines else "no combos marker")
 
     page.wait_for_timeout(800)
@@ -549,10 +575,12 @@ def main():
     pre = db_parts_count()
     rep.check("Sandbox up + baseline (%d parts)" % EXPECTED_COUNT, pre == EXPECTED_COUNT,
               "count=%d" % pre)
-    # cross-DB Line catalog reachable (the spike fixture)
+    # cross-DB Line catalog reachable — the real restored RO VehicleOrder.dbo.Line (P17.3).
     lines_out = sqlq("SELECT DISTINCT LineName FROM VehicleOrder.dbo.LINE ORDER BY LineName")
-    rep.check("Cross-DB VehicleOrder.dbo.LINE readable (%s)" % ", ".join(EXPECTED_LINES),
+    rep.check("Cross-DB VehicleOrder.dbo.Line readable, COROLLA present (%s)" % ", ".join(EXPECTED_LINES),
               all(l in lines_out for l in EXPECTED_LINES), "lines=%r" % lines_out.strip()[:80])
+    # Multi-line dropdown coverage is a data-seed carry (real RO VehicleOrder has 1 line on the spike).
+    rep.skip("Multi-line Line dropdown (>1 line)", MULTILINE_SEED_SKIP)
 
     with sync_playwright() as p:
         b = p.chromium.launch(headless=not headed, slow_mo=250 if headed else 0)

@@ -606,8 +606,11 @@ def generate_order_files(database=None, calDatabase=None, localFtp=False, runDat
     #   * on ANY failure, UN-rename the ones that already renamed (final -> .tmp), so NO destination is
     #     left half-published, and raise OrderFileError naming the failed destination + the fact the rows
     #     are STAMPED (committed) and every .tmp is retained for operator re-drop.
-    # Net: either ALL destinations publish, or NONE do + a hard error (no silent partial). The residual
-    # 2-phase limit (rows stamped but files not yet on disk) is explicit in the error, not silent.
+    # Net: either ALL destinations publish, or NONE do + a hard error. The residual 2-phase limit (rows
+    # stamped but files not yet on disk) is explicit in the error. P10: when an UN-rename itself fails the
+    # earlier blanket "NO destination was left partially published" + "every .ord retained as .tmp" claim
+    # was WRONG (it over-claimed clean rollback and listed .tmp that don't exist). We now report the TRUE
+    # on-disk state — which destinations still hold a FINAL .ord, which retain a .tmp — never a blanket.
     published = []
     try:
         for tmpPath, finalPath in plannedTmps:
@@ -615,22 +618,45 @@ def generate_order_files(database=None, calDatabase=None, localFtp=False, runDat
             _os.rename(tmpPath, finalPath)
             published.append(finalPath)
     except Exception as exc:
-        # Un-rename what already published so the FILE set is all-or-nothing (no partial emit). Best-effort
-        # — a failure here can't worsen the invariant (we then re-raise loudly with every dest named).
+        # Un-rename what already published so the FILE set is all-or-nothing (no partial emit). This is
+        # itself best-effort: an un-rename CAN fail (e.g. the share went away), leaving that destination
+        # with a FINAL .ord still on disk. We track which un-renames succeeded vs failed so the error
+        # reports the actual state instead of the old blanket "NO destination was left partially published".
+        rolled_back = []          # finals successfully un-renamed back to .tmp (no longer a final on disk)
+        still_final = []          # finals whose un-rename FAILED -> still published on disk (partial emit!)
         for finalPath in published:
             try:
                 _os.rename(finalPath, finalPath + ".tmp")
+                rolled_back.append(finalPath + ".tmp")
             except Exception:
-                pass
-        retained = [t for t, _ in plannedTmps]
+                still_final.append(finalPath)
+        # Determine the .tmp actually retained on disk now: the rolled-back finals (now .tmp) + every
+        # destination that NEVER published (its .tmp was never renamed away). Verify against the FS so we
+        # never list a .tmp that isn't there.
+        never_published = [t for (t, f) in plannedTmps if f not in published]
+        retained_tmp = [p for p in (rolled_back + never_published) if _os.path.exists(p)]
+
+        if still_final:
+            # TRUE partial emit: the file rollback could not fully undo. Report the finals left on disk.
+            log.error("generate_order_files: PUBLISH FAILED after the stamp COMMITTED, and the file "
+                      "rollback was INCOMPLETE — %d destination(s) still hold a FINAL .ord on disk "
+                      "(could not un-rename). Rows ARE STAMPED. Finals still published: %s | .tmp "
+                      "retained: %s" % (len(still_final), still_final, retained_tmp))
+            raise OrderFileError(
+                "generate_order_files: .ord publish failed after the stamp tx committed (2-phase limit), "
+                "AND the file rollback was INCOMPLETE. The emit is PARTIAL: rows are STAMPED (ordered) "
+                "and %d destination(s) STILL HOLD A FINAL .ord that could not be rolled back: %s. The "
+                "remaining destinations are retained as .tmp for operator re-drop: %s. Underlying error: "
+                "%s" % (len(still_final), still_final, retained_tmp, exc))
+        # Clean rollback: every already-published copy was un-renamed; no final left on disk.
         log.error("generate_order_files: PUBLISH FAILED after the stamp COMMITTED — rolled back the file "
-                  "publish (un-renamed %d already-published copies). Rows ARE STAMPED. Retained .tmp at: %s"
-                  % (len(published), retained))
+                  "publish (un-renamed %d already-published copies; no final .ord left on disk). Rows ARE "
+                  "STAMPED. Retained .tmp at: %s" % (len(rolled_back), retained_tmp))
         raise OrderFileError(
             "generate_order_files: .ord publish failed after the stamp tx committed (2-phase limit). "
-            "NO destination was left partially published; rows are STAMPED (ordered) and every .ord is "
-            "retained as .tmp for operator re-drop. Failed rename + retained .tmp files: %s. "
-            "Underlying error: %s" % (retained, exc))
+            "No destination was left holding a final .ord (the %d already-published copies were rolled "
+            "back to .tmp); rows are STAMPED (ordered) and the .ord payloads are retained as .tmp for "
+            "operator re-drop: %s. Underlying error: %s" % (len(rolled_back), retained_tmp, exc))
 
     log.info("generate_order_files: %d rows, %d suppliers, %d files published, %d open-order rows stamped"
              % (len(snapshot), len(suppliers), len(published), stamped))

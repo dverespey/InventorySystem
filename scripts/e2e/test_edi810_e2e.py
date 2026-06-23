@@ -47,7 +47,7 @@ import os, subprocess, sys, tempfile, shutil
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, preclean_sentinels   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -170,11 +170,16 @@ def main():
 
     edi810 = jython_shim.load_wrapper("edi810_driver", EDI810_PY)
 
-    # pre-clean any leftovers from a prior aborted run (sentinel ASNs/detail + the test-owned EIN range).
-    sql(INV, "DELETE FROM INV_ASN_DETAIL_MST WHERE VC_ADD = '%s'" % VC_ADD_SENTINEL)
-    sql(INV, "DELETE FROM INV_ASN_MST WHERE VC_ADD = '%s'" % VC_ADD_SENTINEL)
-    sql(INV, "DELETE FROM INV_INV_MST WHERE IN_INV_EIN > %d AND IN_INV_EIN <= %d"
-             % (SEED_EIN_SEQ, SEED_EIN_SEQ + 50))
+    # P11 self-heal: pre-clean leftovers from a KILLED prior run (error-swallowing; child rows before
+    # parents). Sentinel-scoped (the VC_ADD sentinel + the test-owned EIN range above the live max), so
+    # nothing real is touched even if the prior run's own teardown never ran.
+    preclean_sentinels(lambda s: sql(INV, s), [
+        "DELETE FROM INV_ASN_DETAIL_MST WHERE VC_ADD = '%s'" % VC_ADD_SENTINEL,
+        "DELETE FROM INV_ASN_MST WHERE VC_ADD = '%s'" % VC_ADD_SENTINEL,
+        "DELETE FROM INV_INV_MST WHERE IN_INV_EIN > %d AND IN_INV_EIN <= %d"
+        % (SEED_EIN_SEQ, SEED_EIN_SEQ + 50),
+        "DELETE FROM INV_INV_MST WHERE VC_ADD = '%s'" % VC_ADD_SENTINEL,
+    ], label="edi810")
 
     # --- DRIFT GUARD: the inline feeds are byte-identical to the .sql marked bodies ---------------
     print("\n--- DRIFT GUARD: _CREATE_FEED_SQL / _RECREATE_FEED_SQL == spike-edi810-feed.sql bodies ---")
