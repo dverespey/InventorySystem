@@ -195,37 +195,68 @@ def test_first_login_flow(rep):
 
 
 # ---------------------------------------------------------------------------
-# 3. ROLE -> VIEW MAPPING consistency: User Admin = Admin-only; the rest (incl. Sites) = ProductionControl.
-#    The view JSON's isAdmin binding names the SAME security level the auth module names (one source).
+# 3. ROLE -> VIEW MAPPING consistency: User Admin = Admin-only. The view JSON's isAdmin binding names the
+#    SAME security level the auth module names (one source).
+#
+#    SITES (David 2026-06-22 — "show it like the other masters"): the Sites detail has NO client-side
+#    visibility gate. It ALWAYS renders, consistent with the other 7 masters; the ONLY authorization
+#    boundary is the SERVER-SIDE auth.requireWrite gate proven in test_sites_write_gate (section 4). So
+#    here we assert the visibility gate is GONE (no custom.mayEdit prop, no RESTRICTED AdminBanner,
+#    Form/ActionBar carry NO meta.visible binding) — the positive consistency invariant.
 # ---------------------------------------------------------------------------
+
+def _find_node(node, name):
+    if isinstance(node, dict):
+        if node.get("meta", {}).get("name") == name:
+            return node
+        for v in node.values():
+            r = _find_node(v, name)
+            if r is not None:
+                return r
+    elif isinstance(node, list):
+        for it in node:
+            r = _find_node(it, name)
+            if r is not None:
+                return r
+    return None
+
 
 def test_role_view_consistency(rep):
     A = load_auth()
 
-    # The auth module + both gated views must reference the SAME Admin security level string.
+    # The auth module + the User Admin view must reference the SAME Admin security level string.
     ua = json.load(open(USER_ADMIN_VIEW))
     sites = json.load(open(SITES_VIEW))
     ua_expr = ua["propConfig"]["custom.isAdmin"]["binding"]["config"]["expression"]
-    sites_expr = sites["propConfig"]["custom.mayEdit"]["binding"]["config"]["expression"]
     rep.check("User Admin view gates on Authenticated/Roles/Admin (the Admin-only screen)",
               "Authenticated/Roles/Admin" in ua_expr)
     rep.check("the auth module names the SAME Admin security level as the view (one source of truth)",
               A.SECLEVEL_ADMIN == "Authenticated/Roles/Admin" and A.SECLEVEL_ADMIN in ua_expr)
 
-    # Sites is ProductionControl-editable per the model (Admin is ONLY user add/delete). The Sites view
-    # UI-visibility prop (mayEdit) binds to ProductionControl. Per the confirmed model the Sites *write*
-    # belongs to ProductionControl, NOT Admin.
-    sites_admin_only = ("Authenticated/Roles/Admin" in sites_expr
-                        and "Authenticated/Roles/ProductionControl" not in sites_expr)
-    rep.check("Sites config view is gated to ProductionControl (model: Admin is ONLY user add/delete; "
-              "Sites config = ProductionControl)", not sites_admin_only,
-              "sites mayEdit expr=%r" % sites_expr)
-
-    # The UI-visibility prop must be PROTECTED so it cannot be browser-forged (the old H3 hole was a
-    # Public isAdmin prop a client could flip). Protected = the back-end ignores client writes (IA docs).
-    sites_access = sites["propConfig"]["custom.mayEdit"].get("access")
-    rep.check("Sites mayEdit UI prop is PROTECTED (browser cannot forge it; was a forgeable Public prop)",
-              sites_access == "PROTECTED", "access=%r" % sites_access)
+    # ---- SITES: NO client-side visibility gate (consistent with the other 7 masters) ----
+    # The detail ALWAYS shows; the write is gated SERVER-SIDE only (proven in section 4). Assert the old
+    # UI gate is fully removed: the custom.mayEdit prop, the RESTRICTED AdminBanner, and the Form/ActionBar
+    # meta.visible bindings are all GONE. (The qaAdmin URL hatch lived inside custom.mayEdit -> gone too.)
+    rep.check("Sites has NO custom.mayEdit UI-visibility prop (removed; detail always shows like the other "
+              "masters)", "custom.mayEdit" not in sites.get("propConfig", {}),
+              "propConfig keys=%r" % sorted(sites.get("propConfig", {}).keys()))
+    rep.check("Sites has NO mayEdit in its custom defaults (the dead UI-gate prop is gone)",
+              "mayEdit" not in sites.get("custom", {}))
+    rep.check("Sites has NO RESTRICTED AdminBanner component (removed with the UI gate)",
+              _find_node(sites["root"], "AdminBanner") is None)
+    sform = _find_node(sites["root"], "Form")
+    rep.check("Sites detail Form has NO meta.visible binding (ALWAYS visible, like the other masters)",
+              sform is not None and "meta.visible" not in sform.get("propConfig", {}),
+              "Form propConfig=%r" % (sform.get("propConfig") if sform else None))
+    sab = _find_node(sites["root"], "ActionBar")
+    rep.check("Sites ActionBar (Save/Delete/Clear) has NO meta.visible binding (ALWAYS visible)",
+              sab is not None and "meta.visible" not in sab.get("propConfig", {}),
+              "ActionBar propConfig=%r" % (sab.get("propConfig") if sab else None))
+    # NON-VACUITY: the source string of the old gate (the ProductionControl-OR-qaAdmin expression and the
+    # RESTRICTED banner text) must not survive ANYWHERE in the view (a stray copy would re-hide the form).
+    sites_raw = json.dumps(sites)
+    rep.check("non-vacuous: the old qaAdmin / RESTRICTED visibility-gate strings are gone from the whole "
+              "Sites view (no stray re-hide)", "qaAdmin" not in sites_raw and "RESTRICTED" not in sites_raw)
 
     # The User Admin button scripts route every write through the auth module (the server-side gate),
     # not an inline system.user.* call that would bypass it.
@@ -253,12 +284,16 @@ def test_role_view_consistency(rep):
 
 
 # ---------------------------------------------------------------------------
-# 4. SITES MASTER-CRUD WRITE GATE (the BLOCKER fix). The Sites Save/Delete write was authorized
-#    CLIENT-SIDE only (custom.isAdmin Public prop) — the legacy H3 hole reintroduced. We now drive the
-#    DEPLOYED Sites Save/Delete scripts with a FORGED mayEdit=true prop while the SESSION carries NO
-#    write role, and prove the SERVER-SIDE auth.requireWrite gate REJECTS the write (no db write) —
-#    proving the SERVER gate, not the prop, is what blocks it. Non-vacuous (a ProductionControl session
-#    succeeds) + revert-proven (neuter the gate -> the forged-prop write slips through).
+# 4. SITES MASTER-CRUD WRITE GATE (the REAL boundary — now the SOLE boundary). The Sites detail Form +
+#    Save/Delete ALWAYS render (the client-side visibility gate was removed so Sites matches the other 7
+#    masters — David 2026-06-22). That makes the SERVER-SIDE auth.requireWrite gate the ONLY thing
+#    standing between an unauthorized/anon user and a write — so this test is now MORE load-bearing, not
+#    less. We drive the DEPLOYED Sites Save/Delete scripts from a SESSION that carries NO write role
+#    (and, to model a forged client prop that the server MUST ignore, also pass may_edit=True), and prove
+#    the gate REJECTS the write (no db write). Non-vacuous (a ProductionControl/Admin session succeeds) +
+#    revert-proven (neuter the gate -> the no-role write slips through). The may_edit flag is a forged
+#    CLIENT prop the deployed script no longer even reads; the gate keys off self.session ONLY, proven by
+#    the "ProductionControl session with mayEdit=FALSE still SAVES" case below.
 #
 # Drives the ACTUAL gen_sites_view.py save_script()/delete_script() strings (the gateway view button
 # scripts), with `import auth as A` resolved to the REAL auth module (sys.modules), so the gate proven
@@ -313,7 +348,8 @@ class _SCustom(object):
         self.recordId = record_id
         self.runNonce = 0
         self.statusMsg = ""
-        self.mayEdit = may_edit       # FORGEABLE in the test (models the client prop)
+        self.mayEdit = may_edit       # a FORGED client prop the deployed script no longer reads (the
+                                      # gate keys off self.session ONLY); kept to prove the server ignores it
         for k in SITES_COLS:
             setattr(self, k, VALID_SITE.get(k, ""))
         self.form_id = 0

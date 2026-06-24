@@ -239,8 +239,10 @@ FORM_TO_COL = {key: dbcol for (key, _, _, _, dbcol, _, _, _) in gsv.F}
 
 class _Custom(object):
     """Attribute-style stand-in for self.view.custom; seeded from a value map.
-    `may_edit` models the (PROTECTED) UI prop — kept settable so we can also FORGE it true while the
-    SESSION carries no write role, proving the SERVER-SIDE gate (not the prop) is what blocks the write."""
+    `may_edit` models a FORGED client prop the deployed Save/Delete script no longer reads (the UI
+    visibility gate was removed — the detail always shows now). It is kept settable so a forged value
+    cannot influence the outcome: the SERVER-SIDE auth.requireWrite(self.session) gate (not any client
+    prop) is what blocks the write."""
     def __init__(self, values, may_edit=True, record_id=0):
         self.recordId = record_id
         self.runNonce = 0

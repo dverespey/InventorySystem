@@ -22,19 +22,21 @@ config editor for that deployment's site. Practically:
 
 SITES-MASTER-SPECIFIC (differs from every other master — see the SQL header in
 docs/analysis/master-data/master-crud-namedqueries.sql):
-  #1 ROLE-GATED  -> the WRITE (Save/Delete/New) is enforced SERVER-SIDE: each write
+  #1 ROLE-GATED  -> the WRITE (Save/Delete) is enforced SERVER-SIDE: each write
                      button calls auth.requireWrite(self.session) FIRST, which resolves
                      the caller's roles FROM THE SESSION (gateway-side) and authorizes
                      ProductionControl|Admin, raising AuthError on deny — BEFORE any
                      system.db write. This closes the reintroduced legacy H3 hole (the
                      write was previously authorized CLIENT-SIDE only via custom.isAdmin).
-                     The in-view custom.mayEdit prop (now PROTECTED, so it cannot be
-                     browser-forged) STAYS but ONLY as UI defense-in-depth (hide the
-                     form/buttons); it is NOT the security boundary. A forged client prop
-                     or an anonymous session is rejected by the server-side gate
-                     regardless. (Page-level role-permission in the Designer is the
-                     authoritative UI gate; the qaAdmin URL hatch is spike-only for the
-                     headless harness and does NOT affect the server-side write gate.)
+                     The DETAIL FORM + ACTION BAR ALWAYS RENDER — same as the other 7
+                     masters (David 2026-06-22: show it like the other masters). There is
+                     NO client-side visibility gate: the old custom.mayEdit prop, the
+                     qaAdmin URL hatch, the form/ActionBar meta.visible bindings, and the
+                     RESTRICTED AdminBanner were removed. They were UI-only and never the
+                     boundary; the server-side requireWrite call is the sole enforcement.
+                     (Page-level role-permission in the Designer remains the authoritative
+                     UI gate to make the whole /sites page unreachable, distinct from the
+                     per-write server enforcement — IG83-TODO.)
   #2 NO SITE FILTER on list/get (moot under single-site; see above).
   #3 read-only system fields shown disabled (IN_SITE_ID, IN_EIN_SEQ,
                      VC_LAST_FORECAST_IMPORT, VC_LAST_UPDATE, VC_ADD).
@@ -151,10 +153,13 @@ WRITABLE = [f for f in F if f[3] not in ("ro_text", "ro_num")]
 
 
 def custom_defaults():
-    # `mayEdit` (renamed from isAdmin) is the UI-visibility prop ONLY — gateway-bound + PROTECTED so it
-    # cannot be browser-forged; it is NOT the write boundary (that is the server-side auth.requireWrite
-    # call in Save/Delete/New). Defaults False (fails closed in the headless spike with no IdP).
-    c = {"recordId": 0, "runNonce": 0, "searchTerm": "", "statusMsg": "", "mayEdit": False}
+    # NO `mayEdit` UI-visibility prop: the Sites detail ALWAYS shows, consistent with the other 7 masters
+    # (David 2026-06-22 — show it like the other masters). The ONLY authorization boundary is the
+    # SERVER-SIDE auth.requireWrite(self.session) call in Save/Delete (resolves SESSION roles gateway-side,
+    # authorizes ProductionControl|Admin, raises AuthError on deny). The old client-side visibility gate
+    # (mayEdit prop + form/ActionBar meta.visible + RESTRICTED AdminBanner) was removed — it was UI-only,
+    # never the enforcement boundary, and made Sites inconsistent with the other masters.
+    c = {"recordId": 0, "runNonce": 0, "searchTerm": "", "statusMsg": ""}
     for key, _, _, kind, _, default, _, _ in F:
         c[key] = default
     return c
@@ -604,35 +609,15 @@ def build_view():
                     "type": "expr",
                 }
             },
-            # ---- UI-VISIBILITY GATE (defense-in-depth ONLY — NOT the write boundary) ----
-            # CONFIRMED MODEL (David 2026-06-22): Admin = user add/delete/reset ONLY; ProductionControl
-            # = EVERYTHING ELSE in the app — INCLUDING the Sites config. So the Sites screen is
-            # ProductionControl-editable, NOT Admin-only.
-            #   * `mayEdit` (renamed from isAdmin) hides the form/buttons from a viewer who can't edit. It
-            #     is UI defense-in-depth ONLY. The ENFORCED write gate is the SERVER-SIDE
-            #     auth.requireWrite(self.session) call in Save/Delete/New (resolves SESSION roles gateway-
-            #     side, authorizes ProductionControl|Admin, raises on deny). A forged client prop or anon
-            #     session CANNOT write regardless of this binding.
-            #   * `access: PROTECTED` -> the back-end IGNORES any browser write to mayEdit (devtools /
-            #     websocket), so the UI gate itself can't be forged either. (Per IA docs: a Public prop is
-            #     browser-writable; Protected is read-only from the client.) This hardens the old H3 hole
-            #     where a Public isAdmin prop could be flipped client-side.
-            #   * The binding is evaluated GATEWAY-SIDE: isAuthorized(false,
-            #     "Authenticated/Roles/ProductionControl") needs the IdP + security level THIS HEADLESS
-            #     SPIKE LACKS -> fails CLOSED (false), the correct prod behavior. The OR-branch is the
-            #     SPIKE-ONLY harness hatch (/sites?qaAdmin=1) for UI VISIBILITY; it does NOT affect the
-            #     server-side WRITE gate (which never reads this prop). IG83-TODO: drop the qaAdmin UI
-            #     hatch once Designer page-permissions are configured (then this binding is plain
-            #     isAuthorized(...) and the page is unreachable to a non-ProductionControl user).
-            "custom.mayEdit": {
-                "access": "PROTECTED",
-                "binding": {
-                    "config": {
-                        "expression": "isAuthorized(false, \"Authenticated/Roles/ProductionControl\") || {page.props.urlParams.qaAdmin} = \"1\""
-                    },
-                    "type": "expr",
-                }
-            },
+            # NO UI-VISIBILITY GATE. The Sites detail (Form + ActionBar) ALWAYS renders, consistent with
+            # the other 7 masters (David 2026-06-22). The ONLY authorization boundary is the SERVER-SIDE
+            # auth.requireWrite(self.session) call in Save/Delete (resolves SESSION roles gateway-side,
+            # authorizes ProductionControl|Admin, raises AuthError on deny BEFORE any system.db write). A
+            # forged client prop or an anon session is rejected THERE — the visibility gate was never the
+            # boundary, so removing it (the old custom.mayEdit prop + qaAdmin URL hatch + form/ActionBar
+            # meta.visible + RESTRICTED AdminBanner) does not weaken security. (IG83-TODO: a Designer
+            # page-level role-permission can make the whole /sites page unreachable to non-ProductionControl
+            # users; that is the authoritative UI gate, distinct from the per-write server enforcement.)
             "custom.recordId": {
                 "onChange": {"enabled": None, "script": recordid_onchange()}
             },
@@ -656,21 +641,7 @@ def build_view():
                                       "text": "Sites Master — List + Detail  ·  INV_SITES (Inventory_Spike)  ·  ProductionControl (site config)  ·  single-site deployment"},
                             "type": "ia.display.label",
                         },
-                        # admin banner (visible only to non-admins)
-                        {
-                            "meta": {"domId": "sites-admin-banner", "name": "AdminBanner"},
-                            "propConfig": {
-                                "props.text": {"binding": {"config": {
-                                    "expression": "if({view.custom.mayEdit}, '', 'RESTRICTED — editing the site configuration requires the ProductionControl role.')"},
-                                    "type": "expr"}},
-                                "meta.visible": {"binding": {"config": {
-                                    "expression": "!{view.custom.mayEdit}"}, "type": "expr"}},
-                            },
-                            "props": {"style": {"backgroundColor": "#FFF3CD", "border": "1px solid #FFC107",
-                                                "color": "#7A5C00", "fontSize": "12px", "fontWeight": "bold",
-                                                "padding": "6px 8px"}},
-                            "type": "ia.display.label",
-                        },
+                        # (no AdminBanner — the RESTRICTED banner was part of the removed UI-visibility gate)
                         # filter bar
                         {
                             "meta": {"name": "FilterBar"},
@@ -751,11 +722,9 @@ def build_view():
                          "propConfig": {"props.text": {"binding": {"config": {"path": "view.custom.statusMsg"}, "type": "property"}}},
                          "props": {"style": {"color": "#B71C1C", "fontSize": "13px", "fontWeight": "bold", "padding": "6px 8px"}},
                          "type": "ia.display.label"},
-                        # form (hidden from non-admins; rule #1)
+                        # form (ALWAYS visible — like the other masters; the write is gated server-side, rule #1)
                         {
                             "meta": {"domId": "sites-form", "name": "Form"},
-                            "propConfig": {"meta.visible": {"binding": {"config": {
-                                "expression": "{view.custom.mayEdit}"}, "type": "expr"}}},
                             "props": {"direction": "column",
                                       "style": {"backgroundColor": "#FFFFFF", "border": "1px solid #D0D4DA",
                                                 "borderRadius": "4px", "gap": "6px", "padding": "12px",
@@ -763,12 +732,10 @@ def build_view():
                             "type": "ia.container.flex",
                             "children": children_form,
                         },
-                        # action bar
+                        # action bar (ALWAYS visible — like the other masters; Save/Delete are gated server-side)
                         {
                             "meta": {"name": "ActionBar"},
                             "position": {"shrink": 0},
-                            "propConfig": {"meta.visible": {"binding": {"config": {
-                                "expression": "{view.custom.mayEdit}"}, "type": "expr"}}},
                             "props": {"alignItems": "center", "style": {"gap": "12px", "padding": "8px 0"}},
                             "type": "ia.container.flex",
                             "children": [
