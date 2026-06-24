@@ -47,11 +47,18 @@
       "meta": {
        "name": "Title"
       },
+      "position": {
+       "shrink": 0
+      },
       "props": {
        "style": {
-        "color": "#222222",
+        "color": "var(--tai-text)",
         "fontSize": "15px",
-        "fontWeight": "bold"
+        "fontWeight": "bold",
+        "height": "22px",
+        "overflow": "hidden",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap"
        },
        "text": "Size Master \u2014 List + Detail  \u00b7  INV_SIZE_MST (Inventory_Spike)"
       },
@@ -67,7 +74,7 @@
           },
           "props": {
            "style": {
-            "color": "#666666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "11px"
            },
            "text": "Search (code or name)"
@@ -131,8 +138,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Search"
@@ -149,8 +156,8 @@
       "props": {
        "alignItems": "flex-end",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "12px",
         "padding": "10px"
@@ -223,7 +230,7 @@
       },
       "props": {
        "style": {
-        "color": "#37474F",
+        "color": "var(--tai-text-muted)",
         "fontSize": "11px",
         "fontStyle": "italic"
        },
@@ -251,42 +258,60 @@
     "children": [
      {
       "meta": {
-       "name": "DetailTitle"
+       "name": "TitleSpacer"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
        "style": {
-        "color": "#222222",
-        "fontSize": "15px",
-        "fontWeight": "bold"
+        "height": "22px"
        },
-       "text": "Detail"
+       "text": ""
       },
       "type": "ia.display.label"
      },
      {
-      "meta": {
-       "domId": "size-status",
-       "name": "StatusMsg"
-      },
-      "propConfig": {
-       "props.text": {
-        "binding": {
-         "config": {
-          "path": "view.custom.statusMsg"
-         },
-         "type": "property"
-        }
+      "children": [
+       {
+        "meta": {
+         "domId": "size-status",
+         "name": "StatusMsg"
+        },
+        "propConfig": {
+         "props.text": {
+          "binding": {
+           "config": {
+            "path": "view.custom.statusMsg"
+           },
+           "type": "property"
+          }
+         }
+        },
+        "props": {
+         "style": {
+          "color": "var(--tai-status-danger)",
+          "fontSize": "13px",
+          "fontWeight": "bold",
+          "padding": "6px 8px"
+         }
+        },
+        "type": "ia.display.label"
        }
+      ],
+      "meta": {
+       "name": "AlignBand"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
+       "alignItems": "center",
        "style": {
-        "color": "#B71C1C",
-        "fontSize": "13px",
-        "fontWeight": "bold",
-        "padding": "6px 8px"
+        "height": "70px"
        }
       },
-      "type": "ia.display.label"
+      "type": "ia.container.flex"
      },
      {
       "children": [
@@ -503,8 +528,8 @@
       "props": {
        "direction": "column",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "6px",
         "padding": "12px"
@@ -542,8 +567,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Save"
@@ -578,8 +603,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#C62828",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-status-danger)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Delete"
@@ -604,8 +629,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#607D8B",
-          "color": "#FFFFFF"
+          "backgroundColor": "var(--tai-neutral-60)",
+          "color": "var(--tai-on-accent)"
          },
          "text": "Clear"
         },
@@ -638,7 +663,7 @@
     "props": {
      "direction": "column",
      "style": {
-      "gap": "8px"
+      "gap": "10px"
      }
     },
     "type": "ia.container.flex"
@@ -649,7 +674,7 @@
   },
   "props": {
    "style": {
-    "backgroundColor": "#F5F6F8",
+    "backgroundColor": "var(--tai-bg)",
     "gap": "12px",
     "padding": "12px"
    }

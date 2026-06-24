@@ -81,11 +81,18 @@
       "meta": {
        "name": "Title"
       },
+      "position": {
+       "shrink": 0
+      },
       "props": {
        "style": {
-        "color": "#222222",
+        "color": "var(--tai-text)",
         "fontSize": "15px",
-        "fontWeight": "bold"
+        "fontWeight": "bold",
+        "height": "22px",
+        "overflow": "hidden",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap"
        },
        "text": "Sites Master \u2014 List + Detail  \u00b7  INV_SITES (Inventory_Spike)  \u00b7  ProductionControl (site config)  \u00b7  single-site deployment"
       },
@@ -101,7 +108,7 @@
           },
           "props": {
            "style": {
-            "color": "#666666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "11px"
            },
            "text": "Search (abbr, name or DUNS)"
@@ -165,8 +172,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Search"
@@ -183,8 +190,8 @@
       "props": {
        "alignItems": "flex-end",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "12px",
         "padding": "10px"
@@ -257,7 +264,7 @@
       },
       "props": {
        "style": {
-        "color": "#37474F",
+        "color": "var(--tai-text-muted)",
         "fontSize": "11px",
         "fontStyle": "italic"
        },
@@ -285,40 +292,16 @@
     "children": [
      {
       "meta": {
-       "name": "DetailTitle"
+       "name": "TitleSpacer"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
        "style": {
-        "color": "#222222",
-        "fontSize": "15px",
-        "fontWeight": "bold"
+        "height": "22px"
        },
-       "text": "Detail"
-      },
-      "type": "ia.display.label"
-     },
-     {
-      "meta": {
-       "domId": "sites-status",
-       "name": "StatusMsg"
-      },
-      "propConfig": {
-       "props.text": {
-        "binding": {
-         "config": {
-          "path": "view.custom.statusMsg"
-         },
-         "type": "property"
-        }
-       }
-      },
-      "props": {
-       "style": {
-        "color": "#B71C1C",
-        "fontSize": "13px",
-        "fontWeight": "bold",
-        "padding": "6px 8px"
-       }
+       "text": ""
       },
       "type": "ia.display.label"
      },
@@ -326,1418 +309,582 @@
       "children": [
        {
         "meta": {
-         "name": "grp_identity"
+         "domId": "sites-status",
+         "name": "StatusMsg"
+        },
+        "propConfig": {
+         "props.text": {
+          "binding": {
+           "config": {
+            "path": "view.custom.statusMsg"
+           },
+           "type": "property"
+          }
+         }
         },
         "props": {
          "style": {
-          "borderBottom": "1px solid #D0D4DA",
-          "color": "#1976D2",
-          "fontSize": "12px",
+          "color": "var(--tai-status-danger)",
+          "fontSize": "13px",
           "fontWeight": "bold",
-          "marginTop": "4px"
-         },
-         "text": "Identity / Address"
+          "padding": "6px 8px"
+         }
         },
         "type": "ia.display.label"
-       },
+       }
+      ],
+      "meta": {
+       "name": "AlignBand"
+      },
+      "position": {
+       "shrink": 0
+      },
+      "props": {
+       "alignItems": "center",
+       "style": {
+        "height": "70px"
+       }
+      },
+      "type": "ia.container.flex"
+     },
+     {
+      "children": [
        {
         "children": [
          {
           "meta": {
-           "name": "lbl_form_id"
+           "name": "grp_identity"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "borderBottom": "1px solid var(--tai-border)",
+            "color": "var(--tai-accent)",
+            "fontSize": "12px",
+            "fontWeight": "bold",
+            "marginTop": "4px"
            },
-           "text": "Site ID (identity)"
+           "text": "Identity / Address"
           },
           "type": "ia.display.label"
          },
          {
-          "meta": {
-           "domId": "sites-id",
-           "name": "fld_form_id"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "path": "view.custom.form_id"
+          "children": [
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_id"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Site ID (identity)"
+              },
+              "type": "ia.display.label"
              },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "enabled": false
-          },
-          "type": "ia.input.numeric-entry-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_id"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_name"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Site Name *"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-name",
-           "name": "fld_form_name"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_name"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 50
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_name"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_abbr"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Site Abbr (ISA) *"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-abbr",
-           "name": "fld_form_abbr"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_abbr"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 10
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_abbr"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_street"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Street"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-street",
-           "name": "fld_form_street"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_street"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 50
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_street"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_city"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "City"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-city",
-           "name": "fld_form_city"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_city"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 50
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_city"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_state"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "State"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-state",
-           "name": "fld_form_state"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_state"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 2
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_state"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_country"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Country"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-country",
-           "name": "fld_form_country"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_country"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 3
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_country"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_zip"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Zip"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-zip",
-           "name": "fld_form_zip"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_zip"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 10
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_zip"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "meta": {
-         "name": "grp_edi"
-        },
-        "props": {
-         "style": {
-          "borderBottom": "1px solid #D0D4DA",
-          "color": "#1976D2",
-          "fontSize": "12px",
-          "fontWeight": "bold",
-          "marginTop": "4px"
-         },
-         "text": "EDI / Trading Identity"
-        },
-        "type": "ia.display.label"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_duns"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "DUNS"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-duns",
-           "name": "fld_form_duns"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_duns"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 13
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_duns"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_supcode"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Supplier Code"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-supcode",
-           "name": "fld_form_supcode"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_supcode"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 5
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_supcode"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_dock"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Dock Code"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-dock",
-           "name": "fld_form_dock"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_dock"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 10
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_dock"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_einseq"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "EIN Seq (system)"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-einseq",
-           "name": "fld_form_einseq"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "path": "view.custom.form_einseq"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "enabled": false
-          },
-          "type": "ia.input.numeric-entry-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_einseq"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_edimode"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "EDI Mode"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-edimode",
-           "name": "fld_form_edimode"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_edimode"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 10
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_edimode"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_sepseg"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Sep: Segment"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-sepseg",
-           "name": "fld_form_sepseg"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_sepseg"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 1
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_sepseg"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_sepelem"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Sep: Element"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-sepelem",
-           "name": "fld_form_sepelem"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_sepelem"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 1
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_sepelem"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_sepsub"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Sep: Sub-element"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-sepsub",
-           "name": "fld_form_sepsub"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_sepsub"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 1
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_sepsub"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_tmmname"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "TMM Name"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-tmmname",
-           "name": "fld_form_tmmname"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_tmmname"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 50
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_tmmname"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_tmmabbr"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "TMM Abbr"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-tmmabbr",
-           "name": "fld_form_tmmabbr"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_tmmabbr"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 10
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_tmmabbr"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_tmmduns"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "TMM DUNS"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-tmmduns",
-           "name": "fld_form_tmmduns"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_tmmduns"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 13
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_tmmduns"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_maxseq"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Max Sequence"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-maxseq",
-           "name": "fld_form_maxseq"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_maxseq"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "type": "ia.input.numeric-entry-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_maxseq"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_acceptasn"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Accept Any Order ASN"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-acceptasn",
-           "name": "fld_form_acceptasn"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.selected": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_acceptasn"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "type": "ia.input.checkbox"
-         }
-        ],
-        "meta": {
-         "name": "row_form_acceptasn"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_delivery"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Delivery Method (TD5)"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-delivery",
-           "name": "fld_form_delivery"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_delivery"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 5
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_delivery"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "meta": {
-         "name": "grp_order"
-        },
-        "props": {
-         "style": {
-          "borderBottom": "1px solid #D0D4DA",
-          "color": "#1976D2",
-          "fontSize": "12px",
-          "fontWeight": "bold",
-          "marginTop": "4px"
-         },
-         "text": "Order / Forecast Config"
-        },
-        "type": "ia.display.label"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_filldays"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Fill Days (<= 50)"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-filldays",
-           "name": "fld_form_filldays"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_filldays"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "type": "ia.input.numeric-entry-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_filldays"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_fcusage"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Forecast Usage Compare"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-fcusage",
-           "name": "fld_form_fcusage"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_fcusage"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "type": "ia.input.numeric-entry-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_fcusage"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_usefpd"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Use First Production Day"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-usefpd",
-           "name": "fld_form_usefpd"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.selected": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_usefpd"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "type": "ia.input.checkbox"
-         }
-        ],
-        "meta": {
-         "name": "row_form_usefpd"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_fcmode"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Forecast Import Mode"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-fcmode",
-           "name": "fld_form_fcmode"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_fcmode"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "options": [
-            {
-             "label": "AUTO",
-             "value": "AUTO"
+             {
+              "meta": {
+               "domId": "sites-id",
+               "name": "fld_form_id"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "path": "view.custom.form_id"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "enabled": false
+              },
+              "type": "ia.input.numeric-entry-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_id"
             },
-            {
-             "label": "MANUAL",
-             "value": "MANUAL"
-            }
-           ]
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_name"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Site Name *"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-name",
+               "name": "fld_form_name"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_name"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 50
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_name"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_abbr"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Site Abbr (ISA) *"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-abbr",
+               "name": "fld_form_abbr"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_abbr"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 10
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_abbr"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_street"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Street"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-street",
+               "name": "fld_form_street"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_street"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 50
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_street"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_city"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "City"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-city",
+               "name": "fld_form_city"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_city"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 50
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_city"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_state"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "State"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-state",
+               "name": "fld_form_state"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_state"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 2
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_state"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_country"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Country"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-country",
+               "name": "fld_form_country"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_country"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 3
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_country"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_zip"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Zip"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-zip",
+               "name": "fld_form_zip"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_zip"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 10
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_zip"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           }
+          ],
+          "meta": {
+           "name": "grpgrid_identity"
           },
-          "type": "ia.input.dropdown"
+          "position": {
+           "shrink": 0
+          },
+          "props": {
+           "style": {
+            "gap": "8px 16px"
+           },
+           "wrap": "wrap"
+          },
+          "type": "ia.container.flex"
          }
         ],
         "meta": {
-         "name": "row_form_fcmode"
+         "name": "section_identity"
+        },
+        "position": {
+         "shrink": 0
         },
         "props": {
-         "alignItems": "center",
+         "direction": "column",
          "style": {
-          "gap": "10px"
+          "gap": "4px"
          }
         },
         "type": "ia.container.flex"
@@ -1746,116 +893,1261 @@
         "children": [
          {
           "meta": {
-           "name": "lbl_form_lastfc"
+           "name": "grp_edi"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "borderBottom": "1px solid var(--tai-border)",
+            "color": "var(--tai-accent)",
+            "fontSize": "12px",
+            "fontWeight": "bold",
+            "marginTop": "4px"
            },
-           "text": "Last Forecast Import (system)"
+           "text": "EDI / Trading Identity"
           },
           "type": "ia.display.label"
          },
          {
+          "children": [
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_duns"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "DUNS"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-duns",
+               "name": "fld_form_duns"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_duns"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 13
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_duns"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_supcode"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Supplier Code"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-supcode",
+               "name": "fld_form_supcode"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_supcode"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 5
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_supcode"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_dock"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Dock Code"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-dock",
+               "name": "fld_form_dock"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_dock"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 10
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_dock"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_einseq"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "EIN Seq (system)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-einseq",
+               "name": "fld_form_einseq"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "path": "view.custom.form_einseq"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "enabled": false
+              },
+              "type": "ia.input.numeric-entry-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_einseq"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_edimode"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "EDI Mode"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-edimode",
+               "name": "fld_form_edimode"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_edimode"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 10
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_edimode"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_sepseg"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Sep: Segment"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-sepseg",
+               "name": "fld_form_sepseg"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_sepseg"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 1
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_sepseg"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_sepelem"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Sep: Element"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-sepelem",
+               "name": "fld_form_sepelem"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_sepelem"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 1
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_sepelem"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_sepsub"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Sep: Sub-element"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-sepsub",
+               "name": "fld_form_sepsub"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_sepsub"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 1
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_sepsub"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_tmmname"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "TMM Name"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-tmmname",
+               "name": "fld_form_tmmname"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_tmmname"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 50
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_tmmname"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_tmmabbr"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "TMM Abbr"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-tmmabbr",
+               "name": "fld_form_tmmabbr"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_tmmabbr"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 10
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_tmmabbr"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_tmmduns"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "TMM DUNS"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-tmmduns",
+               "name": "fld_form_tmmduns"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_tmmduns"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 13
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_tmmduns"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_maxseq"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Max Sequence"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-maxseq",
+               "name": "fld_form_maxseq"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_maxseq"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "type": "ia.input.numeric-entry-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_maxseq"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_acceptasn"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Accept Any Order ASN"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-acceptasn",
+               "name": "fld_form_acceptasn"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.selected": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_acceptasn"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "text": ""
+              },
+              "type": "ia.input.checkbox"
+             }
+            ],
+            "meta": {
+             "name": "row_form_acceptasn"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_delivery"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Delivery Method (TD5)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-delivery",
+               "name": "fld_form_delivery"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_delivery"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 5
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_delivery"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           }
+          ],
           "meta": {
-           "domId": "sites-lastfc",
-           "name": "fld_form_lastfc"
+           "name": "grpgrid_edi"
           },
           "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "path": "view.custom.form_lastfc"
-             },
-             "type": "property"
-            }
-           }
+           "shrink": 0
           },
           "props": {
-           "enabled": false
+           "style": {
+            "gap": "8px 16px"
+           },
+           "wrap": "wrap"
           },
-          "type": "ia.input.text-field"
+          "type": "ia.container.flex"
          }
         ],
         "meta": {
-         "name": "row_form_lastfc"
+         "name": "section_edi"
+        },
+        "position": {
+         "shrink": 0
         },
         "props": {
-         "alignItems": "center",
+         "direction": "column",
          "style": {
-          "gap": "10px"
+          "gap": "4px"
          }
         },
         "type": "ia.container.flex"
        },
        {
-        "meta": {
-         "name": "grp_purge"
-        },
-        "props": {
-         "style": {
-          "borderBottom": "1px solid #D0D4DA",
-          "color": "#1976D2",
-          "fontSize": "12px",
-          "fontWeight": "bold",
-          "marginTop": "4px"
-         },
-         "text": "Data Purge"
-        },
-        "type": "ia.display.label"
-       },
-       {
         "children": [
          {
           "meta": {
-           "name": "lbl_form_enpurge"
+           "name": "grp_order"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "borderBottom": "1px solid var(--tai-border)",
+            "color": "var(--tai-accent)",
+            "fontSize": "12px",
+            "fontWeight": "bold",
+            "marginTop": "4px"
            },
-           "text": "Enable Data Purge"
+           "text": "Order / Forecast Config"
           },
           "type": "ia.display.label"
          },
          {
+          "children": [
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_filldays"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Fill Days (<= 50)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-filldays",
+               "name": "fld_form_filldays"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_filldays"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "type": "ia.input.numeric-entry-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_filldays"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_fcusage"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Forecast Usage Compare"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-fcusage",
+               "name": "fld_form_fcusage"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_fcusage"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "type": "ia.input.numeric-entry-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_fcusage"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_usefpd"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Use First Production Day"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-usefpd",
+               "name": "fld_form_usefpd"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.selected": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_usefpd"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "text": ""
+              },
+              "type": "ia.input.checkbox"
+             }
+            ],
+            "meta": {
+             "name": "row_form_usefpd"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_fcmode"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Forecast Import Mode"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-fcmode",
+               "name": "fld_form_fcmode"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_fcmode"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "options": [
+                {
+                 "label": "AUTO",
+                 "value": "AUTO"
+                },
+                {
+                 "label": "MANUAL",
+                 "value": "MANUAL"
+                }
+               ]
+              },
+              "type": "ia.input.dropdown"
+             }
+            ],
+            "meta": {
+             "name": "row_form_fcmode"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_lastfc"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Last Forecast Import (system)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-lastfc",
+               "name": "fld_form_lastfc"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "path": "view.custom.form_lastfc"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "enabled": false
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_lastfc"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           }
+          ],
           "meta": {
-           "domId": "sites-enpurge",
-           "name": "fld_form_enpurge"
+           "name": "grpgrid_order"
           },
           "position": {
-           "basis": "320px"
+           "shrink": 0
           },
-          "propConfig": {
-           "props.selected": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_enpurge"
-             },
-             "type": "property"
-            }
-           }
+          "props": {
+           "style": {
+            "gap": "8px 16px"
+           },
+           "wrap": "wrap"
           },
-          "type": "ia.input.checkbox"
+          "type": "ia.container.flex"
          }
         ],
         "meta": {
-         "name": "row_form_enpurge"
+         "name": "section_order"
+        },
+        "position": {
+         "shrink": 0
         },
         "props": {
-         "alignItems": "center",
+         "direction": "column",
          "style": {
-          "gap": "10px"
+          "gap": "4px"
          }
         },
         "type": "ia.container.flex"
@@ -1864,48 +2156,231 @@
         "children": [
          {
           "meta": {
-           "name": "lbl_form_prpurge"
+           "name": "grp_purge"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "borderBottom": "1px solid var(--tai-border)",
+            "color": "var(--tai-accent)",
+            "fontSize": "12px",
+            "fontWeight": "bold",
+            "marginTop": "4px"
            },
-           "text": "Prompt Data Purge"
+           "text": "Data Purge"
           },
           "type": "ia.display.label"
          },
          {
+          "children": [
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_enpurge"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Enable Data Purge"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-enpurge",
+               "name": "fld_form_enpurge"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.selected": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_enpurge"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "text": ""
+              },
+              "type": "ia.input.checkbox"
+             }
+            ],
+            "meta": {
+             "name": "row_form_enpurge"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_prpurge"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Prompt Data Purge"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-prpurge",
+               "name": "fld_form_prpurge"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.selected": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_prpurge"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "text": ""
+              },
+              "type": "ia.input.checkbox"
+             }
+            ],
+            "meta": {
+             "name": "row_form_prpurge"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_retention"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Data Retention (>= 12 mo)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-retention",
+               "name": "fld_form_retention"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.value": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_retention"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "type": "ia.input.numeric-entry-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_retention"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           }
+          ],
           "meta": {
-           "domId": "sites-prpurge",
-           "name": "fld_form_prpurge"
+           "name": "grpgrid_purge"
           },
           "position": {
-           "basis": "320px"
+           "shrink": 0
           },
-          "propConfig": {
-           "props.selected": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_prpurge"
-             },
-             "type": "property"
-            }
-           }
+          "props": {
+           "style": {
+            "gap": "8px 16px"
+           },
+           "wrap": "wrap"
           },
-          "type": "ia.input.checkbox"
+          "type": "ia.container.flex"
          }
         ],
         "meta": {
-         "name": "row_form_prpurge"
+         "name": "section_purge"
+        },
+        "position": {
+         "shrink": 0
         },
         "props": {
-         "alignItems": "center",
+         "direction": "column",
          "style": {
-          "gap": "10px"
+          "gap": "4px"
          }
         },
         "type": "ia.container.flex"
@@ -1914,503 +2389,478 @@
         "children": [
          {
           "meta": {
-           "name": "lbl_form_retention"
+           "name": "grp_paths"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "borderBottom": "1px solid var(--tai-border)",
+            "color": "var(--tai-accent)",
+            "fontSize": "12px",
+            "fontWeight": "bold",
+            "marginTop": "4px"
            },
-           "text": "Data Retention (>= 12 mo)"
+           "text": "Directory Paths (from legacy INI [DIRECTORIES])"
           },
           "type": "ia.display.label"
          },
          {
-          "meta": {
-           "domId": "sites-retention",
-           "name": "fld_form_retention"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.value": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_retention"
+          "children": [
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_ediout"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "EDI Out Dir (shared)"
+              },
+              "type": "ia.display.label"
              },
-             "type": "property"
-            }
+             {
+              "meta": {
+               "domId": "sites-ediout",
+               "name": "fld_form_ediout"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_ediout"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_ediout"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_ediin"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "EDI In Dir (shared)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-ediin",
+               "name": "fld_form_ediin"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_ediin"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_ediin"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_forecastd"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Forecast Input Dir"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-forecastd",
+               "name": "fld_form_forecastd"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_forecastd"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_forecastd"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_logisticsd"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Logistics Input Dir"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-logisticsd",
+               "name": "fld_form_logisticsd"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_logisticsd"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_logisticsd"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_reportsd"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Reports Output Dir"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-reportsd",
+               "name": "fld_form_reportsd"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_reportsd"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_reportsd"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_shippingd"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Shipping File Dir"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-shippingd",
+               "name": "fld_form_shippingd"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_shippingd"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_shippingd"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_templated"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Template Dir"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-templated",
+               "name": "fld_form_templated"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "bidirectional": true,
+                  "path": "view.custom.form_templated"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "maxLength": 260
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_templated"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
            }
-          },
-          "type": "ia.input.numeric-entry-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_retention"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "meta": {
-         "name": "grp_paths"
-        },
-        "props": {
-         "style": {
-          "borderBottom": "1px solid #D0D4DA",
-          "color": "#1976D2",
-          "fontSize": "12px",
-          "fontWeight": "bold",
-          "marginTop": "4px"
-         },
-         "text": "Directory Paths (from legacy INI [DIRECTORIES])"
-        },
-        "type": "ia.display.label"
-       },
-       {
-        "children": [
-         {
+          ],
           "meta": {
-           "name": "lbl_form_ediout"
+           "name": "grpgrid_paths"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "gap": "8px 16px"
            },
-           "text": "EDI Out Dir (shared)"
+           "wrap": "wrap"
           },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-ediout",
-           "name": "fld_form_ediout"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_ediout"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
+          "type": "ia.container.flex"
          }
         ],
         "meta": {
-         "name": "row_form_ediout"
+         "name": "section_paths"
+        },
+        "position": {
+         "shrink": 0
         },
         "props": {
-         "alignItems": "center",
+         "direction": "column",
          "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_ediin"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "EDI In Dir (shared)"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-ediin",
-           "name": "fld_form_ediin"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_ediin"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_ediin"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_forecastd"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Forecast Input Dir"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-forecastd",
-           "name": "fld_form_forecastd"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_forecastd"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_forecastd"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_logisticsd"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Logistics Input Dir"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-logisticsd",
-           "name": "fld_form_logisticsd"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_logisticsd"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_logisticsd"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_reportsd"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Reports Output Dir"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-reportsd",
-           "name": "fld_form_reportsd"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_reportsd"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_reportsd"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_shippingd"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Shipping File Dir"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-shippingd",
-           "name": "fld_form_shippingd"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_shippingd"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_shippingd"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_templated"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Template Dir"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-templated",
-           "name": "fld_form_templated"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "bidirectional": true,
-              "path": "view.custom.form_templated"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "maxLength": 260
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_templated"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
-         }
-        },
-        "type": "ia.container.flex"
-       },
-       {
-        "meta": {
-         "name": "grp_audit"
-        },
-        "props": {
-         "style": {
-          "borderBottom": "1px solid #D0D4DA",
-          "color": "#1976D2",
-          "fontSize": "12px",
-          "fontWeight": "bold",
-          "marginTop": "4px"
-         },
-         "text": "Audit (read-only)"
-        },
-        "type": "ia.display.label"
-       },
-       {
-        "children": [
-         {
-          "meta": {
-           "name": "lbl_form_lastupd"
-          },
-          "position": {
-           "basis": "200px"
-          },
-          "props": {
-           "style": {
-            "fontSize": "12px"
-           },
-           "text": "Last Update (audit)"
-          },
-          "type": "ia.display.label"
-         },
-         {
-          "meta": {
-           "domId": "sites-lastupd",
-           "name": "fld_form_lastupd"
-          },
-          "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "path": "view.custom.form_lastupd"
-             },
-             "type": "property"
-            }
-           }
-          },
-          "props": {
-           "enabled": false
-          },
-          "type": "ia.input.text-field"
-         }
-        ],
-        "meta": {
-         "name": "row_form_lastupd"
-        },
-        "props": {
-         "alignItems": "center",
-         "style": {
-          "gap": "10px"
+          "gap": "4px"
          }
         },
         "type": "ia.container.flex"
@@ -2419,50 +2869,171 @@
         "children": [
          {
           "meta": {
-           "name": "lbl_form_add"
+           "name": "grp_audit"
           },
           "position": {
-           "basis": "200px"
+           "shrink": 0
           },
           "props": {
            "style": {
-            "fontSize": "12px"
+            "borderBottom": "1px solid var(--tai-border)",
+            "color": "var(--tai-accent)",
+            "fontSize": "12px",
+            "fontWeight": "bold",
+            "marginTop": "4px"
            },
-           "text": "Created (audit)"
+           "text": "Audit (read-only)"
           },
           "type": "ia.display.label"
          },
          {
+          "children": [
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_lastupd"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Last Update (audit)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-lastupd",
+               "name": "fld_form_lastupd"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "path": "view.custom.form_lastupd"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "enabled": false
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_lastupd"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           },
+           {
+            "children": [
+             {
+              "meta": {
+               "name": "lbl_form_add"
+              },
+              "position": {
+               "basis": "168px",
+               "shrink": 0
+              },
+              "props": {
+               "style": {
+                "fontSize": "12px"
+               },
+               "text": "Created (audit)"
+              },
+              "type": "ia.display.label"
+             },
+             {
+              "meta": {
+               "domId": "sites-add",
+               "name": "fld_form_add"
+              },
+              "position": {
+               "basis": "0px",
+               "grow": 1
+              },
+              "propConfig": {
+               "props.text": {
+                "binding": {
+                 "config": {
+                  "path": "view.custom.form_add"
+                 },
+                 "type": "property"
+                }
+               }
+              },
+              "props": {
+               "enabled": false
+              },
+              "type": "ia.input.text-field"
+             }
+            ],
+            "meta": {
+             "name": "row_form_add"
+            },
+            "position": {
+             "basis": "360px",
+             "grow": 1,
+             "shrink": 0
+            },
+            "props": {
+             "alignItems": "center",
+             "style": {
+              "gap": "10px",
+              "minHeight": "34px"
+             }
+            },
+            "type": "ia.container.flex"
+           }
+          ],
           "meta": {
-           "domId": "sites-add",
-           "name": "fld_form_add"
+           "name": "grpgrid_audit"
           },
           "position": {
-           "basis": "320px"
-          },
-          "propConfig": {
-           "props.text": {
-            "binding": {
-             "config": {
-              "path": "view.custom.form_add"
-             },
-             "type": "property"
-            }
-           }
+           "shrink": 0
           },
           "props": {
-           "enabled": false
+           "style": {
+            "gap": "8px 16px"
+           },
+           "wrap": "wrap"
           },
-          "type": "ia.input.text-field"
+          "type": "ia.container.flex"
          }
         ],
         "meta": {
-         "name": "row_form_add"
+         "name": "section_audit"
+        },
+        "position": {
+         "shrink": 0
         },
         "props": {
-         "alignItems": "center",
+         "direction": "column",
          "style": {
-          "gap": "10px"
+          "gap": "4px"
          }
         },
         "type": "ia.container.flex"
@@ -2472,14 +3043,19 @@
        "domId": "sites-form",
        "name": "Form"
       },
+      "position": {
+       "basis": "0px",
+       "grow": 1,
+       "shrink": 1
+      },
       "props": {
        "direction": "column",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
-        "gap": "6px",
-        "maxHeight": "640px",
+        "gap": "8px",
+        "minHeight": "0px",
         "overflow": "auto",
         "padding": "12px"
        }
@@ -2516,8 +3092,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Save"
@@ -2552,8 +3128,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#C62828",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-status-danger)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Delete"
@@ -2578,8 +3154,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#607D8B",
-          "color": "#FFFFFF"
+          "backgroundColor": "var(--tai-neutral-60)",
+          "color": "var(--tai-on-accent)"
          },
          "text": "Clear"
         },
@@ -2612,7 +3188,8 @@
     "props": {
      "direction": "column",
      "style": {
-      "gap": "8px"
+      "gap": "10px",
+      "minHeight": "0px"
      }
     },
     "type": "ia.container.flex"
@@ -2623,7 +3200,7 @@
   },
   "props": {
    "style": {
-    "backgroundColor": "#F5F6F8",
+    "backgroundColor": "var(--tai-bg)",
     "gap": "12px",
     "padding": "12px"
    }

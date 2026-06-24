@@ -183,6 +183,27 @@ def comp_type(kind):
     return "ia.input.text-field"
 
 
+# ---------------------------------------------------------------------------
+# LAYOUT (NIT 1 — David click-through 2026-06-24): the ~45-field Sites detail was
+# vertically COMPRESSED — every label+input row lived flat in a column flex with
+# overflow:auto + maxHeight, but no row carried flex-shrink:0, so when the 45 rows
+# overflowed the cap the column SHRANK each row to nothing instead of scrolling
+# (unreadable). FIX:
+#   * every field ROW gets position.shrink=0 + style.minHeight (ROW_MIN_HEIGHT) so a
+#     row is a DEFINITE legible height the flex can never squish; the Form's
+#     overflow:auto then SCROLLS instead of compressing.
+#   * 2-COLUMN layout: each group's rows live in a wrapping flex (flexWrap:wrap) and
+#     each row is ~half width (ROW_BASIS, grow:1) so two fit per line — halving the
+#     scroll and improving scan-ability. Group header spans full width (its own line).
+#   * section grouping is KEPT (the existing GROUPS) — Identity, EDI, Order/Forecast,
+#     Purge, Paths, Audit — each a labelled section.
+# The Form keeps overflow:auto and grows to fill the RightPane height (see build_view),
+# so the whole detail scrolls as one readable, full-height column.
+ROW_MIN_HEIGHT = "34px"   # definite single-line height per row; flex can never shrink below this
+ROW_BASIS = "360px"       # ~half a ~760px-wide form line -> two columns; grow:1 fills the remainder
+LABEL_BASIS = "168px"     # field label width inside a row (narrower than the old 200 to fit 2-up)
+
+
 def field_row(key, domid, label, kind, maxlen):
     vprop = value_prop(kind)
     readonly = kind in ("ro_text", "ro_num")
@@ -196,6 +217,11 @@ def field_row(key, domid, label, kind, maxlen):
             {"value": "AUTO", "label": "AUTO"},
             {"value": "MANUAL", "label": "MANUAL"},
         ]
+    if kind == "bit":
+        # blank the checkbox's own caption: ia.input.checkbox defaults props.text to the literal "text",
+        # which rendered a stray "text" word beside every bit field (the row LABEL already names it). The
+        # value binding lives on props.selected (untouched) — this only clears the cosmetic caption.
+        inner_props["text"] = ""
     binding = {
         "config": {"bidirectional": True, "path": "view.custom.%s" % key},
         "type": "property",
@@ -205,7 +231,8 @@ def field_row(key, domid, label, kind, maxlen):
         binding = {"config": {"path": "view.custom.%s" % key}, "type": "property"}
     field = {
         "meta": {"domId": domid, "name": "fld_" + key},
-        "position": {"basis": "320px"},
+        # the input fills the rest of the (now narrower, 2-up) row after the label
+        "position": {"basis": "0px", "grow": 1},
         "propConfig": {vprop: {"binding": binding}},
         "type": comp_type(kind),
     }
@@ -213,29 +240,52 @@ def field_row(key, domid, label, kind, maxlen):
         field["props"] = inner_props
     lbl = {
         "meta": {"name": "lbl_" + key},
-        "position": {"basis": "200px"},
+        "position": {"basis": LABEL_BASIS, "shrink": 0},
         "props": {"style": {"fontSize": "12px"}, "text": label},
         "type": "ia.display.label",
     }
     return {
         "meta": {"name": "row_" + key},
-        "props": {"alignItems": "center", "style": {"gap": "10px"}},
+        # shrink:0 = the row keeps ROW_MIN_HEIGHT and is NEVER compressed by the column
+        # overflow; basis ROW_BASIS + grow:1 = two rows per wrapping line (2 columns).
+        "position": {"basis": ROW_BASIS, "grow": 1, "shrink": 0},
+        "props": {"alignItems": "center",
+                  "style": {"gap": "10px", "minHeight": ROW_MIN_HEIGHT}},
         "type": "ia.container.flex",
         "children": [lbl, field],
     }
 
 
 def group_block(gkey, gtitle):
+    """One labelled section: a full-width header + a 2-column wrapping grid of its rows.
+    Returned as a SINGLE section container so the Form is a clean column of sections (the
+    header always starts a new section; the rows wrap 2-up within it)."""
     rows = [field_row(key, domid, label, kind, maxlen)
             for (key, domid, label, kind, dbcol, default, maxlen, grp) in F if grp == gkey]
     header = {
         "meta": {"name": "grp_" + gkey},
+        "position": {"shrink": 0},
         "props": {"style": {"color": "#1976D2", "fontSize": "12px", "fontWeight": "bold",
                             "marginTop": "4px", "borderBottom": "1px solid #D0D4DA"},
                   "text": gtitle},
         "type": "ia.display.label",
     }
-    return [header] + rows
+    # the rows wrap 2-up inside this grid; the grid never shrinks (shrink:0) so the
+    # Form's overflow:auto scrolls the whole readable column.
+    grid = {
+        "meta": {"name": "grpgrid_" + gkey},
+        "position": {"shrink": 0},
+        "props": {"wrap": "wrap", "style": {"gap": "8px 16px"}},
+        "type": "ia.container.flex",
+        "children": rows,
+    }
+    return [{
+        "meta": {"name": "section_" + gkey},
+        "position": {"shrink": 0},
+        "props": {"direction": "column", "style": {"gap": "4px"}},
+        "type": "ia.container.flex",
+        "children": [header, grid],
+    }]
 
 
 # ---------------------------------------------------------------------------
@@ -712,7 +762,9 @@ def build_view():
                 {
                     "meta": {"name": "RightPane"},
                     "position": {"basis": "640px", "grow": 1},
-                    "props": {"direction": "column", "style": {"gap": "8px"}},
+                    # minHeight:0 lets the column-flex Form child scroll instead of forcing the pane taller
+                    # than the page (the NIT-1 scroll fix needs an established height bound on this pane).
+                    "props": {"direction": "column", "style": {"gap": "8px", "minHeight": "0px"}},
                     "type": "ia.container.flex",
                     "children": [
                         {"meta": {"name": "DetailTitle"},
@@ -723,12 +775,19 @@ def build_view():
                          "props": {"style": {"color": "#B71C1C", "fontSize": "13px", "fontWeight": "bold", "padding": "6px 8px"}},
                          "type": "ia.display.label"},
                         # form (ALWAYS visible — like the other masters; the write is gated server-side, rule #1)
+                        # NIT 1: the Form GROWS to fill the RightPane height between StatusMsg and the
+                        # ActionBar (grow:1, basis:0) and SCROLLS its 45 readable rows (overflow:auto). The
+                        # minHeight:0 is LOAD-BEARING — a column-flex child won't shrink below its content
+                        # (so overflow:auto won't scroll) WITHOUT it; with it the Form is bounded by the pane
+                        # and scrolls. No fixed maxHeight cap any more (the pane bounds the height), so the
+                        # detail uses the full available height instead of being squished into 640px.
                         {
                             "meta": {"domId": "sites-form", "name": "Form"},
+                            "position": {"basis": "0px", "grow": 1, "shrink": 1},
                             "props": {"direction": "column",
                                       "style": {"backgroundColor": "#FFFFFF", "border": "1px solid #D0D4DA",
-                                                "borderRadius": "4px", "gap": "6px", "padding": "12px",
-                                                "overflow": "auto", "maxHeight": "640px"}},
+                                                "borderRadius": "4px", "gap": "8px", "padding": "12px",
+                                                "overflow": "auto", "minHeight": "0px"}},
                             "type": "ia.container.flex",
                             "children": children_form,
                         },

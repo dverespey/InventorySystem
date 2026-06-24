@@ -60,7 +60,7 @@
   "custom.recordId": {
    "onChange": {
     "enabled": null,
-    "script": "\t# ---- PartsStock combined view: recordId change -> load detail ----\n\t# Grid onRowClick sets self.view.custom.recordId = event.value[\"RecordID\"] (same-view\n\t# prop write, NO navigation). This onChange fires on that write and populates the\n\t# in-view form. recordId==0 -> insert mode. IG81-COMPAT: plain change script + T-SQL.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tv = self.view if hasattr(self, \"view\") else self\n\tDB = \"Inventory_Spike\"\n\tc = v.custom\n\tcv = getattr(currentValue, \"value\", currentValue)\n\trecId = int(cv or 0)\n\tlog.info(\"SPIKE PartsStock Detail recordId onChange fired: recId=%s origin=%s\" % (recId, origin))\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\t# ---- FK combo options (5 master lookups + the cross-DB Line list) ----\n\tdef opts(sql):\n\t\tds = system.db.runPrepQuery(sql, [], DB)\n\t\treturn [{\"value\": ds.getValueAt(i, \"id\"), \"label\": ds.getValueAt(i, \"label\")} for i in xrange(ds.rowCount)]\n\tc.supplierOptions = opts(\"SELECT IN_SUPPLIER_ID AS id, VC_SUPPLIER_CODE AS label FROM INV_SUPPLIER_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_SUPPLIER_CODE\")\n\tc.logisticsOptions = opts(\"SELECT IN_LOGISTICS_ID AS id, VC_LOGISTICS_NAME AS label FROM INV_LOGISTICS_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_LOGISTICS_NAME\")\n\tc.sizeOptions = opts(\"SELECT IN_SIZE_ID AS id, VC_SIZE_CODE AS label FROM INV_SIZE_MST WHERE VC_SIZE_CODE <> '' /* IG-SITE: AND site_id = ? */ ORDER BY VC_SIZE_CODE\")\n\tc.renbanOptions = opts(\"SELECT IN_RENBAN_ID AS id, VC_RENBAN_GROUP_CODE AS label FROM INV_RENBAN_GROUP_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_RENBAN_GROUP_CODE\")\n\tc.partTypeOptions = opts(\"SELECT IN_PART_TYPE_ID AS id, VC_PART_TYPE AS label FROM INV_PART_TYPE_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_PART_TYPE\")\n\t# Line: cross-DB 3-part name over Inventory_Spike (faithful spike equivalent of the ALC_Connection->VehicleOrder read)\n\tc.lineOptions = opts(\"SELECT DISTINCT LineName AS id, LineName AS label FROM VehicleOrder.dbo.LINE ORDER BY LineName\")\n\tlog.info(\"SPIKE PartsStock Detail combos: sup=%d log=%d size=%d renban=%d type=%d line=%d\" % (len(c.supplierOptions), len(c.logisticsOptions), len(c.sizeOptions), len(c.renbanOptions), len(c.partTypeOptions), len(c.lineOptions)))\n\n\tif recId <= 0:\n\t\tc.statusMsg = \"New part \u2014 enter details and Save.\"\n\t\tlog.info(\"SPIKE PartsStock Detail: insert mode (recordId=0)\")\n\t\treturn\n\n\tgetSql = (\"SELECT p.VC_PART_NUMBER, p.VC_PARTS_NAME, p.IN_SUPPLIER_ID, p.IN_LOGISTICS_ID, p.IN_SIZE_ID, \"\n\t          \"p.IN_RENBAN_ID, p.IN_PART_TYPE_ID, p.VC_LINE_NAME, p.VC_KANBAN_NUMBER, p.IN_1LOTQTY, \"\n\t          \"p.BIT_LOT_SIZE_ORDERS, p.IN_RENBAN_COUNT, p.IN_QTY, \"\n\t          \"p.IN_LEADTIME, p.IN_LEADTIME_MONDAY, p.IN_LEADTIME_TUESDAY, p.IN_LEADTIME_WEDNESDAY, \"\n\t          \"p.IN_LEADTIME_THURSDAY, p.IN_LEADTIME_FRIDAY, p.IN_LEADTIME_SATURDAY, \"\n\t          \"p.IN_SHIP_DAYS, p.IN_SHIP_DAYS_MONDAY, p.IN_SHIP_DAYS_TUESDAY, p.IN_SHIP_DAYS_WEDNESDAY, \"\n\t          \"p.IN_SHIP_DAYS_THURSDAY, p.IN_SHIP_DAYS_FRIDAY, p.IN_SHIP_DAYS_SATURDAY, \"\n\t          \"p.MO_PART_COST, p.VC_COMMENTS \"\n\t          \"FROM INV_PARTS_STOCK_MST p WHERE p.IN_PART_ID = ? -- IG-SITE: AND p.site_id = ?\")\n\tds = system.db.runPrepQuery(getSql, [recId], DB)\n\tif ds.rowCount == 0:\n\t\tc.statusMsg = \"Part id %d not found.\" % recId\n\t\tlog.warn(\"SPIKE PartsStock Detail: id %d not found\" % recId); return\n\tdef gs(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn val if val is not None else \"\"\n\tdef gi(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else 0\n\tdef gid(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else None\n\tc.form_partNumber = gs(\"VC_PART_NUMBER\"); c.form_partsName = gs(\"VC_PARTS_NAME\")\n\tc.form_supplierId = gid(\"IN_SUPPLIER_ID\"); c.form_logisticsId = gid(\"IN_LOGISTICS_ID\")\n\tc.form_sizeId = gid(\"IN_SIZE_ID\"); c.form_renbanId = gid(\"IN_RENBAN_ID\")\n\tc.form_partTypeId = gid(\"IN_PART_TYPE_ID\")\n\tc.form_lineName = gs(\"VC_LINE_NAME\") or \"TUNDRA\"\n\tc.form_kanban = gs(\"VC_KANBAN_NUMBER\"); c.form_lotQty = gi(\"IN_1LOTQTY\")\n\t# BIT_LOT_SIZE_ORDERS is stored INVERTED (order-renban memory: 0 = lot-sized TRUE).\n\t# Display: checkbox.selected = NOT stored.\n\tstoredBit = ds.getValueAt(0, \"BIT_LOT_SIZE_ORDERS\")\n\tc.form_lotSizeOrders = (not bool(storedBit)) if storedBit is not None else True\n\tc.form_renbanCount = gi(\"IN_RENBAN_COUNT\")\n\tc.form_qty = gi(\"IN_QTY\")   # READ-ONLY display only\n\tc.form_leadtime = gi(\"IN_LEADTIME\"); c.form_ltMon = gi(\"IN_LEADTIME_MONDAY\")\n\tc.form_ltTue = gi(\"IN_LEADTIME_TUESDAY\"); c.form_ltWed = gi(\"IN_LEADTIME_WEDNESDAY\")\n\tc.form_ltThu = gi(\"IN_LEADTIME_THURSDAY\"); c.form_ltFri = gi(\"IN_LEADTIME_FRIDAY\")\n\tc.form_ltSat = gi(\"IN_LEADTIME_SATURDAY\")\n\tc.form_shipdays = gi(\"IN_SHIP_DAYS\"); c.form_sdMon = gi(\"IN_SHIP_DAYS_MONDAY\")\n\tc.form_sdTue = gi(\"IN_SHIP_DAYS_TUESDAY\"); c.form_sdWed = gi(\"IN_SHIP_DAYS_WEDNESDAY\")\n\tc.form_sdThu = gi(\"IN_SHIP_DAYS_THURSDAY\"); c.form_sdFri = gi(\"IN_SHIP_DAYS_FRIDAY\")\n\tc.form_sdSat = gi(\"IN_SHIP_DAYS_SATURDAY\")\n\tcost = ds.getValueAt(0, \"MO_PART_COST\")\n\tc.form_partCost = float(cost) if cost is not None else 0.0\n\tc.form_comments = gs(\"VC_COMMENTS\")\n\tc.statusMsg = \"Editing part %s (id %d). On-hand %d is read-only (ledger-owned).\" % (c.form_partNumber, recId, c.form_qty)\n\tlog.info(\"SPIKE PartsStock Detail loaded id=%d part=%s qty=%d lotSizeShown=%s\" % (recId, c.form_partNumber, c.form_qty, c.form_lotSizeOrders))\n"
+    "script": "\t# ---- PartsStock combined view: recordId change -> load detail ----\n\t# Grid onRowClick sets self.view.custom.recordId = event.value[\"RecordID\"] (same-view\n\t# prop write, NO navigation). This onChange fires on that write and populates the\n\t# in-view form. recordId==0 -> insert mode. IG81-COMPAT: plain change script + T-SQL.\n\tlog = system.util.getLogger(\"SPIKE\")\n\tv = self.view if hasattr(self, \"view\") else self\n\tDB = \"Inventory_Spike\"\n\tc = v.custom\n\tcv = getattr(currentValue, \"value\", currentValue)\n\trecId = int(cv or 0)\n\tlog.info(\"SPIKE PartsStock Detail recordId onChange fired: recId=%s origin=%s\" % (recId, origin))\n\tsiteId = int(c.siteId or 1)   # IG-SITE: plumbed; predicate commented (D1)\n\n\t# ---- FK combo options (5 master lookups + the cross-DB Line list) ----\n\tdef opts(sql):\n\t\tds = system.db.runPrepQuery(sql, [], DB)\n\t\treturn [{\"value\": ds.getValueAt(i, \"id\"), \"label\": ds.getValueAt(i, \"label\")} for i in xrange(ds.rowCount)]\n\tc.supplierOptions = opts(\"SELECT IN_SUPPLIER_ID AS id, VC_SUPPLIER_CODE AS label FROM INV_SUPPLIER_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_SUPPLIER_CODE\")\n\tc.logisticsOptions = opts(\"SELECT IN_LOGISTICS_ID AS id, VC_LOGISTICS_NAME AS label FROM INV_LOGISTICS_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_LOGISTICS_NAME\")\n\tc.sizeOptions = opts(\"SELECT IN_SIZE_ID AS id, VC_SIZE_CODE AS label FROM INV_SIZE_MST WHERE VC_SIZE_CODE <> '' /* IG-SITE: AND site_id = ? */ ORDER BY VC_SIZE_CODE\")\n\tc.renbanOptions = opts(\"SELECT IN_RENBAN_ID AS id, VC_RENBAN_GROUP_CODE AS label FROM INV_RENBAN_GROUP_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_RENBAN_GROUP_CODE\")\n\tc.partTypeOptions = opts(\"SELECT IN_PART_TYPE_ID AS id, VC_PART_TYPE AS label FROM INV_PART_TYPE_MST /* IG-SITE: WHERE site_id = ? */ ORDER BY VC_PART_TYPE\")\n\t# Line: cross-DB 3-part name over Inventory_Spike (faithful spike equivalent of the ALC_Connection->VehicleOrder read)\n\t# IG-RESILIENCE (P21): the Line list is a CROSS-DB read of VehicleOrder.dbo.LINE. If the gateway\n\t# login lacks VehicleOrder access the read raises; wrap it so the detail-load DEGRADES GRACEFULLY\n\t# (empty Line dropdown + warn) and the part's OWN fields STILL load. Mirrors HotCall AD_GetLines.\n\t# Catch java.lang.Throwable: a SQL-Server cross-DB ACCESS-DENIED surfaces as a Java throwable that\n\t# a plain `except Exception` does NOT catch (verified on the box) \u2014 Throwable catches both.\n\tfrom java.lang import Throwable as _JThrowable\n\tc.lineOptions = []\n\ttry:\n\t\tc.lineOptions = opts(\"SELECT DISTINCT LineName AS id, LineName AS label FROM VehicleOrder.dbo.LINE ORDER BY LineName\")\n\texcept _JThrowable, e:\n\t\tlog.warn(\"SPIKE PartsStock Detail: Line list (cross-DB VehicleOrder) unavailable, dropdown empty: %s\" % e)\n\tlog.info(\"SPIKE PartsStock Detail combos: sup=%d log=%d size=%d renban=%d type=%d line=%d\" % (len(c.supplierOptions), len(c.logisticsOptions), len(c.sizeOptions), len(c.renbanOptions), len(c.partTypeOptions), len(c.lineOptions)))\n\n\tif recId <= 0:\n\t\tc.statusMsg = \"New part \u2014 enter details and Save.\"\n\t\tlog.info(\"SPIKE PartsStock Detail: insert mode (recordId=0)\")\n\t\treturn\n\n\tgetSql = (\"SELECT p.VC_PART_NUMBER, p.VC_PARTS_NAME, p.IN_SUPPLIER_ID, p.IN_LOGISTICS_ID, p.IN_SIZE_ID, \"\n\t          \"p.IN_RENBAN_ID, p.IN_PART_TYPE_ID, p.VC_LINE_NAME, p.VC_KANBAN_NUMBER, p.IN_1LOTQTY, \"\n\t          \"p.BIT_LOT_SIZE_ORDERS, p.IN_RENBAN_COUNT, p.IN_QTY, \"\n\t          \"p.IN_LEADTIME, p.IN_LEADTIME_MONDAY, p.IN_LEADTIME_TUESDAY, p.IN_LEADTIME_WEDNESDAY, \"\n\t          \"p.IN_LEADTIME_THURSDAY, p.IN_LEADTIME_FRIDAY, p.IN_LEADTIME_SATURDAY, \"\n\t          \"p.IN_SHIP_DAYS, p.IN_SHIP_DAYS_MONDAY, p.IN_SHIP_DAYS_TUESDAY, p.IN_SHIP_DAYS_WEDNESDAY, \"\n\t          \"p.IN_SHIP_DAYS_THURSDAY, p.IN_SHIP_DAYS_FRIDAY, p.IN_SHIP_DAYS_SATURDAY, \"\n\t          \"p.MO_PART_COST, p.VC_COMMENTS \"\n\t          \"FROM INV_PARTS_STOCK_MST p WHERE p.IN_PART_ID = ? -- IG-SITE: AND p.site_id = ?\")\n\tds = system.db.runPrepQuery(getSql, [recId], DB)\n\tif ds.rowCount == 0:\n\t\tc.statusMsg = \"Part id %d not found.\" % recId\n\t\tlog.warn(\"SPIKE PartsStock Detail: id %d not found\" % recId); return\n\tdef gs(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn val if val is not None else \"\"\n\tdef gi(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else 0\n\tdef gid(col):\n\t\tval = ds.getValueAt(0, col)\n\t\treturn int(val) if val is not None else None\n\tc.form_partNumber = gs(\"VC_PART_NUMBER\"); c.form_partsName = gs(\"VC_PARTS_NAME\")\n\tc.form_supplierId = gid(\"IN_SUPPLIER_ID\"); c.form_logisticsId = gid(\"IN_LOGISTICS_ID\")\n\tc.form_sizeId = gid(\"IN_SIZE_ID\"); c.form_renbanId = gid(\"IN_RENBAN_ID\")\n\tc.form_partTypeId = gid(\"IN_PART_TYPE_ID\")\n\tc.form_lineName = gs(\"VC_LINE_NAME\") or \"TUNDRA\"\n\tc.form_kanban = gs(\"VC_KANBAN_NUMBER\"); c.form_lotQty = gi(\"IN_1LOTQTY\")\n\t# BIT_LOT_SIZE_ORDERS is stored INVERTED (order-renban memory: 0 = lot-sized TRUE).\n\t# Display: checkbox.selected = NOT stored.\n\tstoredBit = ds.getValueAt(0, \"BIT_LOT_SIZE_ORDERS\")\n\tc.form_lotSizeOrders = (not bool(storedBit)) if storedBit is not None else True\n\tc.form_renbanCount = gi(\"IN_RENBAN_COUNT\")\n\tc.form_qty = gi(\"IN_QTY\")   # READ-ONLY display only\n\tc.form_leadtime = gi(\"IN_LEADTIME\"); c.form_ltMon = gi(\"IN_LEADTIME_MONDAY\")\n\tc.form_ltTue = gi(\"IN_LEADTIME_TUESDAY\"); c.form_ltWed = gi(\"IN_LEADTIME_WEDNESDAY\")\n\tc.form_ltThu = gi(\"IN_LEADTIME_THURSDAY\"); c.form_ltFri = gi(\"IN_LEADTIME_FRIDAY\")\n\tc.form_ltSat = gi(\"IN_LEADTIME_SATURDAY\")\n\tc.form_shipdays = gi(\"IN_SHIP_DAYS\"); c.form_sdMon = gi(\"IN_SHIP_DAYS_MONDAY\")\n\tc.form_sdTue = gi(\"IN_SHIP_DAYS_TUESDAY\"); c.form_sdWed = gi(\"IN_SHIP_DAYS_WEDNESDAY\")\n\tc.form_sdThu = gi(\"IN_SHIP_DAYS_THURSDAY\"); c.form_sdFri = gi(\"IN_SHIP_DAYS_FRIDAY\")\n\tc.form_sdSat = gi(\"IN_SHIP_DAYS_SATURDAY\")\n\tcost = ds.getValueAt(0, \"MO_PART_COST\")\n\tc.form_partCost = float(cost) if cost is not None else 0.0\n\tc.form_comments = gs(\"VC_COMMENTS\")\n\tc.statusMsg = \"Editing part %s (id %d). On-hand %d is read-only (ledger-owned).\" % (c.form_partNumber, recId, c.form_qty)\n\tlog.info(\"SPIKE PartsStock Detail loaded id=%d part=%s qty=%d lotSizeShown=%s\" % (recId, c.form_partNumber, c.form_qty, c.form_lotSizeOrders))\n"
    }
   }
  },
@@ -78,11 +78,18 @@
       "meta": {
        "name": "Title"
       },
+      "position": {
+       "shrink": 0
+      },
       "props": {
        "style": {
-        "color": "#222222",
+        "color": "var(--tai-text)",
         "fontSize": "15px",
-        "fontWeight": "bold"
+        "fontWeight": "bold",
+        "height": "22px",
+        "overflow": "hidden",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap"
        },
        "text": "Parts Stock Master \u2014 List + Detail  \u00b7  INV_PARTS_STOCK_MST (Inventory_Spike)"
       },
@@ -98,7 +105,7 @@
           },
           "props": {
            "style": {
-            "color": "#666666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "11px"
            },
            "text": "Search (part number or name)"
@@ -162,8 +169,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Search"
@@ -180,8 +187,8 @@
       "props": {
        "alignItems": "flex-end",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "12px",
         "padding": "10px"
@@ -254,7 +261,7 @@
       },
       "props": {
        "style": {
-        "color": "#37474F",
+        "color": "var(--tai-text-muted)",
         "fontSize": "11px",
         "fontStyle": "italic"
        },
@@ -282,42 +289,60 @@
     "children": [
      {
       "meta": {
-       "name": "DetailTitle"
+       "name": "TitleSpacer"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
        "style": {
-        "color": "#222222",
-        "fontSize": "15px",
-        "fontWeight": "bold"
+        "height": "22px"
        },
-       "text": "Detail"
+       "text": ""
       },
       "type": "ia.display.label"
      },
      {
-      "meta": {
-       "domId": "ps-status",
-       "name": "StatusMsg"
-      },
-      "propConfig": {
-       "props.text": {
-        "binding": {
-         "config": {
-          "path": "view.custom.statusMsg"
-         },
-         "type": "property"
-        }
+      "children": [
+       {
+        "meta": {
+         "domId": "ps-status",
+         "name": "StatusMsg"
+        },
+        "propConfig": {
+         "props.text": {
+          "binding": {
+           "config": {
+            "path": "view.custom.statusMsg"
+           },
+           "type": "property"
+          }
+         }
+        },
+        "props": {
+         "style": {
+          "color": "var(--tai-status-danger)",
+          "fontSize": "13px",
+          "fontWeight": "bold",
+          "padding": "6px 8px"
+         }
+        },
+        "type": "ia.display.label"
        }
+      ],
+      "meta": {
+       "name": "AlignBand"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
+       "alignItems": "center",
        "style": {
-        "color": "#B71C1C",
-        "fontSize": "13px",
-        "fontWeight": "bold",
-        "padding": "6px 8px"
+        "height": "70px"
        }
       },
-      "type": "ia.display.label"
+      "type": "ia.container.flex"
      },
      {
       "children": [
@@ -1077,7 +1102,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Base"
@@ -1114,7 +1139,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Mon"
@@ -1151,7 +1176,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Tue"
@@ -1188,7 +1213,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Wed"
@@ -1225,7 +1250,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Thu"
@@ -1262,7 +1287,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Fri"
@@ -1299,7 +1324,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Sat"
@@ -1366,7 +1391,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Base"
@@ -1403,7 +1428,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Mon"
@@ -1440,7 +1465,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Tue"
@@ -1477,7 +1502,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Wed"
@@ -1514,7 +1539,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Thu"
@@ -1551,7 +1576,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Fri"
@@ -1588,7 +1613,7 @@
           },
           "props": {
            "style": {
-            "color": "#666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "10px"
            },
            "text": "Sat"
@@ -1740,8 +1765,8 @@
       "props": {
        "direction": "column",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "6px",
         "padding": "12px"
@@ -1779,8 +1804,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Save"
@@ -1815,8 +1840,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#C62828",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-status-danger)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Delete"
@@ -1841,8 +1866,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#607D8B",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-neutral-60)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Clear"
@@ -1876,7 +1901,7 @@
     "props": {
      "direction": "column",
      "style": {
-      "gap": "8px"
+      "gap": "10px"
      }
     },
     "type": "ia.container.flex"
@@ -1887,7 +1912,7 @@
   },
   "props": {
    "style": {
-    "backgroundColor": "#F5F6F8",
+    "backgroundColor": "var(--tai-bg)",
     "gap": "12px",
     "padding": "12px"
    }
