@@ -23,7 +23,11 @@ VIEWS = [
     # (route, grid_domId, right_pane_first_row_anchor_text_to_click)
     ("sites", "sites-grid"),
     ("size", "size-grid"),
+    ("partsstock", "ps-grid"),   # P21 dark-theme + click-to-fill acceptance (added 2026-06-24)
 ]
+
+# Per-route detail-form domId to crop (None -> no crop).
+DETAIL_FORM = {"sites": "sites-form", "partsstock": "ps-form"}
 ROW = "div.ia_table__row"
 
 
@@ -86,10 +90,11 @@ def shoot(page, route, grid_id, theme):
     print("  wrote %s" % full)
     # crop the RightPane detail box if present
     rp = page.query_selector("div[data-component-path] >> nth=0")
-    # try to locate the RightPane by its form domId (sites-form) or the Form box
+    # try to locate the RightPane by its form domId (sites-form / ps-form) or the Form box
     box = None
-    if route == "sites":
-        box = page.query_selector("#sites-form")
+    form_id = DETAIL_FORM.get(route)
+    if form_id:
+        box = page.query_selector("#" + form_id)
     if box is None:
         # fall back: screenshot the right half of the viewport
         box = None

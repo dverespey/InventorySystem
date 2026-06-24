@@ -52,7 +52,7 @@
       },
       "props": {
        "style": {
-        "color": "#222222",
+        "color": "var(--tai-text)",
         "fontSize": "15px",
         "fontWeight": "bold",
         "height": "22px",
@@ -74,7 +74,7 @@
           },
           "props": {
            "style": {
-            "color": "#666666",
+            "color": "var(--tai-text-muted)",
             "fontSize": "11px"
            },
            "text": "Search (code or name)"
@@ -138,8 +138,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Search"
@@ -156,8 +156,8 @@
       "props": {
        "alignItems": "flex-end",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "12px",
         "padding": "10px"
@@ -230,7 +230,7 @@
       },
       "props": {
        "style": {
-        "color": "#37474F",
+        "color": "var(--tai-text-muted)",
         "fontSize": "11px",
         "fontStyle": "italic"
        },
@@ -290,7 +290,7 @@
         },
         "props": {
          "style": {
-          "color": "#B71C1C",
+          "color": "var(--tai-status-danger)",
           "fontSize": "13px",
           "fontWeight": "bold",
           "padding": "6px 8px"
@@ -528,8 +528,8 @@
       "props": {
        "direction": "column",
        "style": {
-        "backgroundColor": "#FFFFFF",
-        "border": "1px solid #D0D4DA",
+        "backgroundColor": "var(--tai-surface)",
+        "border": "1px solid var(--tai-border)",
         "borderRadius": "4px",
         "gap": "6px",
         "padding": "12px"
@@ -567,8 +567,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#1976D2",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-accent)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Save"
@@ -603,8 +603,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#C62828",
-          "color": "#FFFFFF",
+          "backgroundColor": "var(--tai-status-danger)",
+          "color": "var(--tai-on-accent)",
           "fontWeight": "bold"
          },
          "text": "Delete"
@@ -629,8 +629,8 @@
         },
         "props": {
          "style": {
-          "backgroundColor": "#607D8B",
-          "color": "#FFFFFF"
+          "backgroundColor": "var(--tai-neutral-60)",
+          "color": "var(--tai-on-accent)"
          },
          "text": "Clear"
         },
@@ -674,7 +674,7 @@
   },
   "props": {
    "style": {
-    "backgroundColor": "#F5F6F8",
+    "backgroundColor": "var(--tai-bg)",
     "gap": "12px",
     "padding": "12px"
    }
