@@ -16,7 +16,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -45,7 +48,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/order",
+              "label": "Order"
+            }
           }
         ],
         "bottom": [],
@@ -70,7 +76,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -95,7 +104,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -120,7 +132,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/home",
+              "label": "Home"
+            }
           }
         ],
         "bottom": [],
@@ -145,7 +160,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/order",
+              "label": "Order"
+            }
           }
         ],
         "bottom": [],
@@ -170,7 +188,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -195,7 +216,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -220,7 +244,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/home",
+              "label": "Home"
+            }
           }
         ],
         "bottom": [],
@@ -245,7 +272,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -270,7 +300,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -295,7 +328,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -320,7 +356,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/masters",
+              "label": "Master Data"
+            }
           }
         ],
         "bottom": [],
@@ -345,7 +384,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/home",
+              "label": "Home"
+            }
           }
         ],
         "bottom": [],
@@ -370,7 +412,10 @@
             "resizable": false,
             "handle": "hide",
             "autoBreakpoint": 0,
-            "viewParams": {}
+            "viewParams": {
+              "to": "/home",
+              "label": "Home"
+            }
           }
         ],
         "bottom": [],

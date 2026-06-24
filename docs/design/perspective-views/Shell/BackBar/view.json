@@ -1,7 +1,19 @@
 {
   "custom": {},
-  "params": {},
-  "propConfig": {},
+  "params": {
+    "to": "/home",
+    "label": "Home"
+  },
+  "propConfig": {
+    "params.to": {
+      "paramDirection": "input",
+      "persistent": true
+    },
+    "params.label": {
+      "paramDirection": "input",
+      "persistent": true
+    }
+  },
   "props": {
     "defaultSize": {
       "width": 1300,
@@ -47,7 +59,7 @@
               "type": "script",
               "scope": "G",
               "config": {
-                "script": "\tsystem.perspective.navigate('/home')\n"
+                "script": "\tto = self.view.params.to or '/home'\n\tsystem.perspective.navigate(to)\n"
               }
             }
           }
@@ -79,6 +91,16 @@
                 "fontWeight": "600",
                 "color": "var(--tai-accent)",
                 "whiteSpace": "nowrap"
+              }
+            },
+            "propConfig": {
+              "props.text": {
+                "binding": {
+                  "type": "property",
+                  "config": {
+                    "path": "view.params.label"
+                  }
+                }
               }
             }
           }

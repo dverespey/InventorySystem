@@ -233,7 +233,7 @@
                       "name": "ic"
                     },
                     "props": {
-                      "path": "material/factory",
+                      "path": "material/business",
                       "color": "var(--tai-accent)",
                       "style": {
                         "width": "22px",
@@ -334,7 +334,7 @@
                       "name": "ic"
                     },
                     "props": {
-                      "path": "material/inventory_2",
+                      "path": "material/widgets",
                       "color": "var(--tai-accent)",
                       "style": {
                         "width": "22px",
@@ -637,7 +637,7 @@
                       "name": "ic"
                     },
                     "props": {
-                      "path": "material/precision_manufacturing",
+                      "path": "material/build",
                       "color": "var(--tai-accent)",
                       "style": {
                         "width": "22px",
@@ -738,7 +738,7 @@
                       "name": "ic"
                     },
                     "props": {
-                      "path": "material/route",
+                      "path": "material/local_shipping",
                       "color": "var(--tai-accent)",
                       "style": {
                         "width": "22px",
@@ -969,7 +969,7 @@
                       "name": "ic"
                     },
                     "props": {
-                      "path": "material/manage_accounts",
+                      "path": "material/admin_panel_settings",
                       "color": "var(--tai-status-info)",
                       "style": {
                         "width": "22px",
