@@ -80,7 +80,7 @@
            "name": "SearchField"
           },
           "position": {
-           "basis": "220px"
+           "basis": "auto"
           },
           "propConfig": {
            "props.text": {
@@ -91,6 +91,12 @@
              },
              "type": "property"
             }
+           }
+          },
+          "props": {
+           "style": {
+            "height": "32px",
+            "width": "220px"
            }
           },
           "type": "ia.input.text-field"
@@ -130,32 +136,6 @@
           "fontWeight": "bold"
          },
          "text": "Search"
-        },
-        "type": "ia.input.button"
-       },
-       {
-        "events": {
-         "component": {
-          "onActionPerformed": {
-           "config": {
-            "script": "\t# New record: same-view prop write (NO navigation). Setting recordId=0 fires the\n\t# custom.recordId onChange -> insert-mode. Clear the form so a stale edit doesn't linger.\n\tc = self.view.custom\n\tc.form_code = \"\"; c.form_name = \"\"; c.form_usage = 0; c.form_days = 0\n\tc.recordId = 0\n\tc.statusMsg = \"New size \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE Size New -> recordId=0 (insert mode)\")\n"
-           },
-           "scope": "G",
-           "type": "script"
-          }
-         }
-        },
-        "meta": {
-         "domId": "size-new-btn",
-         "name": "NewButton"
-        },
-        "props": {
-         "style": {
-          "backgroundColor": "#388E3C",
-          "color": "#FFFFFF",
-          "fontWeight": "bold"
-         },
-         "text": "New Size"
         },
         "type": "ia.input.button"
        }
@@ -550,6 +530,16 @@
          "domId": "size-save-btn",
          "name": "SaveButton"
         },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0 || {view.custom.form_code} != ''"
+           },
+           "type": "expr"
+          }
+         }
+        },
         "props": {
          "style": {
           "backgroundColor": "#1976D2",
@@ -575,6 +565,16 @@
         "meta": {
          "domId": "size-delete-btn",
          "name": "DeleteButton"
+        },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0"
+           },
+           "type": "expr"
+          }
+         }
         },
         "props": {
          "style": {

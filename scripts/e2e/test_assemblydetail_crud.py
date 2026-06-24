@@ -48,7 +48,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/assemblydetail"
+LIST_URL = lib.view_url("assemblydetail")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -273,7 +273,7 @@ def check_validation(page, rep):
     No DB write occurs."""
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "assy-new-btn", text="New", role="button")
+    nb = q(page, "assy-clear-btn", text="New", role="button")
     if not nb:
         rep.skip("Validation: blank assy code rejected", "New button not found")
         rep.skip("Validation: composite-dup rejected", "New button not found")
@@ -407,7 +407,7 @@ def check_round_trip(page, rep):
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "assy-new-btn", text="New", role="button")
+    nb = q(page, "assy-clear-btn", text="New", role="button")
     if not nb:
         rep.skip("Round-trip insert/delete ZZTSTASSY1", "New button not found")
         return
@@ -512,9 +512,9 @@ def main():
         print("== 4. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
         lib.check_master_write_gate_live(
             pg, rep, "AssemblyDetail write gate", LIST_URL,
-            new_btn="assy-new-btn", save_btn="assy-save-btn", status_id="assy-status",
+            clear_btn="assy-clear-btn", save_btn="assy-save-btn", status_id="assy-status",
             grid_sel=GRID, fill_pairs=[], count_fn=db_count,
-            deny_marker="AssemblyDetail Save DENIED")
+            deny_marker="AssemblyDetail Save DENIED", primary_fill=("assy-code", "ZZASSY01"))
 
         # Checks 5-7 drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-side
         # write gate active, the anon spike session is correctly DENIED before those paths run, so they

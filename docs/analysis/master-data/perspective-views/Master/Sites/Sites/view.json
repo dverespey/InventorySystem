@@ -159,7 +159,7 @@
            "name": "SearchField"
           },
           "position": {
-           "basis": "240px"
+           "basis": "auto"
           },
           "propConfig": {
            "props.text": {
@@ -170,6 +170,12 @@
              },
              "type": "property"
             }
+           }
+          },
+          "props": {
+           "style": {
+            "height": "32px",
+            "width": "240px"
            }
           },
           "type": "ia.input.text-field"
@@ -209,32 +215,6 @@
           "fontWeight": "bold"
          },
          "text": "Search"
-        },
-        "type": "ia.input.button"
-       },
-       {
-        "events": {
-         "component": {
-          "onActionPerformed": {
-           "config": {
-            "script": "\t# New record: same-view prop write (NO navigation, NO DB write). recordId=0 -> insert mode.\n\t# No write gate: this is a form reset (identical to Clear), not a DB write \u2014 the WRITES\n\t# (Save/Delete) carry the server-side auth.requireWrite gate. (P16 Clear/New consistency NIT.)\n\tlog = system.util.getLogger(\"SPIKE\")\n\tc = self.view.custom\n\tc.form_name = \"\"\n\tc.form_abbr = \"\"\n\tc.form_street = \"\"\n\tc.form_city = \"\"\n\tc.form_state = \"\"\n\tc.form_country = \"\"\n\tc.form_zip = \"\"\n\tc.form_duns = \"\"\n\tc.form_supcode = \"\"\n\tc.form_dock = \"\"\n\tc.form_edimode = \"\"\n\tc.form_sepseg = \"\"\n\tc.form_sepelem = \"\"\n\tc.form_sepsub = \"\"\n\tc.form_tmmname = \"\"\n\tc.form_tmmabbr = \"\"\n\tc.form_tmmduns = \"\"\n\tc.form_maxseq = 0\n\tc.form_acceptasn = 0\n\tc.form_delivery = \"\"\n\tc.form_filldays = 0\n\tc.form_fcusage = 0\n\tc.form_usefpd = 0\n\tc.form_fcmode = 'AUTO'\n\tc.form_enpurge = 0\n\tc.form_prpurge = 1\n\tc.form_retention = 0\n\tc.form_ediout = \"\"\n\tc.form_ediin = \"\"\n\tc.form_forecastd = \"\"\n\tc.form_logisticsd = \"\"\n\tc.form_reportsd = \"\"\n\tc.form_shippingd = \"\"\n\tc.form_templated = \"\"\n\tc.recordId = 0\n\tc.statusMsg = \"New site \u2014 enter details and Save.\"\n\tlog.info(\"SPIKE Sites New -> recordId=0 (insert mode)\")\n"
-           },
-           "scope": "G",
-           "type": "script"
-          }
-         }
-        },
-        "meta": {
-         "domId": "sites-new-btn",
-         "name": "NewButton"
-        },
-        "props": {
-         "style": {
-          "backgroundColor": "#388E3C",
-          "color": "#FFFFFF",
-          "fontWeight": "bold"
-         },
-         "text": "New Site"
         },
         "type": "ia.input.button"
        }
@@ -2579,6 +2559,16 @@
          "domId": "sites-save-btn",
          "name": "SaveButton"
         },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0 || {view.custom.form_name} != ''"
+           },
+           "type": "expr"
+          }
+         }
+        },
         "props": {
          "style": {
           "backgroundColor": "#1976D2",
@@ -2604,6 +2594,16 @@
         "meta": {
          "domId": "sites-delete-btn",
          "name": "DeleteButton"
+        },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0"
+           },
+           "type": "expr"
+          }
+         }
         },
         "props": {
          "style": {

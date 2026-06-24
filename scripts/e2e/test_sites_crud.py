@@ -57,8 +57,8 @@ import lib
 from reset_trial import reset_trial
 
 # RULE #1: admin URL = the spike-only qaAdmin escape hatch; non-admin URL = no flag.
-ADMIN_URL = lib.BASE + "/data/perspective/client/spike/sites?qaAdmin=1"
-NONADMIN_URL = lib.BASE + "/data/perspective/client/spike/sites"
+ADMIN_URL = lib.view_url("sites", "qaAdmin=1")
+NONADMIN_URL = lib.view_url("sites")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -303,10 +303,10 @@ def check_validation(page, rep):
     No DB write occurs (all fail validation)."""
     page.goto(ADMIN_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "sites-new-btn", text="New Site", role="button")
+    nb = q(page, "sites-clear-btn", text="Clear", role="button")
     if not nb:
         for n in ("blank name rejected", "blank abbr rejected", "fill_days>50 rejected", "retention<12 rejected"):
-            rep.skip("Validation: " + n, "New Site button not found")
+            rep.skip("Validation: " + n, "Clear button not found")
         return
     pre = db_sites_count()
 
@@ -439,9 +439,9 @@ def check_round_trip(page, rep):
 
     page.goto(ADMIN_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "sites-new-btn", text="New Site", role="button")
+    nb = q(page, "sites-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Round-trip insert/update/delete ZZTST", "New Site button not found")
+        rep.skip("Round-trip insert/update/delete ZZTST", "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1200)
@@ -526,9 +526,9 @@ def check_blank_retention_null(page, rep):
 
     page.goto(ADMIN_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "sites-new-btn", text="New Site", role="button")
+    nb = q(page, "sites-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("S1 blank-retention -> NULL round-trip", "New Site button not found")
+        rep.skip("S1 blank-retention -> NULL round-trip", "Clear button not found")
         return
 
     # ---- (a) New site, retention left BLANK/0 -> Save SUCCEEDS, persists NULL ----
@@ -601,7 +601,7 @@ def check_blank_retention_null(page, rep):
 
     # ---- (c) TYPED retention 6 still REJECTED (real guard intact) ----
     try:
-        nb2 = q(page, "sites-new-btn", text="New Site", role="button")
+        nb2 = q(page, "sites-clear-btn", text="Clear", role="button")
         if nb2:
             nb2.click()
             page.wait_for_timeout(1200)
@@ -646,10 +646,11 @@ def teardown(rep, baseline):
 
 def check_server_side_write_gate(page, rep):
     """LIVE on-the-box proof the H3 hole is closed: open /sites?qaAdmin=1 (the UI-visibility hatch shows
-    the form) and click Save on a NEW form. In this headless spike the session is anonymous (NO IdP, no
-    roles), so auth.requireWrite(self.session) MUST DENY the write server-side — #sites-status shows
-    "DENIED (server-side)" and NO row is written. This is the end-to-end gateway proof; the headless
-    forged-prop-rejected + revert-proof of the gate logic is in test_m4_auth.py."""
+    the form) and click Save on a freshly-CLEARED form. The New button was REMOVED in the master-form
+    refinement sweep — Clear (always enabled) now starts a fresh insert. In this headless spike the session
+    is anonymous (NO IdP, no roles), so auth.requireWrite(self.session) MUST DENY the write server-side —
+    #sites-status shows "DENIED (server-side)" and NO row is written. This is the end-to-end gateway proof;
+    the headless forged-prop-rejected + revert-proof of the gate logic is in test_m4_auth.py."""
     GATE_ABBR = "ZZGAT"
     if db_int("SELECT COUNT(*) FROM INV_SITES WHERE VC_SITE_ABBR='%s'" % GATE_ABBR) != 0:
         sqlq("DELETE FROM INV_SITES WHERE VC_SITE_ABBR='%s'" % GATE_ABBR)
@@ -657,11 +658,18 @@ def check_server_side_write_gate(page, rep):
     try:
         page.goto(ADMIN_URL, wait_until="networkidle", timeout=30000)
         page.wait_for_selector(GRID, timeout=20000)
-        nb = q(page, "sites-new-btn", text="New Site", role="button")
-        if not nb:
-            rep.skip("SERVER-SIDE WRITE GATE (live)", "New Site button not found")
+        cb = q(page, "sites-clear-btn", text="Clear", role="button")
+        if not cb:
+            rep.skip("SERVER-SIDE WRITE GATE (live)", "Clear button not found")
             return
-        nb.click(); page.wait_for_timeout(1200)
+        cb.click(); page.wait_for_timeout(1200)
+        # refinement assertion: Save DISABLED on the blank/cleared Sites form (no record, no data entered).
+        sd = page.query_selector("#sites-save-btn")
+        save_disabled = sd is not None and (sd.get_attribute("disabled") is not None
+                                            or "disabled" in (sd.get_attribute("class") or "").lower())
+        rep.check("Sites (LIVE refinement): Save is DISABLED on a blank/cleared form", save_disabled,
+                  "Save disabled-attr/class present=%s" % save_disabled)
+        # Entering the PRIMARY (name) into the cleared form enables Save (has-entered-data signal).
         fill_field(page, "sites-name", "QA Gate Probe")
         fill_field(page, "sites-abbr", GATE_ABBR)
         off = lib.log_marker()

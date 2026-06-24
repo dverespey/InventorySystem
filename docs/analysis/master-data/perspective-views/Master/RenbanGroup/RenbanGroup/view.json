@@ -85,7 +85,7 @@
            "name": "SearchField"
           },
           "position": {
-           "basis": "220px"
+           "basis": "auto"
           },
           "propConfig": {
            "props.text": {
@@ -96,6 +96,12 @@
              },
              "type": "property"
             }
+           }
+          },
+          "props": {
+           "style": {
+            "height": "32px",
+            "width": "220px"
            }
           },
           "type": "ia.input.text-field"
@@ -135,32 +141,6 @@
           "fontWeight": "bold"
          },
          "text": "Search"
-        },
-        "type": "ia.input.button"
-       },
-       {
-        "events": {
-         "component": {
-          "onActionPerformed": {
-           "config": {
-            "script": "\t# New record: same-view prop write (NO navigation). Setting recordId=0 fires the\n\t# custom.recordId onChange -> insert-mode. Clear the form so a stale edit doesn't linger.\n\tc = self.view.custom\n\tc.form_code = \"\"; c.form_count = \"\"; c.form_shipdays = 0\n\tc.form_mon = 0; c.form_tue = 0; c.form_wed = 0; c.form_thu = 0; c.form_fri = 0; c.form_sat = 0\n\tc.recordId = 0\n\tc.statusMsg = \"New renban group \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE RenbanGroup New -> recordId=0 (insert mode)\")\n"
-           },
-           "scope": "G",
-           "type": "script"
-          }
-         }
-        },
-        "meta": {
-         "domId": "renbangroup-new-btn",
-         "name": "NewButton"
-        },
-        "props": {
-         "style": {
-          "backgroundColor": "#388E3C",
-          "color": "#FFFFFF",
-          "fontWeight": "bold"
-         },
-         "text": "New Renban Group"
         },
         "type": "ia.input.button"
        }
@@ -805,6 +785,16 @@
          "domId": "renbangroup-save-btn",
          "name": "SaveButton"
         },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0 || {view.custom.form_code} != ''"
+           },
+           "type": "expr"
+          }
+         }
+        },
         "props": {
          "style": {
           "backgroundColor": "#1976D2",
@@ -830,6 +820,16 @@
         "meta": {
          "domId": "renbangroup-delete-btn",
          "name": "DeleteButton"
+        },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0"
+           },
+           "type": "expr"
+          }
+         }
         },
         "props": {
          "style": {

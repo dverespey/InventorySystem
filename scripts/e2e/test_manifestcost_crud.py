@@ -46,7 +46,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/manifestcost"
+LIST_URL = lib.view_url("manifestcost")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -272,7 +272,7 @@ def open_detail_via_row(page, rep, code):
 
 
 def _new_form(page):
-    nb = q(page, "mc-new-btn", text="New Manifest Cost", role="button")
+    nb = q(page, "mc-clear-btn", text="Clear", role="button")
     if not nb:
         return False
     nb.click()
@@ -464,9 +464,13 @@ def main():
             rep.skip("Row select -> Detail", "List did not render")
 
         print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
+        # ManifestCost's PRIMARY (form_assyCode) is a dropdown, not a text field — no reliable headless
+        # fill, so primary_fill is omitted: the helper still asserts Save-DISABLED on the blank form, then
+        # SKIPS the anon-DENIED click-through (the server gate for ManifestCost is proven headless end-to-end
+        # by test_master_write_gates.py).
         lib.check_master_write_gate_live(
             pg, rep, "ManifestCost write gate", LIST_URL,
-            new_btn="mc-new-btn", save_btn="mc-save-btn", status_id="mc-status",
+            clear_btn="mc-clear-btn", save_btn="mc-save-btn", status_id="mc-status",
             grid_sel=GRID, fill_pairs=[], count_fn=db_count,
             deny_marker="ManifestCost Save DENIED")
 

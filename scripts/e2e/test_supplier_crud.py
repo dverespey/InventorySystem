@@ -57,7 +57,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/supplier"
+LIST_URL = lib.view_url("supplier")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -250,12 +250,12 @@ def check_validation(page, rep):
     existing code (07100) and Save -> dup blocked. Asserted via status text +
     SPIKE 'save REJECTED' markers. No DB write occurs (both fail validation)."""
     # navigate to a fresh insert-mode Detail (New) so the form is editable + empty.
-    page.goto(lib.BASE + "/data/perspective/client/spike/supplier", wait_until="networkidle", timeout=30000)
+    page.goto(lib.view_url("supplier"), wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "supplier-new-btn", text="New Supplier", role="button")
+    nb = q(page, "supplier-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Validation: short code rejected", "New Supplier button not found")
-        rep.skip("Validation: dup code blocked", "New Supplier button not found")
+        rep.skip("Validation: short code rejected", "Clear button not found")
+        rep.skip("Validation: dup code blocked", "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -384,9 +384,9 @@ def check_round_trip(page, rep):
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "supplier-new-btn", text="New Supplier", role="button")
+    nb = q(page, "supplier-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Round-trip insert/delete ZZTST", "New Supplier button not found")
+        rep.skip("Round-trip insert/delete ZZTST", "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -490,9 +490,9 @@ def main():
         print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
         lib.check_master_write_gate_live(
             pg, rep, "Supplier write gate", LIST_URL,
-            new_btn="supplier-new-btn", save_btn="supplier-save-btn", status_id="supplier-status",
+            clear_btn="supplier-clear-btn", save_btn="supplier-save-btn", status_id="supplier-status",
             grid_sel=GRID, fill_pairs=[], count_fn=db_supplier_count,
-            deny_marker="Supplier Save DENIED")
+            deny_marker="Supplier Save DENIED", primary_fill=("supplier-code", "ZZSUP"))
 
         # Checks 4-6 drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-side
         # write gate active, the anon spike session is correctly DENIED before those paths run, so they

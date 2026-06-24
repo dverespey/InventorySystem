@@ -47,7 +47,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/renbangroup"
+LIST_URL = lib.view_url("renbangroup")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -240,7 +240,7 @@ def check_validation(page, rep):
     'save REJECTED' markers. No DB write occurs (all fail validation/dup-check)."""
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "renbangroup-new-btn", text="New Renban Group", role="button")
+    nb = q(page, "renbangroup-clear-btn", text="Clear", role="button")
     if not nb:
         rep.skip("Validation: blank code rejected", "New button not found")
         rep.skip("Validation: >5-char code rejected", "New button not found")
@@ -406,7 +406,7 @@ def check_round_trip(page, rep):
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "renbangroup-new-btn", text="New Renban Group", role="button")
+    nb = q(page, "renbangroup-clear-btn", text="Clear", role="button")
     if not nb:
         rep.skip("Round-trip insert/delete ZZQA", "New button not found")
         return
@@ -529,9 +529,9 @@ def main():
         print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
         lib.check_master_write_gate_live(
             pg, rep, "RenbanGroup write gate", LIST_URL,
-            new_btn="renbangroup-new-btn", save_btn="renbangroup-save-btn",
+            clear_btn="renbangroup-clear-btn", save_btn="renbangroup-save-btn",
             status_id="renbangroup-status", grid_sel=GRID, fill_pairs=[], count_fn=db_rg_count,
-            deny_marker="RenbanGroup Save DENIED")
+            deny_marker="RenbanGroup Save DENIED", primary_fill=("renbangroup-code", "ZZR"))
 
         # Checks 4-6 drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-side
         # write gate active, the anon spike session is correctly DENIED before those paths run, so they
