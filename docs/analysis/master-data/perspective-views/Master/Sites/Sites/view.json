@@ -39,7 +39,6 @@
   "form_tmmname": "",
   "form_usefpd": 0,
   "form_zip": "",
-  "mayEdit": false,
   "recordId": 0,
   "runNonce": 0,
   "searchTerm": "",
@@ -58,15 +57,6 @@
       "type": "script"
      }
     ],
-    "type": "expr"
-   }
-  },
-  "custom.mayEdit": {
-   "access": "PROTECTED",
-   "binding": {
-    "config": {
-     "expression": "isAuthorized(false, \"Authenticated/Roles/ProductionControl\") || {page.props.urlParams.qaAdmin} = \"1\""
-    },
     "type": "expr"
    }
   },
@@ -98,41 +88,6 @@
         "fontWeight": "bold"
        },
        "text": "Sites Master \u2014 List + Detail  \u00b7  INV_SITES (Inventory_Spike)  \u00b7  ProductionControl (site config)  \u00b7  single-site deployment"
-      },
-      "type": "ia.display.label"
-     },
-     {
-      "meta": {
-       "domId": "sites-admin-banner",
-       "name": "AdminBanner"
-      },
-      "propConfig": {
-       "meta.visible": {
-        "binding": {
-         "config": {
-          "expression": "!{view.custom.mayEdit}"
-         },
-         "type": "expr"
-        }
-       },
-       "props.text": {
-        "binding": {
-         "config": {
-          "expression": "if({view.custom.mayEdit}, '', 'RESTRICTED \u2014 editing the site configuration requires the ProductionControl role.')"
-         },
-         "type": "expr"
-        }
-       }
-      },
-      "props": {
-       "style": {
-        "backgroundColor": "#FFF3CD",
-        "border": "1px solid #FFC107",
-        "color": "#7A5C00",
-        "fontSize": "12px",
-        "fontWeight": "bold",
-        "padding": "6px 8px"
-       }
       },
       "type": "ia.display.label"
      },
@@ -2517,16 +2472,6 @@
        "domId": "sites-form",
        "name": "Form"
       },
-      "propConfig": {
-       "meta.visible": {
-        "binding": {
-         "config": {
-          "expression": "{view.custom.mayEdit}"
-         },
-         "type": "expr"
-        }
-       }
-      },
       "props": {
        "direction": "column",
        "style": {
@@ -2646,16 +2591,6 @@
       },
       "position": {
        "shrink": 0
-      },
-      "propConfig": {
-       "meta.visible": {
-        "binding": {
-         "config": {
-          "expression": "{view.custom.mayEdit}"
-         },
-         "type": "expr"
-        }
-       }
       },
       "props": {
        "alignItems": "center",

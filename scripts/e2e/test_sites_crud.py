@@ -17,20 +17,23 @@ SINGLE COMBINED VIEW: /sites opens ONE view Master/Sites/Sites containing the gr
 (custom.recordId), NOT navigation.
 
 SITES-MASTER-SPECIFIC (differs from the other masters):
-  RULE #1 ROLE-GATED — SERVER-SIDE WRITE GATE (M4 auth fix, 2026-06-22). The WRITE
-    (Save/Delete/New) is now enforced SERVER-SIDE: each write button calls
-    auth.requireWrite(self.session), which resolves the caller's roles FROM THE SESSION
-    (gateway-side) and authorizes ProductionControl|Admin, raising AuthError BEFORE any
-    system.db write. The `qaAdmin=1` URL param is a SPIKE-ONLY UI-VISIBILITY hatch only
-    (shows the form); it does NOT grant a write role. So in THIS headless spike (NO IdP,
-    anonymous sessions with no roles), a write through the live UI is correctly DENIED
-    server-side — that is the security fix working, not a bug.
-    This harness therefore asserts:
-      (a) UI-VISIBILITY: /sites?qaAdmin=1 shows the form; /sites (no flag) hides it +
-          shows the banner (the UI defense-in-depth, mayEdit PROTECTED prop).
-      (b) SERVER-SIDE WRITE GATE (LIVE, end-to-end): a Save by the anon qaAdmin session
-          is DENIED server-side (#sites-status shows "DENIED (server-side)"); NO row is
-          written. This is the on-the-box proof the H3 hole is closed.
+  RULE #1 ROLE-GATED — SERVER-SIDE WRITE GATE ONLY (M4 auth fix 2026-06-22; UI gate
+    REMOVED 2026-06-24). The DETAIL ALWAYS SHOWS, consistent with the other 7 masters
+    (David: "show it like the other masters"). The client-side visibility gate (the
+    mayEdit PROTECTED prop, the qaAdmin URL hatch, the form/ActionBar meta.visible
+    bindings, and the RESTRICTED AdminBanner) was removed — it was UI-only and never the
+    boundary. The ONLY authorization boundary is the SERVER-SIDE write gate: each write
+    button calls auth.requireWrite(self.session), which resolves the caller's roles FROM
+    THE SESSION (gateway-side) and authorizes ProductionControl|Admin, raising AuthError
+    BEFORE any system.db write. So in THIS headless spike (NO IdP, anonymous sessions with
+    no roles), a write through the live UI is correctly DENIED server-side — the form is
+    now visible to everyone but the WRITE still fails closed. (`qaAdmin=1` is now a dead
+    URL param — harmless/ignored.) This harness therefore asserts:
+      (a) DETAIL ALWAYS VISIBLE: /sites (no auth, no flag) SHOWS the form + Save/Delete/
+          Clear; the RESTRICTED banner is GONE (check 0).
+      (b) SERVER-SIDE WRITE GATE (LIVE, end-to-end): a Save by the anon session is DENIED
+          server-side (#sites-status shows "DENIED (server-side)"); NO row is written.
+          This is the on-the-box proof the H3 hole stays closed even with the form visible.
     ⚠️ The full CRUD-WRITE ROUND-TRIP (insert/update/delete a row through the UI) needs a
     LOGGED-IN write-role session, which requires the Designer-config IdP + roles this
     headless spike LACKS — so those round-trip cases are SKIPPED here with that reason.
@@ -56,7 +59,9 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-# RULE #1: admin URL = the spike-only qaAdmin escape hatch; non-admin URL = no flag.
+# The detail now ALWAYS shows (UI gate removed) — the form is identical with or without the (now-dead)
+# qaAdmin flag. ADMIN_URL keeps the flag only so the existing live-write probe URL is unchanged; the flag
+# is a no-op. NONADMIN_URL (plain /sites, no auth) is what check 0 uses to prove the detail always shows.
 ADMIN_URL = lib.view_url("sites", "qaAdmin=1")
 NONADMIN_URL = lib.view_url("sites")
 DB = "Inventory_Spike"
@@ -159,30 +164,34 @@ def grid_text(page):
     return g.inner_text() if g else ""
 
 
-# ---- check 0: NON-ADMIN gate (RULE #1) -----------------------------------
-def check_nonadmin_gate(page, rep):
-    """Open /sites WITHOUT the qaAdmin flag -> form must be HIDDEN and the
-    'ADMIN ONLY' banner must show. Proves the in-view Admin guard fails closed."""
+# ---- check 0: DETAIL ALWAYS VISIBLE (consistent with the other 7 masters) -
+def check_detail_always_visible(page, rep):
+    """Open /sites WITHOUT any auth (and WITHOUT the qaAdmin flag) -> the detail Form + Save/Delete/Clear
+    must ALL be VISIBLE, like the other 7 masters (David 2026-06-22: show it like the other masters). The
+    old client-side visibility gate was removed: the RESTRICTED AdminBanner must be GONE. The WRITE is
+    still gated SERVER-SIDE (proven live in check_server_side_write_gate + headless in test_m4_auth)."""
     page.goto(NONADMIN_URL, wait_until="networkidle", timeout=45000)
     if "Trial Expired" in page.inner_text("body"):
-        rep.skip("Non-admin gate hides the form", "trial expired")
+        rep.skip("Detail always visible (no auth)", "trial expired")
         return
     page.wait_for_timeout(2500)
     page.screenshot(path=lib.ARTIFACTS + "/sites_nonadmin.png", full_page=True)
     form = page.query_selector("#sites-form")
-    # form element is either absent or not visible when isAdmin=false
     form_visible = bool(form) and form.is_visible()
-    rep.check("RULE #1: NON-admin (/sites no flag) HIDES the detail form", not form_visible,
-              "form present=%s visible=%s" % (bool(form), form_visible))
+    rep.check("DETAIL ALWAYS VISIBLE: /sites (no auth, no flag) SHOWS the detail form (like the other "
+              "masters)", form_visible, "form present=%s visible=%s" % (bool(form), form_visible))
+    # The RESTRICTED AdminBanner must be GONE (removed with the UI gate).
     banner = page.query_selector("#sites-admin-banner")
-    banner_visible = bool(banner) and banner.is_visible()
-    rep.check("RULE #1: NON-admin shows the 'ADMIN ONLY' banner", banner_visible,
-              "banner present=%s visible=%s" % (bool(banner), banner_visible))
-    # Save button must also be hidden (action bar gated)
-    save = page.query_selector("#sites-save-btn")
-    save_visible = bool(save) and save.is_visible()
-    rep.check("RULE #1: NON-admin hides Save (no write path)", not save_visible,
-              "save present=%s visible=%s" % (bool(save), save_visible))
+    banner_present = bool(banner) and banner.is_visible()
+    rep.check("RESTRICTED banner is GONE (UI visibility gate removed)", not banner_present,
+              "banner present=%s" % bool(banner))
+    # Save / Delete / Clear are ALL visible (the action bar is no longer gated).
+    for dom_id, lbl in (("sites-save-btn", "Save"), ("sites-delete-btn", "Delete"),
+                        ("sites-clear-btn", "Clear")):
+        el = page.query_selector("#" + dom_id)
+        vis = bool(el) and el.is_visible()
+        rep.check("DETAIL ALWAYS VISIBLE: %s button is shown (action bar always visible)" % lbl, vis,
+                  "%s present=%s visible=%s" % (lbl, bool(el), vis))
 
 
 # ---- check 1: List renders (admin) + NOT-site-scoped parity --------------
@@ -645,8 +654,8 @@ def teardown(rep, baseline):
 
 
 def check_server_side_write_gate(page, rep):
-    """LIVE on-the-box proof the H3 hole is closed: open /sites?qaAdmin=1 (the UI-visibility hatch shows
-    the form) and click Save on a freshly-CLEARED form. The New button was REMOVED in the master-form
+    """LIVE on-the-box proof the H3 hole stays closed even with the form ALWAYS visible: open /sites (the
+    detail form always shows now) and click Save on a freshly-CLEARED form. The New button was REMOVED in the master-form
     refinement sweep — Clear (always enabled) now starts a fresh insert. In this headless spike the session
     is anonymous (NO IdP, no roles), so auth.requireWrite(self.session) MUST DENY the write server-side —
     #sites-status shows "DENIED (server-side)" and NO row is written. This is the end-to-end gateway proof;
@@ -721,8 +730,8 @@ def main():
         else:
             rep.check("trial active", ok, msg)
 
-        print("== 0. NON-admin gate (RULE #1) ==")
-        check_nonadmin_gate(pg, rep)
+        print("== 0. Detail ALWAYS visible (consistent with the other 7 masters) ==")
+        check_detail_always_visible(pg, rep)
 
         print("== 1. List renders + NOT-site-scoped parity (admin) ==")
         list_ok = check_list(pg, rep)
