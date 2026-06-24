@@ -2,6 +2,16 @@
 
 Guidance for AI assistants (and new developers) working in this repository.
 
+> ## ⮕ The Ignition rebuild now lives in [`dverespey/inventory`](https://github.com/dverespey/inventory)
+> As of 2026-06-24 the **Ignition (Perspective + gateway Jython) rebuild** — the
+> gateway project-as-code, the e2e/parity harness, the view generators, and the
+> canonical DDL (`db/CreateInventory.sql`) — was **split out into its own private repo
+> `dverespey/inventory`**. Do all Ignition build/test/spike work there (`cd ~/Documents/GitHub/inventory`).
+> **THIS repo is now the Delphi legacy source + the reverse-engineering analysis** — the
+> source-of-truth bridge (`docs/analysis/`, the D-log, the `file:line` cites) that the
+> `inventory` repo cross-links back to. Keep that bridge accurate; don't re-add Ignition
+> code here.
+
 ## What this is
 
 A **Delphi 7 (Object Pascal / VCL)** Windows desktop application for automotive
