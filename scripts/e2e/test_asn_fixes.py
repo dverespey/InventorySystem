@@ -23,7 +23,7 @@ Run:  export SA_PASS='Spike_Dev_2026!'  &&  python3 scripts/e2e/test_asn_fixes.p
 import os, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, DB_CONN          # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -114,13 +114,13 @@ def main():
         print("\n--- FIX 1a: second create_asn for same (line,prodDate) -> idempotent skip (guard) ---")
         r1 = asn.create_asn(line=LINE, prodDate=PDATE, seqStart=seqStart, seqLast=seqLast,
                             beginDate=dtStart, endDate=dtEnd, shipQty=legQty,
-                            database="Inventory_Spike", alcDatabase="VehicleOrder")
+                            database=DB_CONN, alcDatabase="VehicleOrder")
         created.append(r1["asnId"])
         rep.check("first create_asn made a normal ASN", r1["asnId"] is not None and not r1["skipped"],
                   "asnId=%s" % r1["asnId"])
         r2 = asn.create_asn(line=LINE, prodDate=PDATE, seqStart=seqStart, seqLast=seqLast,
                             beginDate=dtStart, endDate=dtEnd, shipQty=legQty,
-                            database="Inventory_Spike", alcDatabase="VehicleOrder")
+                            database=DB_CONN, alcDatabase="VehicleOrder")
         rep.check("second create_asn -> skipped (read-back guard saw the existing ASN)",
                   r2["skipped"] and r2["asnId"] is None, str(r2))
         rep.check("second create_asn wrote NOTHING (still exactly 1 normal ASN)", normal_count() == 1,
@@ -152,7 +152,7 @@ def main():
         try:
             r3 = asn.create_asn(line=LINE, prodDate=PDATE, seqStart=seqStart, seqLast=seqLast,
                                 beginDate=dtStart, endDate=dtEnd, shipQty=legQty,
-                                database="Inventory_Spike", alcDatabase="VehicleOrder")
+                                database=DB_CONN, alcDatabase="VehicleOrder")
             raced_ok = r3["skipped"] and r3["asnId"] is None
             rep.check("create_asn with guard bypassed (race) -> caught unique violation, returned "
                       "skipped (NOT an error)", raced_ok, str(r3))

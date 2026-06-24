@@ -39,7 +39,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")))
 
-from lib import Report                       # noqa: E402
+from lib import Report, PERSPECTIVE_DIR       # noqa: E402
 import jython_shim                           # noqa: E402
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -513,8 +513,7 @@ def test_user_admin_read_gate(rep):
 
 def _deployed_sites_script(dom_id):
     """Pull a button's onActionPerformed script from the DEPLOYED gateway Sites view.json."""
-    gw = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-          "/views/Master/Sites/Sites/view.json")
+    gw = os.path.join(PERSPECTIVE_DIR, "views", "Master", "Sites", "Sites", "view.json")  # centralized §4.C
     if not os.path.exists(gw):
         return None
     view = json.load(open(gw))

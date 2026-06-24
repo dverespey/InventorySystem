@@ -269,7 +269,7 @@ def _detect_type(lines):
 # guard needed. The SCHEDULED POLL host (Q11) is a gateway TIMER/event script on 8.1 (NOT 8.3 Event
 # Streams) — IG83-TODO below.
 
-DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 
 
 def _resolve_site_by_duns(db, duns, tx):

@@ -20,12 +20,14 @@ signal in the schema, so those mockup tiles were dropped rather than faked.
 #              data via system.db.runNamedQuery (Home/kpiSummary + kpiTopShort; created in Designer).
 # IG83-TODO: move the KPI load to a Named Query; revisit component prop schemas on 8.3.
 """
-import json, os
+import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import GATEWAY_PROJECT_DIR, PERSPECTIVE_DIR, DB_CONN   # noqa: E402 — centralized (repo-split-plan §4.C/§4.D)
 
-PROJ_DIR  = os.environ.get("PROJ_DIR", "/usr/local/ignition/data/projects/InventorySystem")
+PROJ_DIR  = GATEWAY_PROJECT_DIR
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PERSP     = os.path.join(PROJ_DIR, "com.inductiveautomation.perspective")
-DB        = os.environ.get("DBCONN", "Inventory_Spike")
+PERSP     = PERSPECTIVE_DIR
+DB        = DB_CONN
 
 # ---- token shorthands ------------------------------------------------------------------
 BG, SURF, SURF2 = "var(--tai-bg)", "var(--tai-surface)", "var(--tai-surface-2)"
@@ -255,7 +257,7 @@ def build_view():
                 position={"shrink": 0, "basis": "auto"})
     context = flex("context", [
         lbl("h1", "Home", {"fontSize": "21px", "fontWeight": "700", "color": TXT}),
-        lbl("meta", "Thursday, June 18 · day shift · live counts from Inventory_Spike",
+        lbl("meta", "Thursday, June 18 · day shift · live counts from %s" % DB,
             {"fontSize": "13px", "color": MUT}),
     ], direction="row", gap=12, align="baseline", style={"padding": "6px 2px 18px"})
     footer = flex("footer", [

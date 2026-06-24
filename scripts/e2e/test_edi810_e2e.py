@@ -47,7 +47,7 @@ import os, subprocess, sys, tempfile, shutil
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report, preclean_sentinels   # noqa: E402
+from lib import Report, preclean_sentinels, DB_CONN   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -248,7 +248,7 @@ def main():
             "ORDER BY d.VC_MANIFEST_NUMBER")
         legacy_wire = sorted((r[0], r[1], str(Decimal(r[2])), int(r[3]), r[4]) for r in legacy_feed)
 
-        feedDs = edi810.system.db.runPrepQuery(edi810._CREATE_FEED_SQL, [], "Inventory_Spike")
+        feedDs = edi810.system.db.runPrepQuery(edi810._CREATE_FEED_SQL, [], DB_CONN)
         rebuild_wire = sorted((r["Manifest"], r["PartNumber"], str(Decimal(str(r["UnitPrice"]))),
                                int(r["ShipQty"]), r["PickUpDate"]) for r in feedDs)
         rep.check("rebuild CREATE feed row COUNT == legacy SELECT count (3)",
@@ -265,7 +265,7 @@ def main():
 
         # --- (2) CREATE mode (single pickup date -> exactly ONE invoice) --------------------------
         print("\n--- (2) CREATE: EIN alloc + INSERT_INVInfo + detail link + 810 file ---")
-        batch = edi810.create_invoice(SITE_ID, database="Inventory_Spike", outDir=tmpdir,
+        batch = edi810.create_invoice(SITE_ID, database=DB_CONN, outDir=tmpdir,
                                       fileTime={"yyyymmdd": "20260620", "hhmm": "1430"})
         # the synthetic ASN is all on ONE pickup date (PDATE) -> one pickup-date group -> ONE invoice.
         rep.check("single-date create -> exactly ONE invoice (one pickup-date group)",
@@ -354,7 +354,7 @@ def main():
         preSeqRec = int(scalar(INV, "SELECT IN_EIN_SEQ FROM INV_SITES WHERE IN_SITE_ID=%d" % SITE_ID))
         recdir = tempfile.mkdtemp(prefix="edi810_recreate_")
         try:
-            rec = edi810.recreate_invoice(ein, SITE_ID, database="Inventory_Spike", outDir=recdir,
+            rec = edi810.recreate_invoice(ein, SITE_ID, database=DB_CONN, outDir=recdir,
                                           fileTime={"yyyymmdd": "20260620", "hhmm": "1430"})
             rep.check("recreate REUSED the EIN (== the created invoice's EIN, NOT a new alloc)",
                       int(rec["ein"]) == ein, "rec=%s created=%s" % (rec["ein"], ein))
@@ -403,7 +403,7 @@ def main():
             edi810.system.file.writeFile = spying_write
             raised = False
             try:
-                edi810.create_invoice(SITE_ID, database="Inventory_Spike", outDir=atomdir,
+                edi810.create_invoice(SITE_ID, database=DB_CONN, outDir=atomdir,
                                       fileTime={"yyyymmdd": "20260620", "hhmm": "1430"})
             except Exception as e:
                 raised = True
@@ -441,7 +441,7 @@ def main():
         preSeqU = int(scalar(INV, "SELECT IN_EIN_SEQ FROM INV_SITES WHERE IN_SITE_ID=%d" % SITE_ID))
         udir = tempfile.mkdtemp(prefix="edi810_unsend_")
         try:
-            cre2batch = edi810.create_invoice(SITE_ID, database="Inventory_Spike", outDir=udir,
+            cre2batch = edi810.create_invoice(SITE_ID, database=DB_CONN, outDir=udir,
                                               fileTime={"yyyymmdd": "20260620", "hhmm": "1430"})
             cre2 = cre2batch["invoices"][0]      # single pickup date -> one invoice
             uInvId = int(cre2["invId"])
@@ -451,7 +451,7 @@ def main():
                       and int(scalar(INV, "SELECT COUNT(*) FROM INV_ASN_DETAIL_MST WHERE IN_INV_ID=%d"
                                           % uInvId)) == 3, "set up")
             # UNSEND it.
-            un = edi810.unsend_invoice(uInvId, database="Inventory_Spike")
+            un = edi810.unsend_invoice(uInvId, database=DB_CONN)
             rep.check("unsend returned the EIN (header survives)", int(un["ein"]) == uEin,
                       "ein=%s" % un["ein"])
             # NB: the shim's runPrepUpdate returns a fixed 1 (not the affected-row count), so un['repooled']
@@ -505,7 +505,7 @@ def main():
 
         mddir = tempfile.mkdtemp(prefix="edi810_multidate_")
         try:
-            mdBatch = edi810.create_invoice(SITE_ID, database="Inventory_Spike", outDir=mddir,
+            mdBatch = edi810.create_invoice(SITE_ID, database=DB_CONN, outDir=mddir,
                                             fileTime={"yyyymmdd": "20260620", "hhmm": "1430"})
             # (a) TWO invoices, one per pickup date.
             rep.check("CREATE over 2 pickup dates -> exactly 2 invoices (per-pickup-date file split)",

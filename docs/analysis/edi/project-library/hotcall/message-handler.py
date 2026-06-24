@@ -40,7 +40,9 @@ def handleMessage(payload):
 
     # HotcallError (validation) and any DB error propagate back to the view as the sendRequest exception,
     # which the button's onActionPerformed catches and shows in view.custom.statusMsg.
+    # database = the centralized DB-conn name (hotcall.DATABASE <- db_shared.CONNECTION); the single
+    # prod-rename point lives in db_shared, not here.
     result = hotcall.create_hotcall_asn(line=line, prodDate=prodDate, manifest=manifest,
-                                        items=items, site=site, database="Inventory_Spike")
+                                        items=items, site=site, database=hotcall.DATABASE)
     log.info("create_hotcall_asn message -> ASN %s, qty %s" % (result["asnId"], result["qty"]))
     return result

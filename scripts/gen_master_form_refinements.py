@@ -73,9 +73,10 @@ PRIMARY_FIELD = {
 }
 
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import PERSPECTIVE_DIR   # noqa: E402 — centralized gateway path (repo-split-plan §4.C)
 REPO_BASE = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views", "Master")
-GW_BASE = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-           "/views/Master")
+GW_BASE = os.path.join(PERSPECTIVE_DIR, "views", "Master")
 
 SEARCH_FIELD = "SearchField"
 NEW_BUTTON = "NewButton"

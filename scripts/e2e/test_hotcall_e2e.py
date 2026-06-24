@@ -48,7 +48,7 @@ Run:  export SA_PASS='Spike_Dev_2026!'  &&  python3 scripts/e2e/test_hotcall_e2e
 import os, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, DB_CONN          # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -139,7 +139,7 @@ def main():
         items = [(PART_A, 1), (PART_B, 2), (PART_A, 3)]
         result = hotcall.create_hotcall_asn(
             line=TEST_LINE, prodDate=PDATE, manifest=MANIFEST, items=items,
-            site=SITE_ID, database="Inventory_Spike")
+            site=SITE_ID, database=DB_CONN)
         created = result["asnId"]
         rep.check("create_hotcall_asn returned a new ASN id", created is not None, "asnId=%s" % created)
         rep.check("driver reports qty = SUM(detail) = 6 (P14)", result["qty"] == 6, "%d" % result["qty"])
@@ -195,7 +195,7 @@ def main():
         try:
             hotcall.create_hotcall_asn(
                 line=TEST_LINE, prodDate=PDATE, manifest=ATOM_MANIFEST, items=[(PART_A, 9)],
-                site=SITE_ID, database="Inventory_Spike")
+                site=SITE_ID, database=DB_CONN)
         except Exception as e:
             raised = True
             print("    (expected) create_hotcall_asn raised: %s" % e)
@@ -221,7 +221,7 @@ def main():
         # ============================================================================================
         print("\n--- (4) 8HC FLOW: the hot-call ASN through the EXISTING send_856 -> '8HC...1.txt' ---")
         sql(INV, "UPDATE INV_SITES SET IN_EIN_SEQ = %d WHERE IN_SITE_ID = %d" % (SEED_EIN_SEQ, SITE_ID))
-        sent = edi856.send_856(created, SITE_ID, database="Inventory_Spike", outDir=tmpdir,
+        sent = edi856.send_856(created, SITE_ID, database=DB_CONN, outDir=tmpdir,
                                fileTime="1430")
         files = sorted(os.listdir(tmpdir))
         # EXPECTED derived from the OPERATIONAL sender MainMenu.pas:2723: '8HC'+copy(pd,4,5)+y+LineName+'.txt'.
@@ -259,9 +259,9 @@ def main():
         print("\n--- (4a) a SECOND same-day hot-call on the same line -> counter 2 (no filename collision) ---")
         result2 = hotcall.create_hotcall_asn(
             line=TEST_LINE, prodDate=PDATE, manifest="52089777", items=[(PART_B, 4)],
-            site=SITE_ID, database="Inventory_Spike")
+            site=SITE_ID, database=DB_CONN)
         created2 = result2["asnId"]
-        sent2 = edi856.send_856(created2, SITE_ID, database="Inventory_Spike", outDir=tmpdir,
+        sent2 = edi856.send_856(created2, SITE_ID, database=DB_CONN, outDir=tmpdir,
                                 fileTime="1430")
         expected8hc2 = "8HC" + PDATE[3:8] + "2" + TEST_LINE + ".txt"   # counter=2 -> '8HC606182ZZHCE2E.txt'
         rep.check("the 2nd same-day hot-call -> counter 2: '%s' (1 + the one already 'S')" % expected8hc2,
@@ -284,7 +284,7 @@ def main():
                  "VC_ASSY_PART_NUMBER, IN_QTY, VC_LAST_UPDATE, VC_ADD) "
                  "VALUES (%d, NULL, 0, '52081111', '%s', 3, '2026061814300000', '2026061814300000')"
                  % (normalAsn, PART_A))
-        sentNorm = edi856.send_856(normalAsn, SITE_ID, database="Inventory_Spike", outDir=tmpdir,
+        sentNorm = edi856.send_856(normalAsn, SITE_ID, database=DB_CONN, outDir=tmpdir,
                                    fileTime="1430")
         # EXPECTED from the operational sender MainMenu.pas:2718: '856'+copy(pd,5,4)=MMDD+LineName+'.txt'.
         expected856 = "856" + PDATE[4:8] + NORMAL_LINE + ".txt"   # '8560618ZZHCNORM.txt'

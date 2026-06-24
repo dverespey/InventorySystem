@@ -43,7 +43,7 @@
 # runScalarPrepQuery are 8.1+ and unchanged on 8.3. Schedule via a gateway Timer/Scheduled script
 # (8.1-safe) — NOT an 8.3 Event Stream — calling run_scheduled_purge() (see docstring there).
 
-DATABASE = "Inventory_Spike"      # the Inventory rebuild named gateway connection (NO creds; see m4-hardening-secrets.md)
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn (default Inventory_Spike; single prod-rename pt; NO creds — see m4-hardening-secrets.md)
 
 # The retention floor (legacy DataModule.pas:6890 rejects < 12; INV_SITES CK_INV_SITES_DATA_RETENTION).
 MIN_RETENTION_MONTHS = 12

@@ -32,7 +32,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report  # noqa: E402
+from lib import Report, GATEWAY_ROOT  # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
 SA_PASS = os.environ.get("SA_PASS")
@@ -44,7 +44,7 @@ RR_DIR = os.path.join(REPO, "docs", "analysis", "reporting", "project-library", 
 
 # Gateway bundled JRE + jython + POI (the exact runtime the gateway uses) — lets us run the REAL POI
 # render path headless (verified: render_xlsx -> a real .xlsx). No system Java is required.
-IGN = "/usr/local/ignition"
+IGN = GATEWAY_ROOT   # centralized gateway root (repo-split-plan §4.C; default /usr/local/ignition)
 JAVA = os.path.join(IGN, "lib", "runtime", "jre-mac", "bin", "java")
 COMMON = os.path.join(IGN, "lib", "core", "common")
 PYLIB = os.path.join(IGN, "user-lib", "pylib")

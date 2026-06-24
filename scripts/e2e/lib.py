@@ -3,16 +3,47 @@
 No third-party deps beyond playwright. Reads optional gateway creds from
 environment or a gitignored scripts/e2e/.env (KEY=VALUE lines).
 """
-import os, re, subprocess, time
+import os, re, subprocess, sys, time
+
+# Centralized gateway-path + DB-connection constants (repo-split-plan §4.C/§4.D). `_ignenv` lives one
+# dir up in scripts/; add it to the path so the whole harness shares ONE env-parametrized source of
+# truth (gateway root/project dir + the Inventory_Spike->Inventory rename point). Defaults are the
+# current spike values, so nothing changes at runtime unless an IGN_* env var is set.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from _ignenv import (  # noqa: E402
+    GATEWAY_ROOT, GATEWAY_PROJECT_DIR, PERSPECTIVE_DIR, GATEWAY_LOG, DB_CONN,
+)
+
+
+def _register_db_shared():
+    """Make the centralized `db_shared` project-library module importable headlessly. On the gateway,
+    project-library modules are a flat top-level namespace (`from db_shared import CONNECTION` just
+    works); the harness execs each code.py in isolation, so an app module that imports db_shared needs it
+    pre-registered in sys.modules. Importing `lib` (which every app-loading test does — the one shim-only
+    test, dress_rehearsal_smoke, is covered by jython_shim.load_wrapper) registers it once here. Pure
+    constant, no `system` — loads identically here and on the gateway. (repo-split-plan §4.D)"""
+    if "db_shared" in sys.modules:
+        return
+    import importlib.util
+    code = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..",
+        "docs", "analysis", "production-readiness", "project-library", "db_shared", "code.py"))
+    spec = importlib.util.spec_from_file_location("db_shared", code)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules["db_shared"] = mod
+
+
+_register_db_shared()
 
 BASE = os.environ.get("GW_BASE", "http://localhost:8088")
-WRAPPER_LOG = os.environ.get("GW_LOG", "/usr/local/ignition/logs/wrapper.log")
+WRAPPER_LOG = GATEWAY_LOG                         # = $GW_LOG or <GATEWAY_ROOT>/logs/wrapper.log
 ARTIFACTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts")
 
 # Perspective project name = the FIRST path segment of a client route (/data/perspective/client/<PROJECT>/
 # <page>). The project was renamed `spike` -> `InventorySystem` in PR #47 (chore: rename Ignition project);
 # the per-view CRUD browser routes still pointed at the old `spike` and 404'd until this constant. Override
-# with GW_PROJECT if a future rename happens.
+# with GW_PROJECT (or IGN_PROJECT) if a future rename happens.
 PROJECT = os.environ.get("GW_PROJECT", "InventorySystem")
 
 

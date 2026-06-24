@@ -350,7 +350,7 @@ def _cleanup_tmp(tmpPath):
 # (...,tx=) / beginTransaction / system.date / system.file.writeFile / getLogger) is identical on
 # 8.1.52 and 8.3 — no version guard needed.
 
-DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 
 # The feed SQL (spike-edi856-feed.sql) inlined here so the driver carries no external-file dependency at
 # runtime (the .sql file is the reviewable canonical copy). This string is BYTE-IDENTICAL to the .sql

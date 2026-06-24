@@ -81,7 +81,7 @@ Run:  export SA_PASS='Spike_Dev_2026!'  &&  python3 scripts/e2e/test_create_asn_
 import os, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report          # noqa: E402
+from lib import Report, DB_CONN          # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -180,7 +180,7 @@ def main():
         result = asn.create_asn(
             line=LINE, prodDate=PDATE, seqStart=seqStart, seqLast=seqLast,
             beginDate=dtStart, endDate=dtEnd, shipQty=legQty,
-            database="Inventory_Spike", alcDatabase="VehicleOrder")
+            database=DB_CONN, alcDatabase="VehicleOrder")
         created = result["asnId"]
         rep.check("create_asn returned a new ASN id (not skipped)",
                   created is not None and not result["skipped"], "asnId=%s" % created)

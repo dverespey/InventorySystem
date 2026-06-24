@@ -40,7 +40,7 @@ import tempfile
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report, preclean_sentinels   # noqa: E402
+from lib import Report, preclean_sentinels, DB_CONN   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -222,7 +222,7 @@ def main():
         p997 = os.path.join(tmpdir, "zzinb_997.edi")
         with open(p997, "w", newline="") as fh:
             fh.write(f997)
-        res = edi.process_one_file(f997, "zzinb_997.edi", database="Inventory_Spike",
+        res = edi.process_one_file(f997, "zzinb_997.edi", database=DB_CONN,
                                    srcPath=p997, archiveDir=archiveDir, quarantineDir=quarantineDir)
         rep.check("997 file outcome == PROCESSED", res["outcome"] == "PROCESSED", res["outcome"])
         rep.check("997 detected as type 997", res["type"] == "997", str(res["type"]))
@@ -265,7 +265,7 @@ def main():
         p824 = os.path.join(tmpdir, "zzinb_824.edi")
         with open(p824, "w", newline="") as fh:
             fh.write(f824)
-        res824 = edi.process_one_file(f824, "zzinb_824.edi", database="Inventory_Spike",
+        res824 = edi.process_one_file(f824, "zzinb_824.edi", database=DB_CONN,
                                       srcPath=p824, archiveDir=archiveDir, quarantineDir=quarantineDir)
         rep.check("824 file outcome == PROCESSED", res824["outcome"] == "PROCESSED", res824["outcome"])
         asnStatus = scalar(INV, "SELECT VC_ASN_STATUS FROM INV_ASN_MST WHERE IN_ASN_ID=%d" % asnId)
@@ -324,7 +324,7 @@ def main():
         pfan = os.path.join(tmpdir, "zzinb_824fanout.edi")
         with open(pfan, "w", newline="") as fh:
             fh.write(ffan)
-        resFan = edi.process_one_file(ffan, "zzinb_824fanout.edi", database="Inventory_Spike",
+        resFan = edi.process_one_file(ffan, "zzinb_824fanout.edi", database=DB_CONN,
                                       srcPath=pfan, archiveDir=archiveDir, quarantineDir=quarantineDir)
         rep.check("multi-ASN 824 outcome == PROCESSED", resFan["outcome"] == "PROCESSED",
                   resFan["outcome"])
@@ -358,7 +358,7 @@ def main():
             fh.write(fbad)
         # snapshot the ASN status BEFORE -> the bad-DUNS file must NOT touch it.
         before = scalar(INV, "SELECT VC_ASN_STATUS FROM INV_ASN_MST WHERE IN_ASN_ID=%d" % asnId)
-        resbad = edi.process_one_file(fbad, "zzinb_baddunsfile.edi", database="Inventory_Spike",
+        resbad = edi.process_one_file(fbad, "zzinb_baddunsfile.edi", database=DB_CONN,
                                       srcPath=pbad, archiveDir=archiveDir, quarantineDir=quarantineDir)
         rep.check("wrong-DUNS file outcome == QUARANTINED_NO_DUNS",
                   resbad["outcome"] == "QUARANTINED_NO_DUNS", resbad["outcome"])
@@ -383,7 +383,7 @@ def main():
         # re-drop the identical 997 (same name + content -> same hash -> ledger hit).
         with open(p997, "w", newline="") as fh:
             fh.write(f997)
-        resRe = edi.process_one_file(f997, "zzinb_997.edi", database="Inventory_Spike",
+        resRe = edi.process_one_file(f997, "zzinb_997.edi", database=DB_CONN,
                                      srcPath=p997, archiveDir=archiveDir, quarantineDir=quarantineDir)
         rep.check("re-processing the same 997 -> SKIPPED_ALREADY_PROCESSED (ledger no-op)",
                   resRe["outcome"] == "SKIPPED_ALREADY_PROCESSED", resRe["outcome"])
@@ -416,7 +416,7 @@ def main():
         pRename = os.path.join(tmpdir, "zzinb_824_RENAMED.edi")   # identical content, new name
         with open(pRename, "w", newline="") as fh:
             fh.write(f824)                                        # f824 == the (3) body verbatim
-        resRename = edi.process_one_file(f824, "zzinb_824_RENAMED.edi", database="Inventory_Spike",
+        resRename = edi.process_one_file(f824, "zzinb_824_RENAMED.edi", database=DB_CONN,
                                          srcPath=pRename, archiveDir=archiveDir,
                                          quarantineDir=quarantineDir)
         rep.check("same 824 CONTENT under a NEW name -> SKIPPED_ALREADY_PROCESSED (content = identity)",
@@ -441,7 +441,7 @@ def main():
         pDiff = os.path.join(tmpdir, "zzinb_824.edi")            # REUSE the (3) filename
         with open(pDiff, "w", newline="") as fh:
             fh.write(fDiff)
-        resDiff = edi.process_one_file(fDiff, "zzinb_824.edi", database="Inventory_Spike",
+        resDiff = edi.process_one_file(fDiff, "zzinb_824.edi", database=DB_CONN,
                                        srcPath=pDiff, archiveDir=archiveDir, quarantineDir=quarantineDir)
         rep.check("DIFFERENT content under an ALREADY-USED name -> reprocessed (PROCESSED, new hash)",
                   resDiff["outcome"] == "PROCESSED", resDiff["outcome"])
@@ -454,7 +454,7 @@ def main():
             fpoll = file_997(TMM_DUNS, [("SH", ASN_EIN, "A")])
             with open(os.path.join(polldir, "zzinb_poll997.edi"), "w", newline="") as fh:
                 fh.write(fpoll)
-            pollRes = edi.process_inbound(polldir, database="Inventory_Spike")
+            pollRes = edi.process_inbound(polldir, database=DB_CONN)
             outcomes = [r["outcome"] for r in pollRes]
             rep.check("process_inbound poll processed the one new 997 (PROCESSED)",
                       outcomes == ["PROCESSED"], str(outcomes))

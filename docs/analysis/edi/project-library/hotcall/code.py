@@ -167,7 +167,7 @@ def _detailQtySum(details):
 # beginTransaction / commitTransaction / rollbackTransaction / closeTransaction / getLogger) is identical
 # on 8.1.52 and 8.3 — no version guard needed (same set asn.create_asn / edi856.send_856 use).
 
-DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 
 # The hot-call header sentinel (HotCallEntry.pas:238-243): VC_START_SEQ_NUMBER = VC_END_SEQ_NUMBER = '-1'.
 # This is what marks a header as a hot-call — SELECT_ASNSeq's `<> -1` filter excludes these from the

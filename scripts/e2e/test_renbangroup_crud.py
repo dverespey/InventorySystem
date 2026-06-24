@@ -48,7 +48,7 @@ import lib
 from reset_trial import reset_trial
 
 LIST_URL = lib.view_url("renbangroup")
-DB = "Inventory_Spike"
+DB = lib.DB_CONN   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
 # Verified parity anchors (DB ground truth, see module docstring).

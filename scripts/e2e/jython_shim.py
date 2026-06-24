@@ -22,18 +22,26 @@ try:
 except ImportError:       # pragma: no cover - Jython/Py2 fallback (shim runs under CPython3 here)
     import Queue as queue
 
+# Centralized DB-connection name (repo-split-plan §4.D): whatever the Jython app code is configured to
+# use (default "Inventory_Spike"; IGN_DB_CONN=Inventory for prod) must resolve to the physical spike DB
+# here. `_ignenv` lives two dirs up in scripts/.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from _ignenv import DB_CONN   # noqa: E402
+
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
 SA_PASS = os.environ.get("SA_PASS")
-SQL_DB = "Inventory"   # the SQL Server DB; the wrappers' logical name "Inventory_Spike" maps here
+SQL_DB = "Inventory"   # the SQL Server DB; the wrappers' logical connection name maps here
 
 # Logical Ignition connection name -> physical spike DB. The producer/Order seams only ever touch the
 # default Inventory DB; the ASN create driver also READS AD_FRSPULL on the shared ALC datasource, so a
 # query/proc-call can be routed to VehicleOrder by passing db="VehicleOrder" (or its connection name).
 # Unknown names fall through to SQL_DB (the historical behaviour — db was previously ignored entirely).
+# Both the spike name and the centralized DB_CONN (prod rename target) map to SQL_DB.
 _DB_MAP = {
     None: SQL_DB,
     "Inventory_Spike": SQL_DB,
     "Inventory": SQL_DB,
+    DB_CONN: SQL_DB,
     "VehicleOrder": "VehicleOrder",
 }
 
@@ -690,9 +698,32 @@ def _py2_builtins():
     }
 
 
+_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+_DB_SHARED_CODE = os.path.join(_REPO_ROOT, "docs", "analysis", "production-readiness",
+                               "project-library", "db_shared", "code.py")
+
+
+def _ensure_db_shared():
+    """Make the centralized `db_shared` project-library module importable under the headless harness.
+
+    On the gateway, project-library modules are a FLAT top-level namespace (`import db_shared` works);
+    the headless shim execs each code.py in isolation, so an app module doing `from db_shared import
+    CONNECTION` needs db_shared pre-registered in sys.modules. Load it once from its repo location and
+    cache it (idempotent — mirrors test_m4_auth.py's sys.modules["auth"] pattern). The module is a pure
+    constant (no `system`), so it loads identically here and on the gateway."""
+    if "db_shared" in sys.modules:
+        return sys.modules["db_shared"]
+    spec = importlib.util.spec_from_file_location("db_shared", _DB_SHARED_CODE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules["db_shared"] = mod
+    return mod
+
+
 def load_wrapper(name, code_path, extra_globals=None):
     """Import a project-library code.py with `system` (+ any extra globals like `stockLedger`) injected,
     so its functions run for real under this shim. Returns the module."""
+    _ensure_db_shared()   # so an app module's `from db_shared import CONNECTION` resolves headlessly
     spec = importlib.util.spec_from_file_location(name, code_path)
     mod = importlib.util.module_from_spec(spec)
     mod.system = _System()

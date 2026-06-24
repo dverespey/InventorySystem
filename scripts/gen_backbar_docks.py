@@ -35,11 +35,12 @@ Usage:
   python3 scripts/gen_backbar_docks.py --check    # report drift only, exit 1 if out of sync
 """
 import json, sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import PERSPECTIVE_DIR   # noqa: E402 — centralized gateway path (repo-split-plan §4.C)
 
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REPO_CONFIG = os.path.join(_REPO, "docs", "design", "perspective-views", "page-config", "config.json")
-GW_CONFIG = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-             "/page-config/config.json")
+GW_CONFIG = os.path.join(PERSPECTIVE_DIR, "page-config", "config.json")
 
 DOCK_ID = "backbar"
 HOME_ROUTE = "/home"

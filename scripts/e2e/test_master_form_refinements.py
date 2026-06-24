@@ -40,11 +40,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")))
 
-from lib import Report                          # noqa: E402
+from lib import Report, PERSPECTIVE_DIR          # noqa: E402
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-GW_BASE = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-           "/views/Master")
+GW_BASE = os.path.join(PERSPECTIVE_DIR, "views", "Master")   # centralized (repo-split-plan §4.C)
 REPO_BASE = os.path.join(REPO, "docs", "analysis", "master-data", "perspective-views", "Master")
 
 VIEWS = ["Size", "Supplier", "PartsStock", "ManifestCost", "RenbanGroup", "AssemblyDetail", "Logistics",

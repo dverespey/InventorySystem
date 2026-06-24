@@ -50,7 +50,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")))
 
-from lib import Report                      # noqa: E402
+from lib import Report, PERSPECTIVE_DIR      # noqa: E402
 import gen_sites_view as gsv                # noqa: E402  (the SHARED SQL builders the view uses)
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -355,8 +355,7 @@ def _deployed_save_script():
     """Pull the sites-save-btn onActionPerformed script from the DEPLOYED gateway view.json, so we can
     assert the harness drives the SAME source the running session serves (not just the generator)."""
     import json
-    gw = os.path.join("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-                      "/views/Master/Sites/Sites/view.json")
+    gw = os.path.join(PERSPECTIVE_DIR, "views", "Master", "Sites", "Sites", "view.json")  # centralized §4.C
     if not os.path.exists(gw):
         return None
     with open(gw) as f:
