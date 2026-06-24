@@ -8,9 +8,10 @@
 #   sql.sh list  procs|triggers|tables
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-# Live schema dump from the production server (2026-06-12), authoritative. The older
-# spaced-name "Create Inventory.superseded-2026-06-01.sql" is the prior snapshot pre-2026-spec-cites point at.
-SCHEMA="$ROOT/DB Schema/CreateInventory.sql"
+# Live schema dump from the production server (2026-06-12), authoritative. RELOCATED to db/ in the
+# repo reorg (chore/repo-reorg-ignition); a pointer stub remains at "DB Schema/CreateInventory.sql.MOVED.md".
+# The older spaced-name "Create Inventory.superseded-2026-06-01.sql" is the prior snapshot pre-2026-spec-cites point at.
+SCHEMA="$ROOT/db/CreateInventory.sql"
 TRIGGERS="$ROOT/docs/triggers.sql"
 conv() { iconv -f UTF-16LE -t UTF-8 "$1"; }
 file_for() { case "$1" in schema) echo "$SCHEMA";; triggers) echo "$TRIGGERS";; *) echo "$1";; esac; }
