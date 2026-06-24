@@ -1060,7 +1060,8 @@
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card0"
+                      "name": "card0",
+                      "domId": "home-card-order"
                     },
                     "props": {
                       "direction": "column",
@@ -1071,7 +1072,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1168,12 +1170,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/order')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card1"
+                      "name": "card1",
+                      "domId": "home-card-shipping"
                     },
                     "props": {
                       "direction": "column",
@@ -1184,7 +1198,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1281,12 +1296,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/coming-soon')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card2"
+                      "name": "card2",
+                      "domId": "home-card-receiving"
                     },
                     "props": {
                       "direction": "column",
@@ -1297,7 +1324,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1369,12 +1397,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/coming-soon')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card3"
+                      "name": "card3",
+                      "domId": "home-card-stocktaking"
                     },
                     "props": {
                       "direction": "column",
@@ -1385,7 +1425,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1482,12 +1523,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/coming-soon')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card4"
+                      "name": "card4",
+                      "domId": "home-card-forecast"
                     },
                     "props": {
                       "direction": "column",
@@ -1498,7 +1551,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1585,12 +1639,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/coming-soon')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card5"
+                      "name": "card5",
+                      "domId": "home-card-masters"
                     },
                     "props": {
                       "direction": "column",
@@ -1601,7 +1667,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1698,12 +1765,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/masters')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card6"
+                      "name": "card6",
+                      "domId": "home-card-invoicing"
                     },
                     "props": {
                       "direction": "column",
@@ -1714,7 +1793,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1801,12 +1881,24 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/coming-soon')\n"
+                          }
+                        }
+                      }
                     }
                   },
                   {
                     "type": "ia.container.flex",
                     "meta": {
-                      "name": "card7"
+                      "name": "card7",
+                      "domId": "home-card-reports"
                     },
                     "props": {
                       "direction": "column",
@@ -1817,7 +1909,8 @@
                         "borderRadius": "var(--tai-radius)",
                         "padding": "16px",
                         "boxShadow": "var(--tai-shadow-card)",
-                        "minHeight": "150px"
+                        "minHeight": "150px",
+                        "cursor": "pointer"
                       }
                     },
                     "children": [
@@ -1904,6 +1997,17 @@
                     "position": {
                       "grow": 1,
                       "basis": "31%"
+                    },
+                    "events": {
+                      "dom": {
+                        "onClick": {
+                          "type": "script",
+                          "scope": "G",
+                          "config": {
+                            "script": "\tsystem.perspective.navigate('/reports')\n"
+                          }
+                        }
+                      }
                     }
                   }
                 ]
