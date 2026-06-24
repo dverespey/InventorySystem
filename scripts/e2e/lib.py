@@ -9,6 +9,20 @@ BASE = os.environ.get("GW_BASE", "http://localhost:8088")
 WRAPPER_LOG = os.environ.get("GW_LOG", "/usr/local/ignition/logs/wrapper.log")
 ARTIFACTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts")
 
+# Perspective project name = the FIRST path segment of a client route (/data/perspective/client/<PROJECT>/
+# <page>). The project was renamed `spike` -> `InventorySystem` in PR #47 (chore: rename Ignition project);
+# the per-view CRUD browser routes still pointed at the old `spike` and 404'd until this constant. Override
+# with GW_PROJECT if a future rename happens.
+PROJECT = os.environ.get("GW_PROJECT", "InventorySystem")
+
+
+def view_url(page_path, query=""):
+    """Build a Perspective client route for the current project: view_url("size") ->
+    http://localhost:8088/data/perspective/client/InventorySystem/size. `query` (e.g. "qaAdmin=1") is
+    appended as a ?-query when given."""
+    url = "%s/data/perspective/client/%s/%s" % (BASE, PROJECT, page_path.lstrip("/"))
+    return url + ("?" + query if query else "")
+
 
 def load_env():
     """Populate os.environ from scripts/e2e/.env if present (no override of real env)."""
@@ -59,15 +73,42 @@ WRITE_GATE_SKIP = ("P15 server-side write gate active: an anon spike session (no
                    "finish). Gate proven by test_master_write_gates.py + the live deny probe in this run.")
 
 
-def check_master_write_gate_live(page, rep, view_label, url, new_btn, save_btn, status_id,
-                                 grid_sel, fill_pairs, count_fn, deny_marker):
-    """LIVE on-the-box proof that a swept master view's WRITE is gated SERVER-SIDE (P15): open the view,
-    click New, fill a throwaway probe row, click Save — in this headless spike the session is anonymous
-    (no IdP/roles), so auth.requireWrite(self.session) MUST DENY the write server-side. Assert the status
-    label shows "DENIED (server-side)" (and/or a SPIKE deny log marker), and the DB row count is unchanged
-    (no write slipped through). Mirrors test_sites_crud.check_server_side_write_gate, parameterized per
-    view. `count_fn()` returns the current table row count; `fill_pairs` = [(domId, value), ...]; the
-    test's own fill_field is used via the page (we call a minimal inline fill here to avoid importing it).
+def _btn_enabled(page, dom_id):
+    """True iff a Perspective button (#dom_id) is currently ENABLED. Perspective renders props.enabled=false
+    as a `disabled` attribute on the <button> AND adds the `ia_button--disabled`/`disabled` class. Treat the
+    button as disabled if either signal is present. Returns None if the button isn't found."""
+    el = page.query_selector("#" + dom_id)
+    if el is None:
+        return None
+    if el.get_attribute("disabled") is not None:
+        return False
+    cls = (el.get_attribute("class") or "")
+    if "disabled" in cls.lower():
+        return False
+    try:
+        return el.is_enabled()
+    except Exception:
+        return True
+
+
+def check_master_write_gate_live(page, rep, view_label, url, clear_btn, save_btn, status_id,
+                                 grid_sel, fill_pairs, count_fn, deny_marker, primary_fill=None):
+    """LIVE on-the-box proof of BOTH the master-form refinement enable/disable model AND the P15 SERVER-SIDE
+    write gate, on a swept master view. Sequence (the New button was REMOVED in the refinement sweep — Clear
+    now starts a fresh insert and is ALWAYS enabled):
+
+      1. open the view, click Clear -> blank insert-mode form (recordId=0).
+      2. ASSERT (refinement): Save is DISABLED on the blank/cleared form (no record + no primary entered).
+      3. fill the PRIMARY field (primary_fill=(domId,value)) -> entering data into a cleared form.
+      4. ASSERT (refinement): Save is now ENABLED (has-entered-data signal).
+      5. fill the rest of fill_pairs, then click Save. In this headless spike the session is ANONYMOUS (no
+         IdP/roles), so auth.requireWrite(self.session) MUST DENY the write server-side -> status label shows
+         "DENIED (server-side)" (and/or a SPIKE deny log marker), and the DB row count is UNCHANGED.
+
+    `primary_fill` = (domId, value) for the view's PRIMARY/required TEXT input (the field that enables Save).
+    If None (e.g. ManifestCost, whose primary is a dropdown that doesn't fill reliably headless), steps 3-5
+    are SKIPPED with an honest reason — the server gate for that view is proven headless end-to-end by
+    test_master_write_gates.py; the blank-form Save-disabled assertion (step 2) is still made.
 
     deny_marker = the SPIKE log substring this view emits on a denied write (e.g. "Size Save DENIED")."""
     try:
@@ -80,16 +121,23 @@ def check_master_write_gate_live(page, rep, view_label, url, new_btn, save_btn, 
             page.wait_for_selector(grid_sel, timeout=20000)
         except Exception:
             pass
-        nb = page.query_selector("#" + new_btn)
-        if not nb:
-            rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "New button not found")
+        cb = page.query_selector("#" + clear_btn)
+        if not cb:
+            rep.skip("%s SERVER-SIDE WRITE GATE (live)" % view_label, "Clear button not found")
             return
-        nb.click()
+        cb.click()
         page.wait_for_timeout(1000)
-        for dom_id, val in fill_pairs:
+
+        # --- refinement assertion: Save DISABLED on a blank/cleared form (no record, no data entered) ---
+        save_disabled = _btn_enabled(page, save_btn) is False
+        rep.check("%s (LIVE refinement): Save is DISABLED on a blank/cleared form (no record selected, no "
+                  "data entered)" % view_label, save_disabled,
+                  "Save enabled=%s after Clear (expected disabled)" % _btn_enabled(page, save_btn))
+
+        def _fill(dom_id, val):
             f = page.query_selector("#" + dom_id)
             if not f:
-                continue
+                return False
             f.click()
             page.keyboard.press("Control+A")
             page.keyboard.press("Meta+A")
@@ -97,7 +145,27 @@ def check_master_write_gate_live(page, rep, view_label, url, new_btn, save_btn, 
             if val:
                 f.type(str(val), delay=20)
             page.keyboard.press("Tab")
-            page.wait_for_timeout(150)
+            page.wait_for_timeout(200)
+            return True
+
+        if primary_fill is None:
+            rep.skip("%s (LIVE): Save-enable + anon-DENIED click-through" % view_label,
+                     "primary is a dropdown (no reliable headless fill); gate proven by "
+                     "test_master_write_gates.py")
+            return
+
+        # --- step 3-4: enter the primary -> Save becomes ENABLED (has-entered-data signal) ---
+        _fill(primary_fill[0], primary_fill[1])
+        save_enabled = _btn_enabled(page, save_btn) is True
+        rep.check("%s (LIVE refinement): entering the primary field into a cleared form ENABLES Save"
+                  % view_label, save_enabled,
+                  "Save enabled=%s after entering %s=%r" % (_btn_enabled(page, save_btn), primary_fill[0],
+                                                            primary_fill[1]))
+
+        for dom_id, val in fill_pairs:
+            _fill(dom_id, val)
+
+        # --- step 5: anon Save -> DENIED server-side, no row written ---
         off = log_marker()
         sb = page.query_selector("#" + save_btn)
         if not sb:

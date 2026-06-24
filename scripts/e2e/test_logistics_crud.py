@@ -41,7 +41,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/logistics"
+LIST_URL = lib.view_url("logistics")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -207,10 +207,10 @@ def check_validation(page, rep):
     for Logistics (it is keyed by a name, not a code)."""
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "logistics-new-btn", text="New Logistics", role="button")
+    nb = q(page, "logistics-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Validation: blank name rejected", "New Logistics button not found")
-        rep.skip("Validation: dup name blocked", "New Logistics button not found")
+        rep.skip("Validation: blank name rejected", "Clear button not found")
+        rep.skip("Validation: dup name blocked", "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -333,9 +333,9 @@ def check_round_trip(page, rep):
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "logistics-new-btn", text="New Logistics", role="button")
+    nb = q(page, "logistics-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Round-trip insert/delete %s" % TEST_NAME, "New Logistics button not found")
+        rep.skip("Round-trip insert/delete %s" % TEST_NAME, "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -428,9 +428,9 @@ def main():
         print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
         lib.check_master_write_gate_live(
             pg, rep, "Logistics write gate", LIST_URL,
-            new_btn="logistics-new-btn", save_btn="logistics-save-btn", status_id="logistics-status",
+            clear_btn="logistics-clear-btn", save_btn="logistics-save-btn", status_id="logistics-status",
             grid_sel=GRID, fill_pairs=[], count_fn=db_logistics_count,
-            deny_marker="Logistics Save DENIED")
+            deny_marker="Logistics Save DENIED", primary_fill=("logistics-name", "ZZ Probe"))
 
         # Checks 4-6 drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-side
         # write gate active, the anon spike session is correctly DENIED before those paths run, so they

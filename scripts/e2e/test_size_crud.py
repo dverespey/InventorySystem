@@ -42,7 +42,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/size"
+LIST_URL = lib.view_url("size")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -219,11 +219,11 @@ def check_validation(page, rep):
     'save REJECTED' markers. No DB write occurs (all fail validation/dup-check)."""
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "size-new-btn", text="New Size", role="button")
+    nb = q(page, "size-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Validation: blank code rejected", "New Size button not found")
-        rep.skip("Validation: >6-char code rejected", "New Size button not found")
-        rep.skip("Validation: dup code blocked", "New Size button not found")
+        rep.skip("Validation: blank code rejected", "Clear button not found")
+        rep.skip("Validation: >6-char code rejected", "Clear button not found")
+        rep.skip("Validation: dup code blocked", "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -366,9 +366,9 @@ def check_round_trip(page, rep):
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "size-new-btn", text="New Size", role="button")
+    nb = q(page, "size-clear-btn", text="Clear", role="button")
     if not nb:
-        rep.skip("Round-trip insert/delete ZZTST", "New Size button not found")
+        rep.skip("Round-trip insert/delete ZZTST", "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -462,8 +462,9 @@ def main():
         print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
         lib.check_master_write_gate_live(
             pg, rep, "Size write gate", LIST_URL,
-            new_btn="size-new-btn", save_btn="size-save-btn", status_id="size-status",
-            grid_sel=GRID, fill_pairs=[], count_fn=db_size_count, deny_marker="Size Save DENIED")
+            clear_btn="size-clear-btn", save_btn="size-save-btn", status_id="size-status",
+            grid_sel=GRID, fill_pairs=[], count_fn=db_size_count, deny_marker="Size Save DENIED",
+            primary_fill=("size-code", "ZZG"))
 
         # Checks 4-6 below drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-
         # side write gate active, the anon spike session (no IdP/roles) is correctly DENIED before those

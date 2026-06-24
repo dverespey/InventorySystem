@@ -17,7 +17,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-VIEW_URL = lib.BASE + "/data/perspective/client/spike/order"
+VIEW_URL = lib.view_url("order")
 
 
 def q(page, domid, text=None, role=None):

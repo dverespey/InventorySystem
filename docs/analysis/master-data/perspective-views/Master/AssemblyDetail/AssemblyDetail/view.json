@@ -106,7 +106,7 @@
            "name": "SearchField"
           },
           "position": {
-           "basis": "240px"
+           "basis": "auto"
           },
           "propConfig": {
            "props.text": {
@@ -117,6 +117,12 @@
              },
              "type": "property"
             }
+           }
+          },
+          "props": {
+           "style": {
+            "height": "32px",
+            "width": "240px"
            }
           },
           "type": "ia.input.text-field"
@@ -156,32 +162,6 @@
           "fontWeight": "bold"
          },
          "text": "Search"
-        },
-        "type": "ia.input.button"
-       },
-       {
-        "events": {
-         "component": {
-          "onActionPerformed": {
-           "config": {
-            "script": "\t# New record: same-view prop write (NO navigation). recordId=0 -> insert-mode.\n\tc = self.view.custom\n\tc.form_assyCode = \"\"; c.form_effMonth = \"\"; c.form_broadcast = \"\"; c.form_kanban = \"\"\n\tc.form_tirePN = \"\"; c.form_wheelPN = \"\"; c.form_valvePN = \"\"; c.form_filmPN = \"\"\n\tc.form_labelPN = \"\"; c.form_misc1PN = \"\"; c.form_misc2PN = \"\"\n\tc.form_tireRatio = 0; c.form_wheelRatio = 0; c.form_fcRatio = 0; c.form_assyQty = 0\n\tc.recordId = 0\n\tc.statusMsg = \"New assembly detail \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE AssemblyDetail New -> recordId=0 (insert mode)\")\n"
-           },
-           "scope": "G",
-           "type": "script"
-          }
-         }
-        },
-        "meta": {
-         "domId": "assy-new-btn",
-         "name": "NewButton"
-        },
-        "props": {
-         "style": {
-          "backgroundColor": "#388E3C",
-          "color": "#FFFFFF",
-          "fontWeight": "bold"
-         },
-         "text": "New"
         },
         "type": "ia.input.button"
        }
@@ -1189,6 +1169,16 @@
          "domId": "assy-save-btn",
          "name": "SaveButton"
         },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0 || {view.custom.form_assyCode} != ''"
+           },
+           "type": "expr"
+          }
+         }
+        },
         "props": {
          "style": {
           "backgroundColor": "#1976D2",
@@ -1214,6 +1204,16 @@
         "meta": {
          "domId": "assy-delete-btn",
          "name": "DeleteButton"
+        },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0"
+           },
+           "type": "expr"
+          }
+         }
         },
         "props": {
          "style": {

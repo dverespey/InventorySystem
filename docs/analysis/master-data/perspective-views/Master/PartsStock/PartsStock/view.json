@@ -111,7 +111,7 @@
            "name": "SearchField"
           },
           "position": {
-           "basis": "240px"
+           "basis": "auto"
           },
           "propConfig": {
            "props.text": {
@@ -122,6 +122,12 @@
              },
              "type": "property"
             }
+           }
+          },
+          "props": {
+           "style": {
+            "height": "32px",
+            "width": "240px"
            }
           },
           "type": "ia.input.text-field"
@@ -161,32 +167,6 @@
           "fontWeight": "bold"
          },
          "text": "Search"
-        },
-        "type": "ia.input.button"
-       },
-       {
-        "events": {
-         "component": {
-          "onActionPerformed": {
-           "config": {
-            "script": "\t# New record: same-view prop write (NO navigation). recordId=0 fires the onChange -> insert mode.\n\tc = self.view.custom\n\tc.form_partNumber = \"\"; c.form_partsName = \"\"\n\tc.form_supplierId = None; c.form_logisticsId = None; c.form_sizeId = None\n\tc.form_renbanId = None; c.form_partTypeId = None; c.form_lineName = \"TUNDRA\"\n\tc.form_kanban = \"\"; c.form_lotQty = 0; c.form_lotSizeOrders = True\n\tc.form_renbanCount = 0; c.form_qty = 0\n\tc.form_leadtime = 0; c.form_ltMon = 0; c.form_ltTue = 0; c.form_ltWed = 0\n\tc.form_ltThu = 0; c.form_ltFri = 0; c.form_ltSat = 0\n\tc.form_shipdays = 0; c.form_sdMon = 0; c.form_sdTue = 0; c.form_sdWed = 0\n\tc.form_sdThu = 0; c.form_sdFri = 0; c.form_sdSat = 0\n\tc.form_partCost = 0.0; c.form_comments = \"\"\n\tc.recordId = 0\n\tc.statusMsg = \"New part \u2014 enter details and Save.\"\n\tsystem.util.getLogger(\"SPIKE\").info(\"SPIKE PartsStock New -> recordId=0 (insert mode)\")\n"
-           },
-           "scope": "G",
-           "type": "script"
-          }
-         }
-        },
-        "meta": {
-         "domId": "ps-new-btn",
-         "name": "NewButton"
-        },
-        "props": {
-         "style": {
-          "backgroundColor": "#388E3C",
-          "color": "#FFFFFF",
-          "fontWeight": "bold"
-         },
-         "text": "New Part"
         },
         "type": "ia.input.button"
        }
@@ -1787,6 +1767,16 @@
          "domId": "ps-save-btn",
          "name": "SaveButton"
         },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0 || {view.custom.form_partNumber} != ''"
+           },
+           "type": "expr"
+          }
+         }
+        },
         "props": {
          "style": {
           "backgroundColor": "#1976D2",
@@ -1812,6 +1802,16 @@
         "meta": {
          "domId": "ps-delete-btn",
          "name": "DeleteButton"
+        },
+        "propConfig": {
+         "props.enabled": {
+          "binding": {
+           "config": {
+            "expression": "{view.custom.recordId} > 0"
+           },
+           "type": "expr"
+          }
+         }
         },
         "props": {
          "style": {

@@ -61,7 +61,7 @@ from playwright.sync_api import sync_playwright
 import lib
 from reset_trial import reset_trial
 
-LIST_URL = lib.BASE + "/data/perspective/client/spike/partsstock"
+LIST_URL = lib.view_url("partsstock")
 DB = "Inventory_Spike"
 SA_PASS = os.environ.get("SA_PASS", "Spike_Dev_2026!")
 
@@ -271,17 +271,38 @@ def open_detail_via_row(page, rep, code):
               any(("recordId=%d" % DETAIL_ANCHOR["id"]) in l for l in click_lines),
               click_lines[-1].split("SPIKE")[-1][:70] if click_lines else "no row-click marker")
 
+    # ENVIRONMENT GUARD (not a parity assertion): PartsStock's detail-load onChange reads the cross-DB Line
+    # list (VehicleOrder.dbo.LINE). If the gateway DB login (ignition_spike) lacks a VehicleOrder user
+    # mapping, that read raises "server principal ... not able to access the database VehicleOrder" and the
+    # onChange aborts BEFORE populating the form — so the onChange-DEPENDENT assertions (load marker, combos
+    # marker, part-number/qty/lot-size form fields) would FAIL for an INFRA reason unrelated to this build.
+    # Detect that exact denial in the gateway log and SKIP only those onChange-dependent checks with a
+    # precise reason. The body-label combo checks below render from the dropdown option bindings (NOT the
+    # onChange) and still run, as do the list/search/write-gate/refinement checks.
+    vo_denied = any(("VehicleOrder" in l) and ("not able to access" in l)
+                    for l in lib.read_log_since(off).splitlines())
+    VO_REASON = ("cross-DB grant gap: gateway login 'ignition_spike' is not mapped into the VehicleOrder DB, "
+                 "so the detail-load onChange's VehicleOrder.dbo.LINE read is DENIED and the load aborts "
+                 "before populating the form. GRANT VehicleOrder access to ignition_spike to fix (infra, "
+                 "not this build).")
+
     load_lines = lib.grep_spike_since(off, "PartsStock Detail loaded")
-    rep.check("recordId onChange loaded the row into the in-view form (SPIKE 'Detail loaded id=%d')" % DETAIL_ANCHOR["id"],
-              any(("id=%d" % DETAIL_ANCHOR["id"]) in l for l in load_lines),
-              load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no Detail-loaded marker")
+    if vo_denied and not load_lines:
+        rep.skip("recordId onChange loaded the row into the in-view form (PartsStock)", VO_REASON)
+    else:
+        rep.check("recordId onChange loaded the row into the in-view form (SPIKE 'Detail loaded id=%d')" % DETAIL_ANCHOR["id"],
+                  any(("id=%d" % DETAIL_ANCHOR["id"]) in l for l in load_lines),
+                  load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no Detail-loaded marker")
 
     combo_lines = lib.grep_spike_since(off, "PartsStock Detail combos")
     # Line dropdown is the cross-DB VehicleOrder.dbo.Line read — 1 line (COROLLA) on the restored real
     # RO VehicleOrder (P17.3). The 5 FK combos still populate from the Inventory masters (sup=16 etc.).
-    rep.check("All 5 FK combos + Line dropdown populated (SPIKE 'combos sup=16 .. line>=1')",
-              any(("sup=16" in l and _combo_line_ge1(l)) for l in combo_lines),
-              combo_lines[-1].split("SPIKE")[-1][:90] if combo_lines else "no combos marker")
+    if vo_denied and not combo_lines:
+        rep.skip("All 5 FK combos + Line dropdown populated (PartsStock)", VO_REASON)
+    else:
+        rep.check("All 5 FK combos + Line dropdown populated (SPIKE 'combos sup=16 .. line>=1')",
+                  any(("sup=16" in l and _combo_line_ge1(l)) for l in combo_lines),
+                  combo_lines[-1].split("SPIKE")[-1][:90] if combo_lines else "no combos marker")
 
     page.wait_for_timeout(800)
     page.screenshot(path=lib.ARTIFACTS + "/partsstock_detail.png", full_page=True)
@@ -289,8 +310,11 @@ def open_detail_via_row(page, rep, code):
 
     pf = page.query_selector("#ps-partnumber")
     pval = pf.get_attribute("value") if pf else None
-    rep.check("Detail part-number field populated == %s" % code, pval == code,
-              "field value=%r" % pval)
+    if vo_denied and (pval in (None, "")):
+        rep.skip("Detail part-number field populated (PartsStock)", VO_REASON)
+    else:
+        rep.check("Detail part-number field populated == %s" % code, pval == code,
+                  "field value=%r" % pval)
     rep.check("Detail name field shows %s" % DETAIL_ANCHOR["name"],
               DETAIL_ANCHOR["name"] in body, "name in body=%s" % (DETAIL_ANCHOR["name"] in body))
 
@@ -314,14 +338,20 @@ def open_detail_via_row(page, rep, code):
     except Exception:
         disabled = False
     qty_logged = any(("qty=%d" % DETAIL_ANCHOR["qty"]) in l for l in load_lines)
-    rep.check("Detail IN_QTY is READ-ONLY (field disabled) and shows %d" % DETAIL_ANCHOR["qty"],
-              disabled and qty_logged,
-              "disabled=%s; qtyLoggedAs%d=%s" % (disabled, DETAIL_ANCHOR["qty"], qty_logged))
+    if vo_denied and not load_lines:
+        rep.skip("Detail IN_QTY is READ-ONLY and shows %d (PartsStock)" % DETAIL_ANCHOR["qty"], VO_REASON)
+    else:
+        rep.check("Detail IN_QTY is READ-ONLY (field disabled) and shows %d" % DETAIL_ANCHOR["qty"],
+                  disabled and qty_logged,
+                  "disabled=%s; qtyLoggedAs%d=%s" % (disabled, DETAIL_ANCHOR["qty"], qty_logged))
 
     # inverted lot-size flag: stored 1 -> checkbox displayed UNCHECKED -> SPIKE logs lotSizeShown=False
     inv_ok = any("lotSizeShown=False" in l for l in load_lines)
-    rep.check("Detail BIT_LOT_SIZE_ORDERS shown INVERTED (stored 1 -> checkbox unchecked)",
-              inv_ok, load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no marker")
+    if vo_denied and not load_lines:
+        rep.skip("Detail BIT_LOT_SIZE_ORDERS shown INVERTED (PartsStock)", VO_REASON)
+    else:
+        rep.check("Detail BIT_LOT_SIZE_ORDERS shown INVERTED (stored 1 -> checkbox unchecked)",
+                  inv_ok, load_lines[-1].split("SPIKE")[-1][:80] if load_lines else "no marker")
     return pval == code
 
 
@@ -329,11 +359,11 @@ def open_detail_via_row(page, rep, code):
 def check_validation(page, rep):
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    nb = q(page, "ps-new-btn", text="New Part", role="button")
+    nb = q(page, "ps-clear-btn", text="Clear", role="button")
     if not nb:
         for n in ("Validation: blank part number rejected", "Validation: >12-char rejected",
                   "Validation: dup part number blocked"):
-            rep.skip(n, "New Part button not found")
+            rep.skip(n, "Clear button not found")
         return
     nb.click()
     page.wait_for_timeout(1500)
@@ -464,8 +494,8 @@ def check_round_trip(page, rep):
 
     page.goto(LIST_URL, wait_until="networkidle", timeout=30000)
     page.wait_for_selector(GRID, timeout=20000)
-    if not click_btn(page, "ps-new-btn"):
-        rep.skip("Round-trip insert/delete %s" % TEST_CODE, "New Part button not found")
+    if not click_btn(page, "ps-clear-btn"):
+        rep.skip("Round-trip insert/delete %s" % TEST_CODE, "Clear button not found")
         return
     page.wait_for_timeout(1500)
 
@@ -604,9 +634,9 @@ def main():
         print("== 3. SERVER-SIDE WRITE GATE (LIVE, P15 H3 hole closed end-to-end) ==")
         lib.check_master_write_gate_live(
             pg, rep, "PartsStock write gate", LIST_URL,
-            new_btn="ps-new-btn", save_btn="ps-save-btn", status_id="ps-status",
+            clear_btn="ps-clear-btn", save_btn="ps-save-btn", status_id="ps-status",
             grid_sel=GRID, fill_pairs=[], count_fn=db_parts_count,
-            deny_marker="PartsStock Save DENIED")
+            deny_marker="PartsStock Save DENIED", primary_fill=("ps-partnumber", "ZZPART01"))
 
         # Checks 4-6 drive UI CRUD WRITES (validation/delete-gate/round-trip). With the P15 server-side
         # write gate active, the anon spike session is correctly DENIED before those paths run, so they
