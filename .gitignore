@@ -79,6 +79,9 @@ Archive/
 Copy of CAMEX System/
 
 # E2E harness: never commit gateway creds or render artifacts
+# (the harness moved scripts/e2e/ -> e2e/ in the repo reorg; keep the old paths too in case of stragglers)
+e2e/.env
+e2e/artifacts/
 scripts/e2e/.env
 scripts/e2e/artifacts/
 __pycache__/
