@@ -1,0 +1,93 @@
+{
+  "custom": {},
+  "params": {},
+  "propConfig": {},
+  "props": {
+    "defaultSize": {
+      "width": 1300,
+      "height": 40
+    }
+  },
+  "root": {
+    "type": "ia.container.flex",
+    "meta": {
+      "name": "root",
+      "domId": "backbar-root"
+    },
+    "props": {
+      "direction": "row",
+      "alignItems": "center",
+      "style": {
+        "backgroundColor": "var(--tai-surface)",
+        "borderBottom": "1px solid var(--tai-border)",
+        "padding": "0 20px",
+        "height": "40px"
+      }
+    },
+    "children": [
+      {
+        "type": "ia.container.flex",
+        "meta": {
+          "name": "backLink",
+          "domId": "backbar-home"
+        },
+        "props": {
+          "direction": "row",
+          "gap": 6,
+          "alignItems": "center",
+          "style": {
+            "cursor": "pointer",
+            "padding": "6px 10px",
+            "borderRadius": "var(--tai-radius-control)"
+          }
+        },
+        "events": {
+          "dom": {
+            "onClick": {
+              "type": "script",
+              "scope": "G",
+              "config": {
+                "script": "\tsystem.perspective.navigate('/home')\n"
+              }
+            }
+          }
+        },
+        "children": [
+          {
+            "type": "ia.display.icon",
+            "meta": {
+              "name": "backIcon"
+            },
+            "props": {
+              "path": "material/arrow_back",
+              "color": "var(--tai-accent)",
+              "style": {
+                "width": "18px",
+                "height": "18px"
+              }
+            }
+          },
+          {
+            "type": "ia.display.label",
+            "meta": {
+              "name": "backText"
+            },
+            "props": {
+              "text": "Home",
+              "style": {
+                "fontSize": "13px",
+                "fontWeight": "600",
+                "color": "var(--tai-accent)",
+                "whiteSpace": "nowrap"
+              }
+            }
+          }
+        ],
+        "position": {
+          "shrink": 0,
+          "basis": "auto"
+        }
+      }
+    ]
+  }
+}
