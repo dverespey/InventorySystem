@@ -63,11 +63,18 @@
       "meta": {
        "name": "Title"
       },
+      "position": {
+       "shrink": 0
+      },
       "props": {
        "style": {
         "color": "#222222",
         "fontSize": "15px",
-        "fontWeight": "bold"
+        "fontWeight": "bold",
+        "height": "22px",
+        "overflow": "hidden",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap"
        },
        "text": "Manifest Cost Master \u2014 List + Detail  \u00b7  INV_MANIFEST_COST_MST (Inventory_Spike)"
       },
@@ -267,42 +274,60 @@
     "children": [
      {
       "meta": {
-       "name": "DetailTitle"
+       "name": "TitleSpacer"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
        "style": {
-        "color": "#222222",
-        "fontSize": "15px",
-        "fontWeight": "bold"
+        "height": "22px"
        },
-       "text": "Detail"
+       "text": ""
       },
       "type": "ia.display.label"
      },
      {
-      "meta": {
-       "domId": "mc-status",
-       "name": "StatusMsg"
-      },
-      "propConfig": {
-       "props.text": {
-        "binding": {
-         "config": {
-          "path": "view.custom.statusMsg"
-         },
-         "type": "property"
-        }
+      "children": [
+       {
+        "meta": {
+         "domId": "mc-status",
+         "name": "StatusMsg"
+        },
+        "propConfig": {
+         "props.text": {
+          "binding": {
+           "config": {
+            "path": "view.custom.statusMsg"
+           },
+           "type": "property"
+          }
+         }
+        },
+        "props": {
+         "style": {
+          "color": "#B71C1C",
+          "fontSize": "13px",
+          "fontWeight": "bold",
+          "padding": "6px 8px"
+         }
+        },
+        "type": "ia.display.label"
        }
+      ],
+      "meta": {
+       "name": "AlignBand"
+      },
+      "position": {
+       "shrink": 0
       },
       "props": {
+       "alignItems": "center",
        "style": {
-        "color": "#B71C1C",
-        "fontSize": "13px",
-        "fontWeight": "bold",
-        "padding": "6px 8px"
+        "height": "70px"
        }
       },
-      "type": "ia.display.label"
+      "type": "ia.container.flex"
      },
      {
       "children": [
@@ -1117,7 +1142,7 @@
     "props": {
      "direction": "column",
      "style": {
-      "gap": "8px"
+      "gap": "10px"
      }
     },
     "type": "ia.container.flex"
