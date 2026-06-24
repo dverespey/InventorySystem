@@ -1,29 +1,38 @@
-"""Nav-shell render check — HUB-AND-SPOKE model (feat/nav-home-launcher, PART 2).
+"""Nav-shell render check — HUB-AND-SPOKE model with CONTEXT-AWARE back + valid master icons.
 
 David's PART-1 top nav bar (Shell/NavBar shared dock) is REPLACED by a home-as-launcher model:
   * The Home page (/home) IS the launcher — its 8 MODULES cards navigate. There is NO top nav bar.
-  * Every NON-home page carries a single minimal "<- Home" back-dock (Shell/BackBar), shared-docked
-    on top, whose root visibility is bound to {page.props.path} != '/home' so it is HIDDEN on /home
-    and SHOWN everywhere else.
+  * Every NON-home page carries a single minimal back-dock (Shell/BackBar) as a per-page TOP dock; /home
+    gets NONE (clean launcher, zero reserved space). The back target is CONTEXT-AWARE (hub-and-spoke
+    parent), not always /home: the dock's viewParams {to,label} are read by Shell/BackBar as
+    view.params.to (navigate) / view.params.label (link text). Dock viewParams ARE delivered on 8.1.52
+    headless (verified) — this is the mechanism (a single param-aware BackBar, NOT per-target variants).
+    Per-page parent map (BACK_MAP below): the 9 Master-hub children -> /masters "Master Data";
+    /masters,/order,/reports,/coming-soon -> /home "Home"; /order/renban,/hotcall -> /order "Order".
   * /masters is a sub-hub (Master/MasterHub) of 9 cards (8 masters + User Admin), reachable from the
     Home "Master Data" card — this is how /users + /sites stay reachable now the top nav is gone.
   * The 5 not-yet-built modules (Shipping/Receiving/Stocktaking/Forecast/Invoicing) point at a generic
     /coming-soon (Shell/ComingSoon).
 
 This harness drives a real headless Perspective session against the live 8.1.52 gateway and proves the
-NEW model end to end. Headless render-level proof is required because the Perspective client is a SPA:
-curl returns 200 for ANY path (including a removed mount), so only a rendered session distinguishes a
-mounted route from a "Page Not Found" placeholder, and only a session shows whether a shared dock mounts
-(docks arrive over the session websocket, not the bootstrap HTML).
+model end to end. Headless render-level proof is required because the Perspective client is a SPA: curl
+returns 200 for ANY path (including a removed mount), so only a rendered session distinguishes a mounted
+route from a "Page Not Found" placeholder, and only a session shows whether a dock mounts (docks arrive
+over the session websocket, not the bootstrap HTML).
 
 Assertions (the hub-and-spoke contract):
   1. HOME IS CLEAN: /home renders (#home-root) and shows NEITHER the old #navbar-root NOR the new
-     #backbar-root dock. (The back-dock is hidden on home; the nav bar is gone entirely.)
-  2. MODULE PAGES SHOW THE BACK-DOCK: /size, /order, /masters render #backbar-root, and clicking it
-     navigates back to /home.
-  3. THE 8 HOME CARDS NAVIGATE: each #home-card-* click lands on its route (order->/order,
-     masters->/masters, reports->/reports, the 5 stubs->/coming-soon).
+     #backbar-root dock, and reserves NO top-dock space (content starts at y~0).
+  2. CONTEXT-AWARE BACK: each non-home page's back-dock shows its PARENT's LABEL and clicking it
+     navigates to that PARENT (per BACK_MAP) — NOT always /home. Spot-checks every distinct target:
+     /size->/masters "Master Data", /masters->/home "Home", /order/renban->/order "Order",
+     /reports->/home "Home", /hotcall->/order "Order".
+  3. THE 8 HOME CARDS NAVIGATE: each #home-card-* click lands on its route.
   4. /masters renders its 9 sub-hub cards and a card (e.g. Sites) navigates to its master.
+  4b. THE 4 FIXED MASTER ICONS RENDER: supplier/partsstock/assemblydetail/logistics (+ the swept users
+     icon) draw a real glyph — asserted by the svg having >=1 inlined glyph child. NON-VACUOUS: a broken
+     icon path (the original material/factory etc., absent from the 8.1.52 sprite) renders an svg with
+     ZERO glyph children (verified by reverting one icon on the box: factory -> 0 children, business -> 3).
   5. /coming-soon renders (#comingsoon-root).
   6. THE REMOVED /edi MOUNT NO LONGER RESOLVES (renders Page-Not-Found, not a view).
   7. Every still-mounted route renders its primary view (no deserialize/blank).
@@ -112,6 +121,39 @@ HOME_CARDS = [
     ("home-card-invoicing", "/coming-soon"),
 ]
 
+# CONTEXT-AWARE back map: page route -> (expected back LABEL, expected back TARGET). Mirrors
+# scripts/gen_backbar_docks.py BACK_MAP. The spot-checks below cover every DISTINCT target+label pair
+# (so a wrong injector map or a viewParams-delivery regression fails here). /home has NO back-dock.
+BACK_MAP = {
+    "size": ("Master Data", "/masters"),
+    "supplier": ("Master Data", "/masters"),
+    "partsstock": ("Master Data", "/masters"),
+    "manifestcost": ("Master Data", "/masters"),
+    "renbangroup": ("Master Data", "/masters"),
+    "assemblydetail": ("Master Data", "/masters"),
+    "logistics": ("Master Data", "/masters"),
+    "sites": ("Master Data", "/masters"),
+    "users": ("Master Data", "/masters"),
+    "masters": ("Home", "/home"),
+    "order": ("Home", "/home"),
+    "reports": ("Home", "/home"),
+    "coming-soon": ("Home", "/home"),
+    "order/renban": ("Order", "/order"),
+    "hotcall": ("Order", "/order"),
+}
+
+# The 4 master icons this fix repaired (were broken/absent in the 8.1.52 material sprite) + the swept
+# users icon. Each card's svg must inline >=1 glyph child to count as RENDERED (non-vacuous: a broken
+# path renders an svg with 0 glyph children — proven on the box).
+FIXED_ICON_CARDS = [
+    "masterhub-card-supplier",
+    "masterhub-card-partsstock",
+    "masterhub-card-assemblydetail",
+    "masterhub-card-logistics",
+    "masterhub-card-users",
+]
+GLYPH_CHILD_SEL = "path,circle,rect,polygon,polyline,g"
+
 
 def goto_home(page):
     page.goto(url("home"), wait_until="networkidle", timeout=30000)
@@ -121,10 +163,10 @@ def goto_home(page):
 def check_home_is_clean(page, rep):
     """1. /home renders and shows NO top dock — and reserves NO top dock SPACE.
 
-    The back-dock is suppressed on /home by a per-page empty-docks override in page-config (so the
-    shared BackBar dock does not mount on home). 'Clean' means two things: (a) neither the removed
-    #navbar-root nor #backbar-root render, AND (b) the page content (#home-root) starts at the very
-    top (y ~ 0) — i.e. no 40px dock strip is reserved. (b) is the load-bearing check: a merely
+    The back-dock is per-page and /home is simply NOT given one (its page-config entry has no docks),
+    so no BackBar mounts on home and no dock strip is reserved. 'Clean' means two things: (a) neither
+    the removed #navbar-root nor #backbar-root render, AND (b) the page content (#home-root) starts at
+    the very top (y ~ 0) — i.e. no 40px dock strip is reserved. (b) is the load-bearing check: a merely
     invisible-but-space-reserving dock would still leave an empty bar."""
     page.goto(url("home"), wait_until="networkidle", timeout=30000)
     if not trial_ok(page):
@@ -145,33 +187,52 @@ def check_home_is_clean(page, rep):
               top_y is not None and top_y <= 2, "home-root top y=%s" % top_y)
 
 
-def check_backdock_on_modules(page, rep):
-    """2. Module pages show #backbar-root and clicking it returns to /home."""
-    for route in ["size", "order", "masters"]:
+def check_context_aware_back(page, rep):
+    """2. Each non-home page's back-dock shows its PARENT's LABEL and navigates to that PARENT — the
+    CONTEXT-AWARE hub-and-spoke contract, NOT always /home. We spot-check every distinct target+label
+    pair in BACK_MAP (one Master child, one Order child, and the three /home-parented top pages):
+      /size          -> "Master Data" -> /masters   (Master child)
+      /masters       -> "Home"        -> /home      (sub-hub -> home)
+      /order/renban  -> "Order"       -> /order     (Order child)
+      /reports       -> "Home"        -> /home      (top module -> home)
+      /hotcall       -> "Order"       -> /order     (Order child)
+    For each: assert the back-dock renders, its label text == expected (proves view.params.label
+    delivered), then click and assert it lands on the expected PARENT (proves view.params.to delivered).
+    A wrong injector map, an undelivered viewParam (label/target falls back to "Home"/"/home"), or a
+    regressed BackBar all fail here."""
+    spot = ["size", "masters", "order/renban", "reports", "hotcall"]
+    for route in spot:
+        want_label, want_to = BACK_MAP[route]
         page.goto(url(route), wait_until="networkidle", timeout=30000)
         if not trial_ok(page):
-            rep.skip("back-dock on /%s" % route, "Perspective trial expired")
+            rep.skip("context-aware back on /%s" % route, "Perspective trial expired")
             continue
+        # back-dock present
         try:
-            page.wait_for_selector("#backbar-root", timeout=15000)
+            page.wait_for_selector("#backbar-home", timeout=15000)
             has = page.query_selector("#backbar-root") is not None
         except Exception:
             has = False
-        rep.check("MODULE /%s shows the '<- Home' back-dock (#backbar-root)" % route, has,
-                  "backbar-root present=%s" % has)
-    # the back-dock navigates home (test from a module page)
-    page.goto(url("size"), wait_until="networkidle", timeout=30000)
-    if not trial_ok(page):
-        rep.skip("back-dock navigates home", "Perspective trial expired")
-        return
-    try:
-        page.wait_for_selector("#backbar-home", timeout=15000)
-        page.click("#backbar-home")
-        page.wait_for_timeout(1500)
-        ok = cur_route(page).rstrip("/").endswith("/home")
-    except Exception as e:
-        ok = False
-    rep.check("back-dock '<- Home' navigates to /home", ok, "route=%s" % cur_route(page))
+        if not has:
+            rep.check("/%s shows the back-dock (#backbar-root)" % route, False, "absent")
+            continue
+        page.wait_for_timeout(600)
+        # LABEL == parent label (view.params.label delivered)
+        el = page.query_selector("#backbar-home")
+        label = (el.inner_text() or "").strip().replace("\n", " ") if el else ""
+        rep.check("/%s back-link LABEL is '%s' (parent hub, not always Home)" % (route, want_label),
+                  want_label in label, "label=%r want=%r" % (label, want_label))
+        # CLICK navigates to parent TARGET (view.params.to delivered)
+        try:
+            page.click("#backbar-home")
+            page.wait_for_timeout(1500)
+            landed = cur_route(page)
+            nav_ok = landed.rstrip("/").endswith(want_to)
+        except Exception as e:
+            landed = "click-fail:%s" % e
+            nav_ok = False
+        rep.check("/%s back-link navigates to PARENT %s" % (route, want_to), nav_ok,
+                  "landed=%s want=%s" % (landed, want_to))
 
 
 def check_home_cards_navigate(page, rep):
@@ -232,6 +293,39 @@ def check_masters_hub(page, rep):
     except Exception:
         ok = False
     rep.check("/masters User Admin card navigates to /users", ok, "route=%s" % cur_route(page))
+
+
+def check_master_icons_render(page, rep):
+    """4b. The 4 fixed master icons (supplier/partsstock/assemblydetail/logistics) + the swept users icon
+    actually RENDER on /masters. A Perspective ia.display.icon renders as an inline <svg data-icon=...>
+    whose glyph geometry is INLINED as child <path>/<g>/... elements when the icon path resolves in the
+    gateway's material sprite, and as an EMPTY svg (zero glyph children) when the path is absent/broken
+    (the original material/factory, material/inventory_2, material/precision_manufacturing, material/route
+    were all absent from the 8.1.52 sprite). So 'renders' == svg present with >=1 glyph child. This
+    discriminator is non-vacuous: verified on the box that the broken material/factory yields 0 glyph
+    children while material/business yields 3."""
+    page.goto(url("masters"), wait_until="networkidle", timeout=30000)
+    if not trial_ok(page):
+        rep.skip("master icons render", "Perspective trial expired")
+        return
+    try:
+        page.wait_for_selector("#masterhub-root", timeout=15000)
+    except Exception:
+        rep.check("/masters renders for icon check", False, "root not found")
+        return
+    page.wait_for_timeout(1000)
+    for card in FIXED_ICON_CARDS:
+        sel = "#" + card + " svg[data-icon]"
+        svg = page.query_selector(sel)
+        if svg is None:
+            rep.check("icon RENDERS on %s (svg present + glyph)" % card, False, "no svg[data-icon]")
+            continue
+        data_icon = svg.get_attribute("data-icon") or "?"
+        nchild = page.eval_on_selector(
+            sel, "el => el.querySelectorAll('%s').length" % GLYPH_CHILD_SEL)
+        rep.check("icon RENDERS on %-30s (%s, %s glyph children > 0)"
+                  % (card, data_icon, nchild), nchild and nchild > 0,
+                  "data-icon=%s glyph-children=%s" % (data_icon, nchild))
 
 
 def check_coming_soon(page, rep):
@@ -307,14 +401,16 @@ def main():
         else:
             rep.check("trial active", ok, msg)
 
-        print("== 1. HOME is clean (no top nav / hidden back-dock) ==")
+        print("== 1. HOME is clean (no top nav / no back-dock) ==")
         check_home_is_clean(pg, rep)
-        print("== 2. back-dock shows on module pages + navigates home ==")
-        check_backdock_on_modules(pg, rep)
+        print("== 2. CONTEXT-AWARE back: each page -> its PARENT hub (label + nav) ==")
+        check_context_aware_back(pg, rep)
         print("== 3. the 8 Home MODULES cards navigate ==")
         check_home_cards_navigate(pg, rep)
         print("== 4. /masters sub-hub (9 cards) ==")
         check_masters_hub(pg, rep)
+        print("== 4b. the 4 fixed master icons RENDER (+ swept users icon) ==")
+        check_master_icons_render(pg, rep)
         print("== 5. /coming-soon ==")
         check_coming_soon(pg, rep)
         print("== 6. removed /edi mount ==")
