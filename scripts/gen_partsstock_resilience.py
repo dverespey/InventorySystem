@@ -42,12 +42,13 @@ import os
 import sys
 
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import PERSPECTIVE_DIR   # noqa: E402 — centralized gateway path (repo-split-plan §4.C)
 REPO_VIEW = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views", "Master",
                          "PartsStock", "PartsStock", "view.json")
 REPO_RES = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views", "Master",
                         "PartsStock", "PartsStock", "resource.json")
-GW_VIEW = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-           "/views/Master/PartsStock/PartsStock/view.json")
+GW_VIEW = os.path.join(PERSPECTIVE_DIR, "views", "Master", "PartsStock", "PartsStock", "view.json")
 
 # The unguarded VehicleOrder read line (exact, tab-indented) that aborts the whole onChange on denial.
 OLD_LINE = ('\tc.lineOptions = opts("SELECT DISTINCT LineName AS id, LineName AS label FROM '

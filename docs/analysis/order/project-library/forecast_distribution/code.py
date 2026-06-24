@@ -45,7 +45,7 @@
 # prefer system.file move/rename + an Event Stream for the import trigger; here we use the 8.1-safe
 # os.rename (atomic on one filesystem).
 
-DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 
 
 class ForecastDistributionError(Exception):

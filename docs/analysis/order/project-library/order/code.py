@@ -31,7 +31,7 @@
 # for unit test. Only commitOrders touches the gateway globals `system`.
 # IG81-COMPAT: createSProcCall / runPrepQuery identical on 8.1.52 and 8.3.
 
-DATABASE = "Inventory_Spike"
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 
 
 def _frsPrefix(frsDateYmd):

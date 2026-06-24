@@ -12,7 +12,7 @@
 # IG83-TODO: at the Postgres phase TS_POSTED -> datetime2; site_id FK enforced; consider a
 #            computed-view projection of SUM(qty_delta) instead of the materialized column.
 
-DATABASE = "Inventory_Spike"
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 
 # VC_SOURCE_ENUM movement classes (design §3).
 ENUM_RECEIVING_SHIP     = "RECEIVING_SHIP"

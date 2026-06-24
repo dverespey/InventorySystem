@@ -30,8 +30,11 @@ plus the committed resource.json.
 """
 import json
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import PERSPECTIVE_DIR   # noqa: E402 — centralized gateway path (repo-split-plan §4.C)
 
-GW_OUT = "/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective/views/Admin/Users/Users/view.json"
+GW_OUT = os.path.join(PERSPECTIVE_DIR, "views", "Admin", "Users", "Users", "view.json")
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REPO_OUT = os.path.join(_REPO, "docs", "analysis", "production-readiness", "perspective-views",
                         "Admin", "Users", "Users", "view.json")
@@ -416,13 +419,37 @@ def _write_view(path, view):
     print("wrote", path)
 
 
+def _repo_resource_json():
+    """The repo Admin/Users resource.json is the ONE deliberate exception to the "repo omits attributes"
+    convention (repo-split-plan S1/R3): it is the ONLY in-repo seed for this view (no docs/design twin),
+    so a cold gateway start that finds a null `attributes` map NPEs in ProjectResourceBuilder.setAttributes
+    and FAULTS THE WHOLE GATEWAY. So the repo copy MUST carry a non-null `attributes` block.
+
+    Prefer the live-gateway-signed map already on disk (a real re-signed signature exported per the plan);
+    fall back to preserving a valid existing repo signature; only as a last resort emit the all-zeros
+    placeholder (still non-null -> no NPE; the gateway re-signs on first load)."""
+    def _valid(d):
+        a = (d or {}).get("attributes") or {}
+        sig = a.get("lastModificationSignature", "")
+        return bool(sig) and sig != "0" * 64 and len(sig) == 64
+    for src in (GW_RESOURCE, REPO_RESOURCE):   # gateway-signed first, then an already-valid repo copy
+        try:
+            with open(src) as f:
+                d = json.load(f)
+            if _valid(d):
+                return dict(RESOURCE_JSON, attributes=d["attributes"])
+        except (IOError, OSError, ValueError):
+            pass
+    return GW_RESOURCE_JSON   # all-zeros placeholder attributes: non-null (no NPE), gateway re-signs
+
+
 def main():
     view = build_view()
     _write_view(GW_OUT, view)
     _write_view(REPO_OUT, view)
-    # repo resource.json (no attributes — gateway re-signs)
+    # repo resource.json — MUST carry attributes (S1/R3: the only cold-start seed; null map faults gateway)
     with open(REPO_RESOURCE, "w") as f:
-        json.dump(RESOURCE_JSON, f, indent=2)
+        json.dump(_repo_resource_json(), f, indent=2)
         f.write("\n")
     print("wrote", REPO_RESOURCE)
     # gateway resource.json (WITH attributes — required so a cold start does not NPE/fault the gateway)

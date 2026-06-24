@@ -200,7 +200,7 @@ def computeAsnDetails(frsRows, forecastByBc, productionDate, asnId):
 # Logical datasource names. In the gateway these are connection names; the headless shim maps them to
 # the spike DBs (Inventory / VehicleOrder). DATABASE = the Inventory rebuild; ALC_DATABASE = the shared
 # VehicleOrder DB that hosts AD_FRSPULL (a cross-DB READ, like AD_GetSpecialDate — not relocated).
-DATABASE = "Inventory_Spike"
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 ALC_DATABASE = "VehicleOrder"
 
 # FIX 1 (BLOCKER) — the filtered UNIQUE index that backstops the idempotency guard.

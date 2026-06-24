@@ -26,6 +26,34 @@ This revision folds in the adversary's findings. **Verdict unchanged: READY with
 prerequisites** — but the move-set is now *reference-derived* (grep of what the
 harness/app/generators actually open/import at runtime), not directory-name-based.
 
+## PREP DONE + S1/R3 WIDENED (2026-06-24, PR #56) — two findings from doing the prep
+
+**PREP 1 (centralize constants) DONE:** the gateway-path + DB-connection are now single-point.
+CPython → `scripts/_ignenv.py` (`IGN_DB_CONN`/`IGN_PROJECT`/`GATEWAY_*`, defaults = the spike
+values; the PROD-rename edit point is `IGN_DB_CONN=Inventory`). Jython app code → a new
+`project-library/db_shared` module (`CONNECTION="Inventory_Spike"`; the one-line prod edit →
+`Inventory`). 47 files rewired, behavior-preserving (e2e green, no straggler hardcode), the
+two single-points proven (`IGN_DB_CONN=Inventory` flows through). **PREP 2 (Admin/Users
+attributes) DONE:** committed the live-gateway-signed `resource.json` as the recovery source.
+
+**★ S1/R3 WIDENED — the cold-start `attributes`-NPE is RESOURCE-TYPE-AGNOSTIC, not view-only.**
+`ProjectResourceBuilder.setAttributes()` NPE-bricks the WHOLE gateway on cold start for ANY
+seeded `resource.json` with a null `attributes` map — **scripts too**, not just views (proven:
+`db_shared/resource.json` faulted the gateway until given an `attributes` block). An audit found
+**14 of 32 repo `resource.json` lack `attributes`** — all 8 master views + Home/MasterHub/BackBar/
+page-config + the auth/auto_purge script modules. So S1/R3 widens from "the Admin/Users view" to
+**EVERY seeded `resource.json` must carry a valid non-null `attributes` in the fresh repo.** The
+fix: generalize `gen_user_admin_view.py`'s `_repo_resource_json()` (prefer the live-gateway-signed
+map → fall back to a valid sig → last-resort a non-null all-zeros placeholder that still avoids
+the NPE) across the seed step. **Add a CUT GATE (§7): a cold-start smoke + a grep proving ZERO
+seeded `resource.json` has a null `attributes` before the fresh gateway is started.**
+
+**Stale-generator debt (pre-existing, NOT split-blocking):** `gen_sites_view.py` +
+`gen_master_write_gates.py` are stale vs the post-#51/#53 live views (re-running them would
+regress the Sites form to hardcoded colors/NewButton + the gate-check raises NewButton-not-found).
+The cut MOVES the COMMITTED views (canonical), not regenerates them, so this doesn't block — but
+re-sync those generators to the current view structure as a follow-up (punch-list).
+
 - **B1 (BLOCKER, resolved):** the MOVES list was built by directory name and left
   **live runtime dependencies** behind in `docs/analysis`. The authoritative MOVES set
   is now derived by grep (see §2, "Reference-derived MOVES — the grep authority").

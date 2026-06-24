@@ -24,11 +24,14 @@ is closed here, matching the master CRUD views. (Was previously deferred as a De
 resource.json carries an ATTRIBUTES block (a missing one FAULTS the WHOLE gateway on cold start — R31).
 Writes the gateway copy + a repo copy (docs/design/perspective-views). Run:  python3 scripts/gen_renban_views.py
 """
-import json, os
+import json, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import GATEWAY_PROJECT_DIR, PERSPECTIVE_DIR, DB_CONN   # noqa: E402 — centralized (repo-split-plan §4.C/§4.D)
 
-PROJ_DIR  = os.environ.get("PROJ_DIR", "/usr/local/ignition/data/projects/InventorySystem")
+PROJ_DIR  = GATEWAY_PROJECT_DIR
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PERSP     = os.path.join(PROJ_DIR, "com.inductiveautomation.perspective")
+PERSP     = PERSPECTIVE_DIR
+DB        = DB_CONN   # centralized DB-connection name emitted into the renban view scripts
 
 # suite theme tokens (var(--tai-*)) so the shell inherits tai-light/tai-dark like the rest of the suite.
 TXT = "var(--tai-text, #1F2933)"; MUT = "var(--tai-text-muted, #6B7785)"
@@ -116,7 +119,7 @@ PREVIEW_SCRIPT = (
     "\t\treturn\n"
     "\timport renban  # project library: docs/analysis/order/project-library/renban/code.py\n"
     "\ttry:\n"
-    "\t\torders = renban.loadBlankRenbanOrders(group, \"Inventory_Spike\")\n"
+    "\t\torders = renban.loadBlankRenbanOrders(group, \"" + DB + "\")\n"
     "\t\tif not orders:\n"
     "\t\t\tc.status = \"No blank-renban orders for group %s.\" % group; c.preview = {\"data\": [], \"columns\": []}; return\n"
     "\t\tres = renban.compute_trailer_breakdown(orders, T, P, group)\n"
@@ -146,7 +149,7 @@ COMMIT_SCRIPT = (
     "\ttry:\n"
     "\t\tA.requireWrite(self.session)\n"
     "\t\tsiteId = self.session.custom.siteId if hasattr(self.session.custom, \"siteId\") else None\n"
-    "\t\tres = renban.commit_renban_breakdown(group, T, P, \"Inventory_Spike\", resolution=None,\n"
+    "\t\tres = renban.commit_renban_breakdown(group, T, P, \"" + DB + "\", resolution=None,\n"
     "\t\t\tsiteId=siteId, session=self.session)\n"
     "\t\tif res[\"status\"] == \"COLLISION\":\n"
     "\t\t\tc.status = \"COLLISION: %d candidate renban(s) in use. Resolve in the dialog.\" % len(res[\"collisions\"])\n"
@@ -210,7 +213,7 @@ USE_NEXT_FREE_SCRIPT = (
     "\ttry:\n"
     "\t\tA.requireWrite(self.session)   # SERVER-SIDE WRITE GATE (BLOCKER-2)\n"
     "\t\tsiteId = self.session.custom.siteId if hasattr(self.session.custom, \"siteId\") else None\n"
-    "\t\tres = renban.commit_renban_breakdown(p.group, int(p.trailers), int(p.pallets), \"Inventory_Spike\",\n"
+    "\t\tres = renban.commit_renban_breakdown(p.group, int(p.trailers), int(p.pallets), \"" + DB + "\",\n"
     "\t\t\tresolution={\"action\": \"use_next_free\", \"base\": int(p.nextFree), \"alarm_id\": p.alarmId},\n"
     "\t\t\tsiteId=siteId, session=self.session)\n"
     "\t\tself.view.custom.result = res[\"status\"]\n"
@@ -237,7 +240,7 @@ OVERRIDE_SCRIPT = (
     "\ttry:\n"
     "\t\tA.requireWrite(self.session)   # SERVER-SIDE WRITE GATE (BLOCKER-2)\n"
     "\t\tsiteId = self.session.custom.siteId if hasattr(self.session.custom, \"siteId\") else None\n"
-    "\t\tres = renban.commit_renban_breakdown(p.group, int(p.trailers), int(p.pallets), \"Inventory_Spike\",\n"
+    "\t\tres = renban.commit_renban_breakdown(p.group, int(p.trailers), int(p.pallets), \"" + DB + "\",\n"
     "\t\t\tresolution={\"action\": \"override\", \"alarm_id\": p.alarmId, \"acknowledged\": list(p.acknowledged or [])},\n"
     "\t\t\tsiteId=siteId, actor=\"operator\", session=self.session)\n"
     "\t\tc.result = res[\"status\"]\n"

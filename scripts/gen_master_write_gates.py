@@ -55,9 +55,10 @@ import sys
 VIEWS = ["Size", "Supplier", "PartsStock", "ManifestCost", "RenbanGroup", "AssemblyDetail", "Logistics"]
 
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import PERSPECTIVE_DIR   # noqa: E402 — centralized gateway path (repo-split-plan §4.C)
 REPO_BASE = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views", "Master")
-GW_BASE = ("/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective"
-           "/views/Master")
+GW_BASE = os.path.join(PERSPECTIVE_DIR, "views", "Master")
 
 # The button components whose onActionPerformed scripts get the gate. Save + Delete are the DB writes
 # (the required security boundary). NewButton is NOT gated: it is a NO-DB-WRITE form reset (identical to

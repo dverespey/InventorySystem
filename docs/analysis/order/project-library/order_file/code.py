@@ -43,7 +43,7 @@
 # IG83-TODO: on 8.3 prefer system.file move/rename + an Event Stream for the timer trigger; here we use
 # the 8.1-safe os.rename (atomic on one filesystem) + a gateway timer script calling generate_order_files.
 
-DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 CAL_DATABASE = "VehicleOrder"           # the ALC/TireOrder DB holding AD_GetSpecialDate (cross-DB)
 
 

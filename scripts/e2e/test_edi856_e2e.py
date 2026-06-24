@@ -61,7 +61,7 @@ Run:  export SA_PASS='Spike_Dev_2026!'  &&  python3 scripts/e2e/test_edi856_e2e.
 import os, subprocess, sys, tempfile, shutil
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report, preclean_sentinels   # noqa: E402
+from lib import Report, preclean_sentinels, DB_CONN   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -252,7 +252,7 @@ def main():
         # the >1-row fan-out/split is exercised separately by cases #5 (multi-price) and #6 (multi-kanban).
         legacy_wire = sorted((r[0], r[1], int(r[3]), r[5]) for r in legacy_feed)
 
-        feedDs = edi856.system.db.runPrepQuery(edi856._FEED_SQL, [testAsn], "Inventory_Spike")
+        feedDs = edi856.system.db.runPrepQuery(edi856._FEED_SQL, [testAsn], DB_CONN)
         rebuild_wire = sorted((r["Manifest"], r["PartNumber"], int(r["ShipQty"]), r["Kanban"])
                               for r in feedDs)
         rep.check("rebuild feed row COUNT == legacy SELECT row count",
@@ -269,7 +269,7 @@ def main():
 
         # --- 4. run the REAL send_856 (writes the file to tmpdir) -------------------------------
         print("\n--- (run) send_856 ---")
-        result = edi856.send_856(testAsn, SITE_ID, database="Inventory_Spike", outDir=tmpdir,
+        result = edi856.send_856(testAsn, SITE_ID, database=DB_CONN, outDir=tmpdir,
                                  fileTime="1430")
         ein = result["ein"]
         rep.check("send_856 returned an EIN", ein is not None, "ein=%s" % ein)
@@ -329,7 +329,7 @@ def main():
 
         # one Order HL + PRF per distinct manifest; one Item HL + LIN + SN1 per feed row.
         manifests = sorted(set(r["Manifest"] for r in
-                          edi856.system.db.runPrepQuery(edi856._FEED_SQL, [testAsn], "Inventory_Spike")))
+                          edi856.system.db.runPrepQuery(edi856._FEED_SQL, [testAsn], DB_CONN)))
         orderHls = [s for s in segs if s.startswith("HL*") and "*O*" in s]
         prfs = [s for s in segs if s.startswith("PRF*")]
         itemHls = [s for s in segs if s.startswith("HL*") and "*I*" in s]
@@ -423,7 +423,7 @@ def main():
             return sorted((r[0], r[1], int(r[3]), r[5]) for r in rows)
 
         def rebuild_wire_for(asn):
-            ds = edi856.system.db.runPrepQuery(edi856._FEED_SQL, [asn], "Inventory_Spike")
+            ds = edi856.system.db.runPrepQuery(edi856._FEED_SQL, [asn], DB_CONN)
             return sorted((r["Manifest"], r["PartNumber"], int(r["ShipQty"]), r["Kanban"]) for r in ds)
 
         # --- (#5) MULTI-PRICE: MO_PRICE in the GROUP BY splits a 2-cost-window part into 2 rows ----
@@ -529,7 +529,7 @@ def main():
             edi856.system.file.writeFile = spying_write
             raised = False
             try:
-                edi856.send_856(probeAsn, SITE_ID, database="Inventory_Spike", outDir=atomdir,
+                edi856.send_856(probeAsn, SITE_ID, database=DB_CONN, outDir=atomdir,
                                 fileTime="1430")
             except Exception as e:
                 raised = True

@@ -336,7 +336,7 @@ def production_offset(first_week_number):
 # getLogger) is identical on 8.1.52 and 8.3 — no version guard needed. The SCHEDULED POLL host (Q11) is a
 # gateway TIMER/event script on 8.1 (NOT 8.3 Event Streams) — IG83-TODO at process_forecast_dir below.
 
-DATABASE = "Inventory_Spike"            # the Inventory rebuild connection name
+from db_shared import CONNECTION as DATABASE   # centralized DB-conn name (default Inventory_Spike; single prod-rename point)
 CAL_DATABASE = "VehicleOrder"           # the ALC/VehicleOrder DB holding AD_GetSpecialDateWeek (cross-DB)
 DEFAULT_HISTORICAL_WEEKS = 12           # legacy [INIT] HistoricalForecast default (84-day prune window)
 

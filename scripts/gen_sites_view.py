@@ -54,13 +54,16 @@ reviewable/redeployable artifact == runtime), plus the committed repo resource.j
 """
 import json
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _ignenv import PERSPECTIVE_DIR, DB_CONN   # noqa: E402 — centralized path + DB conn (repo-split-plan §4.C/§4.D)
 
 # PROVENANCE: write BOTH copies so the committed (reviewable/redeployable) artifact == runtime.
 #   GW_OUT  = the DEPLOYED gateway view (what the running session serves).
 #   REPO_OUT = the committed source-of-truth artifact (re-deploying from it must NOT drop anything).
 # Before this fix the generator wrote only GW_OUT, so the committed view.json went stale (had none of
 # the 7 path columns nor the load-bearing ISA/DUNS validation). Both are now generated from this one file.
-GW_OUT = "/usr/local/ignition/data/projects/InventorySystem/com.inductiveautomation.perspective/views/Master/Sites/Sites/view.json"
+GW_OUT = os.path.join(PERSPECTIVE_DIR, "views", "Master", "Sites", "Sites", "view.json")
 _REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 REPO_OUT = os.path.join(_REPO, "docs", "analysis", "master-data", "perspective-views",
                         "Master", "Sites", "Sites", "view.json")
@@ -77,7 +80,7 @@ RESOURCE_JSON = {
     "files": ["view.json"],
 }
 
-DB = "Inventory_Spike"
+DB = DB_CONN   # centralized DB-connection name (default "Inventory_Spike"; IGN_DB_CONN=Inventory for prod)
 
 # 16-char yyyymmddHHMMSSff audit recipe (byte-identical to the other masters)
 AUDIT = ("CONVERT(char(8),GETDATE(),112) "
@@ -332,6 +335,9 @@ GRID_SCRIPT = r'''	# ---- Master/Sites combined grid builder — inline runPrepQ
 		})
 	return {"data": rows, "columns": columns}
 '''
+# Route the embedded inline-script DB-connection name through the centralized constant (default
+# "Inventory_Spike"; IGN_DB_CONN=Inventory for prod). Byte-identical to the prior literal at the default.
+GRID_SCRIPT = GRID_SCRIPT.replace('DB = "Inventory_Spike"', 'DB = "%s"' % DB)
 
 
 def _get_assign(key, dbcol, kind):
@@ -353,7 +359,7 @@ def recordid_onchange():
         "\t# IG81-COMPAT: plain change script + T-SQL.\n"
         "\tlog = system.util.getLogger(\"SPIKE\")\n"
         "\tv = self.view if hasattr(self, \"view\") else self\n"
-        "\tDB = \"Inventory_Spike\"\n"
+        "\tDB = \"" + DB + "\"\n"
         "\tc = v.custom\n"
         "\tcv = getattr(currentValue, \"value\", currentValue)\n"
         "\trecId = int(cv or 0)\n"
@@ -491,7 +497,7 @@ def save_script():
         "\t# are NEVER written by the form. RULE #2: no site predicate.\n"
         "\timport auth as A\n"
         "\tlog = system.util.getLogger(\"SPIKE\")\n"
-        "\tDB = \"Inventory_Spike\"\n"
+        "\tDB = \"" + DB + "\"\n"
         "\tc = self.view.custom\n"
         "\trecId = int(c.recordId or 0)\n"
         "\t# ---- SERVER-SIDE WRITE GATE (rule #1, the H3 hole-closer) ----\n"
@@ -607,7 +613,7 @@ def delete_script():
         "\t# Block on any non-zero total; never delete a referenced site.\n"
         "\timport auth as A\n"
         "\tlog = system.util.getLogger(\"SPIKE\")\n"
-        "\tDB = \"Inventory_Spike\"\n"
+        "\tDB = \"" + DB + "\"\n"
         "\tc = self.view.custom\n"
         "\trecId = int(c.recordId or 0)\n"
         "\tabbr = (unicode(c.form_abbr) if c.form_abbr is not None else u\"\").strip()\n"
@@ -688,7 +694,7 @@ def build_view():
                         {
                             "meta": {"name": "Title"},
                             "props": {"style": {"color": "#222222", "fontSize": "15px", "fontWeight": "bold"},
-                                      "text": "Sites Master — List + Detail  ·  INV_SITES (Inventory_Spike)  ·  ProductionControl (site config)  ·  single-site deployment"},
+                                      "text": "Sites Master — List + Detail  ·  INV_SITES (%s)  ·  ProductionControl (site config)  ·  single-site deployment" % DB},
                             "type": "ia.display.label",
                         },
                         # (no AdminBanner — the RESTRICTED banner was part of the removed UI-visibility gate)

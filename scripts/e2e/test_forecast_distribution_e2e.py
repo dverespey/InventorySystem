@@ -64,7 +64,7 @@ import json
 import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib import Report, preclean_sentinels   # noqa: E402
+from lib import Report, preclean_sentinels, GATEWAY_ROOT   # noqa: E402
 import jython_shim              # noqa: E402
 
 CONTAINER = os.environ.get("CONTAINER", "mssql-spike")
@@ -81,7 +81,7 @@ RR_DIR = os.path.join(REPO, "docs", "analysis", "reporting", "project-library", 
 
 # Bundled JRE + jython + POI — the EXACT gateway runtime, lets us run the REAL report_render.render_xlsx
 # (POI) headless (reused from test_m3_reports.py). No system Java required.
-IGN = "/usr/local/ignition"
+IGN = GATEWAY_ROOT   # centralized gateway root (repo-split-plan §4.C; default /usr/local/ignition)
 JAVA = os.path.join(IGN, "lib", "runtime", "jre-mac", "bin", "java")
 COMMON = os.path.join(IGN, "lib", "core", "common")
 PYLIB = os.path.join(IGN, "user-lib", "pylib")
