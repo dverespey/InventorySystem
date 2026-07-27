@@ -471,3 +471,77 @@ several places that a production cutover must reconcile with a migration/convers
   format is enforced.
 **Action:** maintain a running "DB conversion / cutover script" deliverable enumerating every such diff so the
 production migration is deterministic and reviewable. Track it as the masters + later modules land.
+
+---
+
+## D14 — Stale open orders are un-closed fossils; free their renban numbers by RUNNING the existing retention purge, not by changing the in-use predicate  *(2026-07-24 / 2026-07-27)*
+
+*Recorded 2026-07-27. Closes the domain half of `dverespey/inventory` issue #256 (the rebuild-side
+collision guard is #160/#190). Two rulings, taken a few days apart, plus the measurement that
+reframed the second one.*
+
+**1. What a stale open order IS (David, 2026-07-24).**
+Verbatim intent: *"orders older than a month are fossils that never got closed."* So a row sitting in
+`INV_OPEN_ORDER_INF` with an old `VC_ORDER_DATE` does **not** represent outstanding work. There is no
+explicit "close" event in the schema — a row leaves only when `DELETE_AutoPurge` deletes it — so age
+is the domain signal, and the operator's mental model is that anything past a month is residue.
+
+**2. How the fossil-pinned renban numbers get freed (David, 2026-07-27): run the purge.**
+The fossils matter because a renban number is occupied for exactly as long as a row carrying it is
+resident. Ruling: **at cutover, run the retention purge that already exists** (`DELETE_AutoPurge`,
+`@DataRentention` ≥ 12 months, keyed on `VC_ADD`). **The rebuild's in-use predicate is NOT changed** —
+it stays the source-truth "any resident row occupies the number", status- and age-blind. The
+alternative (teach the predicate to skip terminated or aged rows) was considered and **rejected**: it
+is a deliberate divergence from legacy semantics, and it would lean on a column whose writer is
+currently dead (see §4).
+
+**3. The measurement behind it (dev spike restored from `bak-20260724`, APPSERVER3 vintage).**
+- `INV_OPEN_ORDER_INF` holds **4474 rows / 2 years** — order dates `20240702` → `20260724`. `VC_ADD`'s
+  date equals `VC_ORDER_DATE` on **all 4474** rows, so the purge clock and the "older than a month"
+  rule key off the same value.
+- **The purge has not run in ≥24 months.** Rows older than the ≥12-month retention floor are still
+  resident; that is the whole cause. The ring math is otherwise sound: ~450 numbers/year against a
+  1000-number ring laps in ~2.2 years, comfortably after a 12-month purge clears its own tail.
+- **Only CMWA is at risk today.** Ring occupancy: CMWA **897**/1000 (counter 331), DICAS 358 (counter
+  501), PACF 100 (counter 638), CAP 30 (counter 070), HCAP 0 (counter 088). CMWA's next five
+  candidates `CMWA332`–`CMWA336` are all resident; every other group's next five are free.
+- A 12-month purge frees **452** of CMWA's 897 occupied suffixes and removes the imminent collision
+  (`CMWA332`/`333` are `20240702` rows). Steady state ≈ 450/1000.
+- **Row status, which earlier analysis could not establish, is populated:** **4112 of 4474** resident
+  rows carry a `VC_TERMINATED` stamp (455 distinct stamp dates, `20240714`→`20260607`, each ~2–4 weeks
+  after its order date). Zero rows under a month old are terminated. All five imminent CMWA collisions
+  are pinned **exclusively** by terminated rows. Excluding terminated rows would drop CMWA to 65 — which
+  is precisely why the predicate change was tempting, and precisely what §2 declines to do.
+
+**4. Why the terminated column is NOT trustworthy as a predicate input.**
+Terminate stamping **stopped on 2026-05-26** — the latest order date carrying a stamp is `20260526`,
+and `VC_STATUS_SUPPLIER_SHIPPING` / `VC_ARRIVAL` stop on the same day. This is the same external,
+trigger-bypassing feed whose death is recorded on `dverespey/inventory` issue #47 (residual question
+moved to #8): on the 4112 stamped rows, `VC_LAST_UPDATE` was **not** bumped by whatever wrote the
+stamps, and its maximum across those rows is `2026-05-26 11:04:24`. A predicate keyed on a column no
+live writer maintains would silently degrade as new orders accumulate un-terminated.
+
+**5. Caveat on an earlier "live proof" — it was measured on a status-blind copy.**
+`docs/analysis/order/renban-collision-sourcetruth.md` records a Live-proof of *"4284 rows … 0
+`VC_TERMINATED`"*. That reproduces exactly, but only against `Inventory.bak.stale-vintage-20260619`,
+whose backup header names **`MAS-APPSERVER2`** — not the APPSERVER3 production source. Joining the two
+vintages row-by-row: all 4284 of its rows match a current row on (supplier, part, FRS, renban,
+`VC_ADD`) — same site, same lineage — yet **zero** of them carry any supplier-shipping or arrival
+stamp, and `VC_LAST_UPDATE` is byte-identical on the 4112 rows that differ only by their stamps. So
+that file holds the same order stream **without the milestone/status updates**. The ring-pressure
+conclusion it drew is unaffected (863/1000 there vs 897/1000 in production); its implication that the
+data carries no status signal is false for production. That doc carries a dated correction.
+
+**Action (cutover):**
+- Add "run `DELETE_AutoPurge` at the configured retention" to the cutover punch-list
+  (`dverespey/inventory` #8), sequenced **after** the archive step — `auto_purge` deletes without
+  archiving, and the archive design is #257. Purge-before-archive would destroy the history the
+  archive is meant to keep.
+- Confirm the production retention value at provisioning time. The legacy reads it from the operator's
+  git-ignored `[DATAPURGE]` INI; the rebuild relocated it to `INV_SITES.IN_DATA_RETENTION`
+  (`BIT_ENABLE_DATA_PURGE` currently reads 0, but `INV_SITES` is a rebuild-added table, so that value
+  is a rebuild default and is **not** evidence about legacy production behaviour).
+- Parallel-run hazard: the legacy hits the same database, so purging changes what LEGACY shows too.
+  Sequence the purge with the cutover, not during parallel run.
+- Leave the collision guard in place regardless. It is the backstop that made this visible, and after
+  a purge it should sit silent — which is the steady state to confirm, not a reason to remove it.
