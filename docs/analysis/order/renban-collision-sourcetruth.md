@@ -87,7 +87,24 @@ to the order file, ships, then ages out. The **only table that holds a live renb
 > 2026-05-26 — and the fossils are instead freed by running the existing retention purge at cutover.
 > See D14 in `docs/analysis/decisions.md` and `dverespey/inventory` #256.
 >
-> Identity of `MAS-APPSERVER2` (other site / standby / decommissioned): pending David.
+> **Identity ANSWERED (David, 2026-07-27):** *"APPSERVER2 is being decommissioned, all data and
+> applications are being moved to APPSERVER3 permanently."* So it is the **predecessor server, mid-
+> migration** — not another site and not a standby. `APPSERVER3` is production. This also explains how
+> its backup reached the docker `/backup` mount (#198): the mount pointed at the outgoing server's
+> backup location.
+>
+> **CUTOVER HAZARD — direction of the migration copy.** APPSERVER2's `Inventory` looks superficially
+> complete and current (same 4284 rows, same `VC_ADD`/`VC_LAST_UPDATE`, backed up 2026-06-19), so a
+> decommissioning migration could reasonably treat it as authoritative. **It is not.** Copying it onto
+> APPSERVER3 would silently destroy the milestone layer that exists ONLY on APPSERVER3 —
+> `VC_STATUS_SUPPLIER_SHIPPING`, `VC_ARRIVAL` and `VC_TERMINATED` on 4112 rows. The row counts would
+> still look right afterwards, so the loss would not announce itself. Tracked on `dverespey/inventory`.
+>
+> **Still unexplained (and now moot for the rebuild):** WHY the APPSERVER2 copy carried the order
+> inserts but none of the milestone updates, while staying current to its backup date. The likeliest
+> reading is that the trigger-bypassing external feed of #47 wrote milestones to APPSERVER3 only. Not
+> worth chasing — the server is going away — but do not treat that copy as a source for ANY behavioural
+> claim about production.
 
 > **CAN'T fully pin from source:** the exact configured `@DataRentention` value lives in the
 > operator's INI (`[DATAPURGE]`, git-ignored) and the purge cadence is manual/scheduled
