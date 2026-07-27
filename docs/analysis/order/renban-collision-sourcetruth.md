@@ -5,6 +5,15 @@ warn→guide→fix). Establishes the renban LIFECYCLE, the IN-USE / collision pr
 NEXT-FREE computation, and the clean-wrap safety finding on live data. Feeds the
 ignition-architect's warn→guide→fix design + the build.
 
+> **⚠ CORRECTION 2026-07-27 — read before trusting any occupancy number below.** Every "live"
+> figure in this note (CMWA **863**/1000, DICAS 341, PACF 96, CAP 28, the 24-month resident window,
+> 0 `VC_TERMINATED`) was measured on `Inventory.bak.stale-vintage-20260619` — a **`MAS-APPSERVER2`
+> status-blind copy**, not the `APPSERVER3` production source. Production (`bak-20260724`) reads
+> CMWA **897**/1000, DICAS 358, PACF 100, CAP 30, and **4112 of 4474 rows terminated**. The
+> lifecycle, the IN-USE predicate (§2), and the "clean wrap alone is unsafe for CMWA" conclusion all
+> still stand — the pressure is real and slightly worse than recorded. Full detail in the boxed
+> correction under "Live proof" in §1, and in D14 (`docs/analysis/decisions.md`).
+
 - **Confidence: HIGH.** Lifecycle + predicate derived from proc bodies + `RenbanOrder.pas`;
   every numeric claim proved on `Inventory_Live` (READ-ONLY) or on the writable `Inventory`
   inside a rolled-back transaction (CMWA count restored 297). Verification env `mssql-spike`,
@@ -50,6 +59,35 @@ to the order file, ships, then ages out. The **only table that holds a live renb
 `VC_ORDER_DATE` stamped (snapshot is fully post-order-file); `VC_ADD` spans
 `20240702…20260619` ≈ **24 months resident**, 0 `VC_TERMINATED`. So the resident window is
 ~24 months and the purge has not trimmed below it.
+
+> **CORRECTION (2026-07-27) — the Live-proof paragraph above was measured on a STATUS-BLIND copy,
+> not on production.** Those exact figures (4284 rows / 0 `VC_TERMINATED`) reproduce only against
+> `Inventory.bak.stale-vintage-20260619`, whose backup header names **`MAS-APPSERVER2`** — not the
+> `APPSERVER3` production source. This is the `/backup`-mount provenance failure ruled on in
+> `dverespey/inventory` #198 (that mount is never a restore source).
+>
+> Restored side by side and joined row-by-row on (supplier, part, FRS, renban, `VC_ADD`):
+> - All 4284 of its rows match a row in the `APPSERVER3` `bak-20260724` vintage — **same site, same
+>   lineage, a strict subset** (4284 vs 4474 rows, five weeks apart).
+> - **Zero** of its 4284 rows carry any `VC_STATUS_SUPPLIER_SHIPPING` or `VC_ARRIVAL` value, while
+>   4112 of the same rows carry both in production. Two years of shipments with no arrival ever
+>   recorded is not a plausible production state.
+> - `VC_LAST_UPDATE` is **byte-identical** on those 4112 rows across both vintages, so whatever wrote
+>   the stamps did not bump it — the signature of the trigger-bypassing external feed of #47. Its
+>   maximum across those rows is `2026-05-26 11:04:24`, #47's feed-death date to the day.
+>
+> **What still stands:** the ring-pressure finding and the conclusion that the clean wrap alone is
+> unsafe for CMWA (863/1000 occupied there vs **897**/1000 in production — the pressure is real and
+> slightly worse than recorded). The IN-USE predicate (§2) and the allocator design are unaffected.
+>
+> **What does NOT stand:** the implied reading that the data carries no close/terminate signal. In
+> production `VC_TERMINATED` is populated on **4112 of 4474** resident rows (455 distinct stamp dates,
+> `20240714`→`20260607`), and the imminent CMWA collisions are pinned exclusively by terminated rows.
+> That signal was nevertheless **rejected as a predicate input** — its writer has been dead since
+> 2026-05-26 — and the fossils are instead freed by running the existing retention purge at cutover.
+> See D14 in `docs/analysis/decisions.md` and `dverespey/inventory` #256.
+>
+> Identity of `MAS-APPSERVER2` (other site / standby / decommissioned): pending David.
 
 > **CAN'T fully pin from source:** the exact configured `@DataRentention` value lives in the
 > operator's INI (`[DATAPURGE]`, git-ignored) and the purge cadence is manual/scheduled
