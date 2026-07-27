@@ -545,3 +545,24 @@ data carries no status signal is false for production. That doc carries a dated 
   Sequence the purge with the cutover, not during parallel run.
 - Leave the collision guard in place regardless. It is the backstop that made this visible, and after
   a purge it should sit silent — which is the steady state to confirm, not a reason to remove it.
+
+**Addendum 2026-07-27 — `MAS-APPSERVER2` identified, and it carries a cutover hazard.**
+§5 above left the server's identity open. David: *"APPSERVER2 is being decommissioned, all data and
+applications are being moved to APPSERVER3 permanently."* So it is the **outgoing predecessor server,
+mid-migration** — not another site, not a standby. `APPSERVER3` is production. That also explains how
+its backup reached the docker `/backup` mount (`dverespey/inventory` #198): the mount pointed at the
+outgoing server's backup location.
+
+**The hazard is the DIRECTION of the decommissioning copy.** APPSERVER2's `Inventory` looks
+superficially complete and current — same 4284 rows, same `VC_ADD` and `VC_LAST_UPDATE` values, backed
+up 2026-06-19 — so a migration could reasonably treat it as an authoritative source. **It is not.**
+Copying it onto APPSERVER3 would silently destroy the milestone layer that exists only on APPSERVER3:
+`VC_STATUS_SUPPLIER_SHIPPING`, `VC_ARRIVAL` and `VC_TERMINATED` on **4112 rows**. Row counts would
+still look correct afterwards, so the loss would not announce itself — and it would take the very
+signal that identifies fossil orders (§3) with it. **The migration must move data APPSERVER2 → nothing;
+APPSERVER3 is already the live copy and must not be overwritten from APPSERVER2.**
+
+Still unexplained, and now moot for the rebuild: why the APPSERVER2 copy carried the order inserts but
+none of the milestone updates while staying current to its backup date. Likeliest reading is that #47's
+trigger-bypassing external feed wrote milestones to APPSERVER3 only. Not worth chasing — the server is
+going away — but that copy must not be used as the source for ANY behavioural claim about production.

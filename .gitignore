@@ -64,6 +64,11 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 DB Schema/OrderSimulation*.xls
 DB Schema/*.bak
+# ...and any SUFFIXED backup. '*.bak' does NOT match 'Inventory.bak.stale-vintage-20260619' —
+# the suffix becomes the extension — so two real client backups (one 1.7 GB) sat untracked,
+# one `git add -A` away from being committed. Found 2026-07-27 during the #256 work.
+DB Schema/*.bak.*
+*.bak.*
 DB Schema/DailyWorkLog*.csv
 DB Schema/AllLog.csv
 DB Schema/ReportLog.csv
