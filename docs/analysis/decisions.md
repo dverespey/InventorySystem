@@ -566,3 +566,88 @@ Still unexplained, and now moot for the rebuild: why the APPSERVER2 copy carried
 none of the milestone updates while staying current to its backup date. Likeliest reading is that #47's
 trigger-bypassing external feed wrote milestones to APPSERVER3 only. Not worth chasing — the server is
 going away — but that copy must not be used as the source for ANY behavioural claim about production.
+
+---
+
+## D15 — `SELECT_ASNList`'s status branch drops the boundary row; the rebuild PRESERVES the bug (parity) and fixes it post-cutover  *(2026-07-27)*
+
+*Recorded 2026-07-27. Closes `dverespey/inventory` issue #281. Ruled by David the same day
+(**option b** of three). Note the shape: unlike D8/D11, this is a confirmed legacy bug the rebuild
+does **NOT** fix — because fixing it unilaterally would BREAK parity, not restore it.*
+
+**1. The defect.** `SELECT_ASNList` uses a different boundary operator in its two branches:
+
+```sql
+if @List = 'X'                                  -- the ALL branch
+    ... WHERE VC_PRODUCTION_DATE >= @Start      -- inclusive
+else                                            -- any specific status
+    ... WHERE VC_ASN_STATUS = @List
+        AND VC_PRODUCTION_DATE >  @Start        -- EXCLUSIVE
+```
+
+So **applying a status filter silently drops every ASN whose production date equals `@Start`**.
+Nothing on screen indicates a row was withheld.
+
+`@Start` is `MIN(VC_PRODUCTION_DATE)` when `@Range` is neither 1 nor 2. That is the worst possible
+shape: `@Start` is computed as the minimum of the very column it then filters, so the excluded date
+is **guaranteed** to be populated. The `>` can never be harmless there. For `@Range` 1 / 2 (`today−365`
+/ `today−30`) it drops rows on a *rotating daily boundary* instead.
+
+**2. Legacy exercises it, on the DEFAULT range — this is not a rebuild-only concern.**
+`TASNInvoice_Form.GetASNs` (`ASNInvoice.pas:215-322`) passes a specific status in four of its five
+branches — `'C'` (NOT CREATED), `'S'` (SENT), `'A'` (ACCEPTED), `'R'` (REJECTED) — each with
+`@Range := DataView.ItemIndex`. And the form's entry point pins that index to 0:
+
+```pascal
+procedure TASNInvoice_Form.Execute;          // ASNInvoice.pas:340-346
+  ASNorInvoice_ComboBox.ItemIndex := 0;
+  ASNStatus_ComboBox.ItemIndex    := 0;
+  DataView.ItemIndex              := 0;      // @Range = 0  =>  @Start = MIN(VC_PRODUCTION_DATE)
+```
+
+`DataView` (`ASNInvoice.dfm:318`) offers ALL / LAST YEAR / LAST MONTH and opens on **ALL**. So the
+legacy form runs `@Range=0` unless the operator changes it, and the operator's **first status click
+hits the guaranteed-drop case**. This has been live since the proc's 2009/2010 script date.
+
+**3. Evidence the `>` is a typo, not a design choice.** `SELECT_INVOICEList` is the sibling proc —
+same form, same combo box (the Invoice half of the same ASN/Invoice mode switch), same
+`@List varchar(1)` / `@Range int=0` signature, and a **byte-identical `@Start` block**, down to
+reading `MIN(VC_PRODUCTION_DATE) from INV_ASN_MST` even from the Invoice proc. It uses `>=` in
+**both** branches. Four comparisons across a matched pair; exactly one is exclusive, and nothing in
+either body suggests a reason for it.
+
+A `sys.sql_modules` sweep for the `@Start` idiom returns **exactly these two procs**. Single-site
+defect, not a family.
+
+**4. Measured** (dev spike, `bak-20260724`, and confirmed on the live Ignition gateway):
+- `INV_ASN_MST` holds 2578 rows; 2575 carry status `'A'`.
+- `EXEC SELECT_ASNList 'A', 0` returns **2574** — one short. The missing row is **ASN 1804**
+  (`20170103`, the global minimum production date), and **its status is `'A'`** — so it belongs in
+  the very list it is absent from.
+- Rendered-layer confirmation (mac 8.1.52 gateway, sorted oldest-first): Status=ALL shows top row
+  ASN 1804 / Accepted / 2017-01-03 with 2578 rows; switching to Status=Accepted shows top row ASN
+  1805 with 2574 rows. The operator sees an Accepted ASN vanish from the Accepted list.
+- Not only a fossil-row problem: at `@Range=1` the boundary rotates daily, and **273 of the last 400
+  days carry rows**, so on most days it would omit *current* ASNs.
+
+**5. The ruling — preserve it (David, 2026-07-27).**
+**The rebuild does NOT fix this.** Both systems call the same proc and both drop the row, so the
+rebuild currently has **parity**. A rebuild-only fix would not remove a divergence — it would
+*create* one: the Ignition list would show a row the Delphi list does not, on the same database,
+during parallel run. This is the "more correct ≠ equivalent" case (see D8's framing, inverted).
+
+Rejected alternatives:
+- **Fix the shared proc now.** Additive and non-destructive in itself, but it changes what the
+  **legacy application** displays mid-parallel-run — the hazard class D7/D8 rulings guard against.
+- **Diverge deliberately in the rebuild** behind a tagged ADR. Buys one 2017 row at the cost of a
+  knowing parity break; not worth it.
+
+**Action (post-cutover):**
+- Fix `SELECT_ASNList`'s status branch to `>=`, matching `SELECT_INVOICEList`, **once the Delphi app
+  is retired and the proc has a single caller.** Sequence it with the cutover, not during parallel
+  run.
+- Until then the rebuild wraps the proc unchanged, and the behaviour is expected, not a regression.
+  Anyone measuring an ASN status-filtered row count against a direct `WHERE VC_ASN_STATUS = …` count
+  will find it one short **by design** — that discrepancy is this entry, not a new bug.
+- Severity is low and bounded: a **read** path that under-reports. No write, no wire byte, no stock
+  math. What makes it worth recording is that it is *silent*.
